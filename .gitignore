@@ -1,0 +1,45 @@
+# Local environment files and credentials
+.env
+.env.*
+!.env.example
+!**/.env.example
+credentials.json
+*-credentials.json
+service-account*.json
+cookies.txt
+*.cookies.txt
+*.pem
+*.key
+*.p12
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+
+# JavaScript and build output
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.artifacts/
+*.tsbuildinfo
+
+# Local application and user data
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.mp4
+*.mov
+*.mkv
+*.webm
+
+# OS and editor files
+.DS_Store
+._*

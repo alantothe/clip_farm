@@ -1,0 +1,44 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - path: apps/api/.env
+        required: false
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - clip_farm_data:/data
+      - ~/.config/gcloud:/root/.config/gcloud:ro
+    ports:
+      - "8000:8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["huey_consumer.py", "app.worker.huey", "-w", "1", "-k", "thread"]
+    env_file:
+      - path: apps/api/.env
+        required: false
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - clip_farm_data:/data
+      - ~/.config/gcloud:/root/.config/gcloud:ro
+    depends_on:
+      - api
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  clip_farm_data:
+

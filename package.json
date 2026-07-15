@@ -1,0 +1,29 @@
+{
+  "name": "clip-farm",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "setup": "npm install && npm run install:api",
+    "install:api": "cd apps/api && uv sync --dev",
+    "start": "npm run dev",
+    "dev": "concurrently --kill-others --names api,worker,web --prefix-colors blue,magenta,green \"npm:dev:api\" \"npm:dev:worker\" \"npm:dev:web\"",
+    "dev:api": "cd apps/api && uv run uvicorn app.main:app --reload --port 8000",
+    "dev:worker": "cd apps/api && uv run huey_consumer.py app.worker.huey -w 1 -k thread",
+    "dev:web": "npm run dev --workspace=@clip-farm/web",
+    "build": "npm run build --workspace=@clip-farm/web",
+    "test": "npm run test:api && npm run test:web",
+    "test:api": "cd apps/api && uv run pytest",
+    "test:web": "npm test --workspace=@clip-farm/web",
+    "lint": "npm run lint --workspace=@clip-farm/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "npm@9.2.0"
+}
