@@ -22,6 +22,8 @@ class Project(Base):
     source_url: Mapped[str] = mapped_column(String, index=True)
     source_post_id: Mapped[str] = mapped_column(String, index=True)
     title: Mapped[str] = mapped_column(String, default="Untitled clip")
+    source_caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    social_caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String, default="queued", index=True)
     transcription_status: Mapped[str] = mapped_column(String, default="pending")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -35,6 +37,7 @@ class Project(Base):
     crop_center_x: Mapped[float] = mapped_column(Float, default=50.0)
     captions_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     caption_style: Mapped[str] = mapped_column(String, default="bold")
+    caption_position: Mapped[str] = mapped_column(String, default="bottom")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -45,6 +48,11 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
         order_by="CaptionSegment.sequence",
+    )
+    image_overlays: Mapped[list["ImageOverlay"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+        order_by="ImageOverlay.start_ms",
     )
     renders: Mapped[list["Render"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
@@ -82,6 +90,40 @@ class CaptionSegment(Base):
     project: Mapped[Project] = relationship(back_populates="captions")
 
 
+class ImageOverlay(Base):
+    __tablename__ = "image_overlays"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="CASCADE"), unique=True
+    )
+    name: Mapped[str] = mapped_column(String)
+    start_ms: Mapped[int] = mapped_column(Integer)
+    end_ms: Mapped[int] = mapped_column(Integer)
+    center_x: Mapped[float] = mapped_column(Float, default=50.0)
+    center_y: Mapped[float] = mapped_column(Float, default=50.0)
+    width_percent: Mapped[float] = mapped_column(Float, default=65.0)
+    rotation_deg: Mapped[float] = mapped_column(Float, default=0.0)
+    opacity: Mapped[float] = mapped_column(Float, default=1.0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    project: Mapped[Project] = relationship(back_populates="image_overlays")
+    artifact: Mapped[Artifact] = relationship()
+
+    @property
+    def mime_type(self) -> str:
+        return self.artifact.mime_type
+
+    @property
+    def size_bytes(self) -> int:
+        return self.artifact.size_bytes
+
+    @property
+    def url(self) -> str:
+        return ""
+
+
 class Render(Base):
     __tablename__ = "renders"
 
@@ -97,6 +139,7 @@ class Render(Base):
     trim_end_ms: Mapped[int] = mapped_column(Integer)
     captions_enabled: Mapped[bool] = mapped_column(Boolean)
     caption_style: Mapped[str] = mapped_column(String)
+    caption_position: Mapped[str] = mapped_column(String, default="bottom")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -125,4 +168,3 @@ class Job(Base):
 
     project: Mapped[Project] = relationship(back_populates="jobs")
     render: Mapped[Render | None] = relationship(back_populates="jobs")
-

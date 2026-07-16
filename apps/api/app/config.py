@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     google_cloud_project: str | None = None
     google_cloud_location: str = "global"
+    gemini_model: str = "gemini-2.5-flash"
     gcs_bucket: str | None = None
     speech_model: str = "long"
     speech_language: str = "en-US"

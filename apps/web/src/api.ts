@@ -1,12 +1,13 @@
-import type { CaptionSegment, Job, Project, ProjectSettings } from './types'
+import type { CaptionSegment, ImageOverlay, Job, Project, ProjectSettings } from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const isFormData = init?.body instanceof FormData
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...(!isFormData && init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
     },
   })
@@ -45,6 +46,42 @@ export const api = {
           end_ms,
         })),
       }),
+    }),
+  updateSocialCaption: (id: string, text: string) =>
+    request<Project>(`/api/projects/${id}/social-caption`, {
+      method: 'PUT',
+      body: JSON.stringify({ text }),
+    }),
+  rewriteSocialCaption: (id: string, text: string) =>
+    request<{ text: string }>(`/api/projects/${id}/social-caption/rewrite`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+  uploadImageOverlay: (id: string, image: File, startMs: number) => {
+    const body = new FormData()
+    body.append('image', image)
+    body.append('start_ms', String(Math.round(startMs)))
+    return request<ImageOverlay>(`/api/projects/${id}/image-overlays`, {
+      method: 'POST',
+      body,
+    })
+  },
+  updateImageOverlay: (projectId: string, overlay: ImageOverlay) =>
+    request<ImageOverlay>(`/api/projects/${projectId}/image-overlays/${overlay.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        start_ms: overlay.start_ms,
+        end_ms: overlay.end_ms,
+        center_x: overlay.center_x,
+        center_y: overlay.center_y,
+        width_percent: overlay.width_percent,
+        rotation_deg: overlay.rotation_deg,
+        opacity: overlay.opacity,
+      }),
+    }),
+  deleteImageOverlay: (projectId: string, overlayId: string) =>
+    request<{ deleted: number }>(`/api/projects/${projectId}/image-overlays/${overlayId}`, {
+      method: 'DELETE',
     }),
   transcribe: (id: string) => request<Job>(`/api/projects/${id}/transcribe`, { method: 'POST' }),
   render: (id: string) => request<Job>(`/api/projects/${id}/render`, { method: 'POST' }),

@@ -18,7 +18,7 @@ from app.services.media import (
     sha256_file,
 )
 from app.services.transcription import TranscriptionError, transcribe_audio
-from app.services.x_download import download_x_video
+from app.services.x_download import download_x_video, extract_post_caption
 
 
 settings = get_settings()
@@ -117,7 +117,10 @@ def import_project_task(project_id: str, job_id: str) -> None:
             session.commit()
 
             metadata = inspect_media(source)
-            project.title = str(info.get("title") or info.get("description") or "Imported X clip")[:160]
+            source_caption = extract_post_caption(info)
+            project.source_caption = source_caption
+            project.social_caption = source_caption
+            project.title = str(info.get("title") or source_caption or "Imported X clip")[:160]
             project.duration_ms = metadata["duration_ms"]
             project.trim_end_ms = metadata["duration_ms"]
             project.width = metadata["width"]
@@ -260,6 +263,8 @@ def render_project_task(project_id: str, render_id: str, job_id: str) -> None:
                 caption_segments=project.captions,
                 captions_enabled=render.captions_enabled,
                 caption_style=render.caption_style,
+                caption_position=render.caption_position,
+                image_overlays=project.image_overlays,
                 progress=report_crop if render.layout == "smart_crop" else None,
             )
 

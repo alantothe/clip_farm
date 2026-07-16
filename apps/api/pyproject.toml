@@ -8,6 +8,7 @@ dependencies = [
   "fastapi>=0.115,<1",
   "google-cloud-speech>=2.30,<3",
   "google-cloud-storage>=2.19,<4",
+  "google-genai>=1.0,<2",
   "huey>=2.5,<3",
   "mediapipe==0.10.21",
   "pydantic-settings>=2.6,<3",

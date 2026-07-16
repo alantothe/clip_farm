@@ -18,6 +18,15 @@ class SourceDownloadError(RuntimeError):
     pass
 
 
+def extract_post_caption(info: dict) -> str | None:
+    """Return the post text exposed by yt-dlp without confusing it with speech captions."""
+    for key in ("description", "fulltitle", "title"):
+        value = info.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def normalize_x_post_url(url: str) -> tuple[str, str]:
     value = url.strip()
     parsed = urlparse(value)

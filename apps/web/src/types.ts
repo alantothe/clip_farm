@@ -1,5 +1,6 @@
 export type Layout = 'smart_crop' | 'fit_background'
 export type CaptionStyle = 'bold' | 'classic' | 'minimal'
+export type CaptionPosition = 'top' | 'middle' | 'bottom'
 
 export interface Artifact {
   id: string
@@ -18,6 +19,21 @@ export interface CaptionSegment {
   edited: boolean
 }
 
+export interface ImageOverlay {
+  id: string
+  name: string
+  start_ms: number
+  end_ms: number
+  center_x: number
+  center_y: number
+  width_percent: number
+  rotation_deg: number
+  opacity: number
+  mime_type: string
+  size_bytes: number
+  url: string
+}
+
 export interface Render {
   id: string
   status: string
@@ -34,6 +50,8 @@ export interface Project {
   source_url: string
   source_post_id: string
   title: string
+  source_caption: string | null
+  social_caption: string | null
   status: string
   transcription_status: string
   error_message: string | null
@@ -47,10 +65,12 @@ export interface Project {
   crop_center_x: number
   captions_enabled: boolean
   caption_style: CaptionStyle
+  caption_position: CaptionPosition
   created_at: string
   updated_at: string
   artifacts: Artifact[]
   captions: CaptionSegment[]
+  image_overlays: ImageOverlay[]
   renders: Render[]
   latest_job: Job | null
 }
@@ -77,4 +97,5 @@ export interface ProjectSettings {
   crop_center_x: number
   captions_enabled: boolean
   caption_style: CaptionStyle
+  caption_position: CaptionPosition
 }

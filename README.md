@@ -5,8 +5,8 @@ Clip Farm converts an authorized landscape video from an individual X post into 
 ## Current Workflow
 
 1. Paste an `x.com/.../status/...` link.
-2. Wait for `yt-dlp` import, preview generation, and optional Google Speech-to-Text captions.
-3. Choose Smart Crop or Full Frame, adjust trim and captions, then render.
+2. Wait for `yt-dlp` import, X post-text extraction, preview generation, and optional Google Speech-to-Text captions.
+3. Choose Smart Crop or Full Frame, adjust trim and captions, and optionally create a brand-safe Instagram caption with Gemini.
 4. Preview and download the vertical MP4.
 
 Only process videos you own or have permission to repurpose.
@@ -30,7 +30,7 @@ npm run setup
 cp apps/api/.env.example apps/api/.env
 ```
 
-Set `GOOGLE_CLOUD_PROJECT` in `apps/api/.env`. A `GCS_BUCKET` is optional: when configured, long videos use one Speech-to-Text batch job; otherwise, Clip Farm transcribes them locally in 55-second chunks through the synchronous API. The app remains usable without Google configuration, but automatic captions require Google Application Default Credentials.
+Set `GOOGLE_CLOUD_PROJECT` in `apps/api/.env`. A `GCS_BUCKET` is optional: when configured, long videos use one Speech-to-Text batch job; otherwise, Clip Farm transcribes them locally in 55-second chunks through the synchronous API. The app remains usable without Google configuration, but automatic speech captions and Gemini social-caption rewrites require Google Application Default Credentials. `GEMINI_MODEL` defaults to `gemini-2.5-flash`.
 
 Start the frontend, API, and worker together from the repository root:
 
@@ -58,4 +58,4 @@ make test
 make build
 ```
 
-Gemini is intentionally outside the MVP processing path. The existing Google Cloud authentication can support a later `google-genai` integration for optional title, description, and hashtag suggestions.
+The Post editor retains the original X post text and a separate upload-caption draft. Gemini can reword that draft and mask profanity while preserving text inside direct double quotes exactly.

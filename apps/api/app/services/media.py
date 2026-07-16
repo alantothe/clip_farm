@@ -14,6 +14,15 @@ class MediaProcessingError(RuntimeError):
     pass
 
 
+def validate_overlay_image(path: Path) -> None:
+    image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise MediaProcessingError("The uploaded file is not a readable image")
+    height, width = image.shape[:2]
+    if width > 8192 or height > 8192 or width * height > 40_000_000:
+        raise MediaProcessingError("Images must be no larger than 8192 px or 40 megapixels")
+
+
 def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -173,7 +182,13 @@ CAPTION_STYLES = {
 
 
 def create_ass_captions(
-    *, segments: list, trim_start_ms: int, trim_end_ms: int, style_name: str, output: Path
+    *,
+    segments: list,
+    trim_start_ms: int,
+    trim_end_ms: int,
+    style_name: str,
+    position: str,
+    output: Path,
 ) -> bool:
     subtitles = pysubs2.SSAFile()
     # Anchor all subtitle measurements to the final vertical canvas. Without an
@@ -183,7 +198,11 @@ def create_ass_captions(
     subtitles.info["PlayResY"] = "1920"
     style_values = CAPTION_STYLES.get(style_name, CAPTION_STYLES["bold"])
     style = pysubs2.SSAStyle(**style_values)
-    style.alignment = pysubs2.Alignment.BOTTOM_CENTER
+    style.alignment = {
+        "top": pysubs2.Alignment.TOP_CENTER,
+        "middle": pysubs2.Alignment.MIDDLE_CENTER,
+        "bottom": pysubs2.Alignment.BOTTOM_CENTER,
+    }.get(position, pysubs2.Alignment.BOTTOM_CENTER)
     subtitles.styles["Default"] = style
     for segment in segments:
         start = max(segment.start_ms, trim_start_ms)
@@ -322,6 +341,8 @@ def render_vertical(
     caption_segments: list,
     captions_enabled: bool,
     caption_style: str,
+    caption_position: str,
+    image_overlays: list,
     progress: Callable[[int], None] | None = None,
 ) -> None:
     duration_seconds = (end_ms - start_ms) / 1000
@@ -331,6 +352,7 @@ def render_vertical(
         trim_start_ms=start_ms,
         trim_end_ms=end_ms,
         style_name=caption_style,
+        position=caption_position,
         output=captions_path,
     )
 
@@ -349,9 +371,51 @@ def render_vertical(
         "192k",
         "-movflags",
         "+faststart",
+        "-t",
+        f"{duration_seconds:.3f}",
         "-shortest",
         str(output),
     ]
+
+    active_overlays = [
+        overlay
+        for overlay in image_overlays
+        if overlay.end_ms > start_ms
+        and overlay.start_ms < end_ms
+        and Path(overlay.artifact.path).is_file()
+    ]
+
+    def add_overlay_inputs(command: list[str]) -> None:
+        for overlay in active_overlays:
+            command.extend(["-loop", "1", "-i", str(overlay.artifact.path)])
+
+    def add_overlay_filters(
+        filters: list[str], base_label: str, first_input: int
+    ) -> str:
+        current = base_label
+        for sequence, overlay in enumerate(active_overlays):
+            image_label = f"image{sequence}"
+            output_label = f"overlay{sequence}"
+            width = max(2, round(1080 * overlay.width_percent / 100))
+            if width % 2:
+                width += 1
+            starts_at = max(0, overlay.start_ms - start_ms) / 1000
+            ends_at = min(end_ms, overlay.end_ms) - start_ms
+            ends_at /= 1000
+            x = f"W*{overlay.center_x / 100:.4f}-w/2"
+            y = f"H*{overlay.center_y / 100:.4f}-h/2"
+            filters.append(
+                f"[{first_input + sequence}:v]scale={width}:-2,format=rgba,"
+                f"colorchannelmixer=aa={overlay.opacity:.3f},"
+                f"rotate={overlay.rotation_deg:.3f}*PI/180:ow=rotw(iw):oh=roth(ih):c=none"
+                f"[{image_label}]"
+            )
+            filters.append(
+                f"[{current}][{image_label}]overlay=x='{x}':y='{y}':"
+                f"enable='between(t,{starts_at:.3f},{ends_at:.3f})':eof_action=pass[{output_label}]"
+            )
+            current = output_label
+        return current
 
     if layout == "smart_crop":
         intermediate = temp_dir / "smart-crop-intermediate.mp4"
@@ -374,26 +438,30 @@ def render_vertical(
             f"{duration_seconds:.3f}",
             "-i",
             str(source),
+        ]
+        add_overlay_inputs(command)
+        filters = ["[0:v]null[base]"]
+        map_label = add_overlay_filters(filters, "base", 2)
+        if has_captions:
+            filters.append(f"[{map_label}]ass={captions_path}[captioned]")
+            map_label = "captioned"
+        command.extend([
+            "-filter_complex",
+            ";".join(filters),
             "-map",
-            "0:v:0",
+            f"[{map_label}]",
             "-map",
             "1:a?",
-        ]
-        if has_captions:
-            command.extend(["-vf", f"ass={captions_path}"])
+        ])
         command.extend(common_output)
     else:
-        filter_graph = (
+        filters = [
             "[0:v]split=2[bg][fg];"
             "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
             "crop=1080:1920,gblur=sigma=38[bgv];"
             "[fg]scale=1000:1780:force_original_aspect_ratio=decrease[fgv];"
             "[bgv][fgv]overlay=(W-w)/2:(H-h)/2[composed]"
-        )
-        map_label = "composed"
-        if has_captions:
-            filter_graph += f";[composed]ass={captions_path}[outv]"
-            map_label = "outv"
+        ]
         command = [
             "ffmpeg",
             "-y",
@@ -403,13 +471,23 @@ def render_vertical(
             f"{duration_seconds:.3f}",
             "-i",
             str(source),
+        ]
+        add_overlay_inputs(command)
+        # The composed base filter above contains its own separators, so append
+        # timed overlays as additional filter-chain entries.
+        map_label = add_overlay_filters(filters, "composed", 1)
+        if has_captions:
+            filters.append(f"[{map_label}]ass={captions_path}[captioned]")
+            map_label = "captioned"
+        command.extend([
             "-filter_complex",
-            filter_graph,
+            ";".join(filters),
             "-map",
             f"[{map_label}]",
             "-map",
             "0:a?",
-        ] + common_output
+        ])
+        command.extend(common_output)
     run_command(command)
 
 

@@ -6,24 +6,32 @@ import {
   Check,
   ChevronLeft,
   Clapperboard,
+  Copy,
   Crop,
   Download,
   ExternalLink,
   Film,
   Focus,
   Import,
+  ImagePlus,
+  Images,
   LoaderCircle,
+  Maximize2,
+  MessageSquareQuote,
+  Move,
   PanelTop,
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Scissors,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react'
 import { api } from '../../api'
-import type { CaptionSegment, CaptionStyle, Job, Layout, Project, ProjectSettings } from '../../types'
+import type { CaptionPosition, CaptionSegment, CaptionStyle, ImageOverlay, Job, Layout, Project, ProjectSettings } from '../../types'
 
 function formatTime(ms: number | null | undefined): string {
   if (ms == null) return '00:00.0'
@@ -50,13 +58,20 @@ function getSettings(project: Project): ProjectSettings {
     crop_center_x: project.crop_center_x,
     captions_enabled: project.captions_enabled,
     caption_style: project.caption_style,
+    caption_position: project.caption_position,
   }
 }
 
-const captionStyleDetails: Record<CaptionStyle, { label: string; font: string; size: number; color: string; placement: string }> = {
-  bold: { label: 'Bold', font: 'DejaVu Sans', size: 72, color: '#FFFFFF', placement: 'Bottom · 15%' },
-  classic: { label: 'Classic', font: 'DejaVu Sans', size: 60, color: '#FFFFFF', placement: 'Bottom · 14%' },
-  minimal: { label: 'Minimal', font: 'DejaVu Sans', size: 56, color: '#F5F6F0', placement: 'Bottom · 13%' },
+const captionStyleDetails: Record<CaptionStyle, { label: string; font: string; size: number; color: string }> = {
+  bold: { label: 'Bold', font: 'DejaVu Sans', size: 72, color: '#FFFFFF' },
+  classic: { label: 'Classic', font: 'DejaVu Sans', size: 60, color: '#FFFFFF' },
+  minimal: { label: 'Minimal', font: 'DejaVu Sans', size: 56, color: '#F5F6F0' },
+}
+
+const captionPositionDetails: Record<CaptionPosition, { label: string; description: string }> = {
+  top: { label: 'Top', description: 'Upper safe area' },
+  middle: { label: 'Middle', description: 'Frame center' },
+  bottom: { label: 'Bottom', description: 'Lower safe area' },
 }
 
 function captionSample(captions: CaptionSegment[]): string {
@@ -271,6 +286,12 @@ function VideoStage({
   outputUrl,
   previewMode,
   onPreviewMode,
+  imageOverlays,
+  selectedOverlayId,
+  onSelectOverlay,
+  onChangeOverlay,
+  onUploadImage,
+  uploadingImage,
 }: {
   project: Project
   settings: ProjectSettings
@@ -278,8 +299,32 @@ function VideoStage({
   outputUrl: string
   previewMode: 'source' | 'output'
   onPreviewMode: (mode: 'source' | 'output') => void
+  imageOverlays: ImageOverlay[]
+  selectedOverlayId: string | null
+  onSelectOverlay: (id: string) => void
+  onChangeOverlay: (id: string, update: Partial<ImageOverlay>) => void
+  onUploadImage: (file: File, startMs: number) => void
+  uploadingImage: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const timelineTrackRef = useRef<HTMLDivElement>(null)
+  const canvasInteraction = useRef<{
+    id: string
+    mode: 'move' | 'resize'
+    clientX: number
+    clientY: number
+    overlay: ImageOverlay
+    rect: DOMRect
+  } | null>(null)
+  const timelineInteraction = useRef<{
+    id: string
+    mode: 'move' | 'trim-start' | 'trim-end'
+    clientX: number
+    overlay: ImageOverlay
+    width: number
+  } | null>(null)
+  const timelineDragged = useRef(false)
   const [timeMs, setTimeMs] = useState(settings.trim_start_ms)
   const previewUrl = artifact(project, 'preview') || artifact(project, 'source')
   const thumbnail = artifact(project, 'thumbnail')
@@ -287,6 +332,91 @@ function VideoStage({
   const activeCaption = captions.find(
     (segment) => timeMs >= segment.start_ms && timeMs <= segment.end_ms,
   )
+  const activeImages = imageOverlays.filter(
+    (overlay) => timeMs >= overlay.start_ms && timeMs < overlay.end_ms,
+  )
+  const duration = project.duration_ms || 1
+
+  function seekTo(nextTimeMs: number) {
+    const clamped = Math.min(duration, Math.max(0, nextTimeMs))
+    setTimeMs(clamped)
+    if (videoRef.current) videoRef.current.currentTime = clamped / 1000
+  }
+
+  function beginCanvasInteraction(
+    event: React.PointerEvent<HTMLElement>,
+    overlay: ImageOverlay,
+    mode: 'move' | 'resize',
+  ) {
+    const rect = stageRef.current?.getBoundingClientRect()
+    if (!rect || previewMode !== 'source') return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    onSelectOverlay(overlay.id)
+    canvasInteraction.current = {
+      id: overlay.id,
+      mode,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      overlay,
+      rect,
+    }
+  }
+
+  function moveCanvasInteraction(event: React.PointerEvent<HTMLElement>) {
+    const interaction = canvasInteraction.current
+    if (!interaction) return
+    const dx = event.clientX - interaction.clientX
+    const dy = event.clientY - interaction.clientY
+    if (interaction.mode === 'move') {
+      onChangeOverlay(interaction.id, {
+        center_x: Math.min(100, Math.max(0, interaction.overlay.center_x + dx / interaction.rect.width * 100)),
+        center_y: Math.min(100, Math.max(0, interaction.overlay.center_y + dy / interaction.rect.height * 100)),
+      })
+    } else {
+      onChangeOverlay(interaction.id, {
+        width_percent: Math.min(100, Math.max(10, interaction.overlay.width_percent + dx / interaction.rect.width * 200)),
+      })
+    }
+  }
+
+  function beginTimelineInteraction(
+    event: React.PointerEvent<HTMLElement>,
+    overlay: ImageOverlay,
+    mode: 'move' | 'trim-start' | 'trim-end',
+  ) {
+    const width = timelineTrackRef.current?.getBoundingClientRect().width
+    if (!width) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    onSelectOverlay(overlay.id)
+    timelineDragged.current = false
+    timelineInteraction.current = { id: overlay.id, mode, clientX: event.clientX, overlay, width }
+  }
+
+  function moveTimelineInteraction(event: React.PointerEvent<HTMLElement>) {
+    const interaction = timelineInteraction.current
+    if (!interaction) return
+    const pixelDelta = event.clientX - interaction.clientX
+    if (Math.abs(pixelDelta) > 2) timelineDragged.current = true
+    const delta = Math.round((pixelDelta / interaction.width * duration) / 100) * 100
+    if (interaction.mode === 'move') {
+      const clipDuration = interaction.overlay.end_ms - interaction.overlay.start_ms
+      const start = Math.min(duration - clipDuration, Math.max(0, interaction.overlay.start_ms + delta))
+      onChangeOverlay(interaction.id, { start_ms: start, end_ms: start + clipDuration })
+      seekTo(start)
+    } else if (interaction.mode === 'trim-start') {
+      const start = Math.min(interaction.overlay.end_ms - 100, Math.max(0, interaction.overlay.start_ms + delta))
+      onChangeOverlay(interaction.id, { start_ms: start })
+      seekTo(start)
+    } else {
+      onChangeOverlay(interaction.id, {
+        end_ms: Math.min(duration, Math.max(interaction.overlay.start_ms + 100, interaction.overlay.end_ms + delta)),
+      })
+    }
+  }
 
   useEffect(() => {
     if (videoRef.current && previewMode === 'source') {
@@ -304,6 +434,7 @@ function VideoStage({
         <span>{previewMode === 'output' ? '1080 × 1920' : `${project.width ?? '—'} × ${project.height ?? '—'}`}</span>
       </div>
       <div
+        ref={stageRef}
         className={`video-stage video-stage--${settings.layout}`}
         style={{ '--crop-x': `${settings.crop_center_x}%`, '--stage-thumb': `url("${thumbnail}")` } as React.CSSProperties}
       >
@@ -329,14 +460,140 @@ function VideoStage({
           <LoaderCircle className="spin stage-loader" size={36} />
         )}
         {previewMode === 'source' && settings.captions_enabled && activeCaption?.text && (
-          <div className={`caption-preview caption-preview--${settings.caption_style}`}>{activeCaption.text}</div>
+          <div className={`caption-preview caption-preview--${settings.caption_style} caption-preview--position-${settings.caption_position}`}>{activeCaption.text}</div>
         )}
+        {previewMode === 'source' && activeImages.map((overlay) => (
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label={`Move ${overlay.name}`}
+            className={`image-overlay-preview ${selectedOverlayId === overlay.id ? 'is-selected' : ''}`}
+            key={overlay.id}
+            style={{
+              left: `${overlay.center_x}%`,
+              top: `${overlay.center_y}%`,
+              width: `${overlay.width_percent}%`,
+              transform: `translate(-50%, -50%) rotate(${overlay.rotation_deg}deg)`,
+            }}
+            onPointerDown={(event) => beginCanvasInteraction(event, overlay, 'move')}
+            onPointerMove={moveCanvasInteraction}
+            onPointerUp={() => { canvasInteraction.current = null }}
+            onPointerCancel={() => { canvasInteraction.current = null }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') onSelectOverlay(overlay.id)
+            }}
+          >
+            <img src={api.mediaUrl(overlay.url)} alt="" draggable={false} style={{ opacity: overlay.opacity }} />
+            {selectedOverlayId === overlay.id && (
+              <>
+                <span className="overlay-move-chip"><Move size={10} /> Drag to move</span>
+                <span
+                  className="overlay-resize-handle"
+                  aria-label="Resize image"
+                  onPointerDown={(event) => beginCanvasInteraction(event, overlay, 'resize')}
+                ><Maximize2 size={12} /></span>
+              </>
+            )}
+          </div>
+        ))}
         <div className="safe-area" aria-hidden="true" />
       </div>
-      <div className="stage-footer">
-        <span>{formatTime(settings.trim_start_ms)}</span>
-        <span className="stage-footer__track"><i style={{ width: `${((settings.trim_end_ms - settings.trim_start_ms) / (project.duration_ms || 1)) * 100}%` }} /></span>
-        <span>{formatTime(settings.trim_end_ms)}</span>
+      <div className="edit-timeline" aria-label="Video edit timeline">
+        <div className="edit-timeline__head">
+          <div>
+            <strong>Mini timeline</strong>
+            <span>{formatTime(timeMs)} / {formatTime(duration)}</span>
+          </div>
+          <label className={`add-image-button ${uploadingImage ? 'is-busy' : ''}`}>
+            {uploadingImage ? <LoaderCircle className="spin" size={15} /> : <ImagePlus size={15} />}
+            {uploadingImage ? 'Adding…' : 'Add image here'}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={uploadingImage || previewMode === 'output'}
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file) onUploadImage(file, timeMs)
+                event.target.value = ''
+              }}
+            />
+          </label>
+        </div>
+        <div className="edit-timeline__ruler" aria-hidden="true">
+          {[0, 25, 50, 75, 100].map((percent) => (
+            <span key={percent} style={{ left: `${percent}%` }}>{formatTime(duration * percent / 100)}</span>
+          ))}
+        </div>
+        <div className="edit-timeline__tracks">
+          <span className="track-label">VIDEO</span>
+          <button
+            type="button"
+            className="timeline-video-track"
+            aria-label="Seek video"
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect()
+              seekTo(((event.clientX - rect.left) / rect.width) * duration)
+            }}
+          >
+            <i
+              className="timeline-trim"
+              style={{
+                left: `${settings.trim_start_ms / duration * 100}%`,
+                width: `${(settings.trim_end_ms - settings.trim_start_ms) / duration * 100}%`,
+              }}
+            />
+          </button>
+          <span className="track-label"><Images size={11} /> IMAGES</span>
+          <div className="timeline-image-track" ref={timelineTrackRef}>
+            {imageOverlays.map((overlay, index) => (
+              <div
+                role="button"
+                tabIndex={0}
+                key={overlay.id}
+                className={`timeline-image-clip ${selectedOverlayId === overlay.id ? 'is-selected' : ''}`}
+                style={{
+                  left: `${overlay.start_ms / duration * 100}%`,
+                  width: `${Math.max(1.5, (overlay.end_ms - overlay.start_ms) / duration * 100)}%`,
+                  '--clip-index': index,
+                } as React.CSSProperties}
+                onClick={() => {
+                  if (timelineDragged.current) {
+                    timelineDragged.current = false
+                    return
+                  }
+                  onSelectOverlay(overlay.id)
+                  seekTo(overlay.start_ms)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    onSelectOverlay(overlay.id)
+                    seekTo(overlay.start_ms)
+                  }
+                }}
+                onPointerDown={(event) => beginTimelineInteraction(event, overlay, 'move')}
+                onPointerMove={moveTimelineInteraction}
+                onPointerUp={() => { timelineInteraction.current = null }}
+                onPointerCancel={() => { timelineInteraction.current = null }}
+                title={`${overlay.name}: ${formatTime(overlay.start_ms)}–${formatTime(overlay.end_ms)}`}
+              >
+                <span
+                  className="timeline-clip-handle timeline-clip-handle--start"
+                  onPointerDown={(event) => beginTimelineInteraction(event, overlay, 'trim-start')}
+                  aria-hidden="true"
+                />
+                <img src={api.mediaUrl(overlay.url)} alt="" />
+                <span className="timeline-image-clip__name">{overlay.name}</span>
+                <span
+                  className="timeline-clip-handle timeline-clip-handle--end"
+                  onPointerDown={(event) => beginTimelineInteraction(event, overlay, 'trim-end')}
+                  aria-hidden="true"
+                />
+              </div>
+            ))}
+            {!imageOverlays.length && <span className="timeline-empty">Add an image at the playhead to start this track.</span>}
+          </div>
+          <i className="timeline-playhead" style={{ left: `calc(58px + (100% - 58px) * ${timeMs / duration})` }} aria-hidden="true" />
+        </div>
       </div>
     </section>
   )
@@ -344,12 +601,16 @@ function VideoStage({
 
 function CaptionStylePicker({
   value,
+  position,
   captions,
   onChange,
+  onPositionChange,
 }: {
   value: CaptionStyle
+  position: CaptionPosition
   captions: CaptionSegment[]
   onChange: (value: CaptionStyle) => void
+  onPositionChange: (value: CaptionPosition) => void
 }) {
   const selected = captionStyleDetails[value]
   const sample = captionSample(captions)
@@ -376,12 +637,34 @@ function CaptionStylePicker({
           )
         })}
       </div>
+      <div className="caption-position-control">
+        <div className="caption-position-control__label">
+          <span>Placement</span>
+          <small>{captionPositionDetails[position].description}</small>
+        </div>
+        <div className="caption-position-options" role="radiogroup" aria-label="Caption placement">
+          {(Object.keys(captionPositionDetails) as CaptionPosition[]).map((placement) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={position === placement}
+              aria-label={`Place captions at ${placement}`}
+              className={position === placement ? 'is-active' : ''}
+              key={placement}
+              onClick={() => onPositionChange(placement)}
+            >
+              <i className={`caption-position-icon caption-position-icon--${placement}`} aria-hidden="true"><span /></i>
+              {captionPositionDetails[placement].label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className={`caption-style-preview caption-style-preview--${value}`}>
         <div className="caption-style-preview__head">
           <span>Style preview</span>
-          <small>{selected.placement} safe</small>
+          <small>{captionPositionDetails[position].label} placement</small>
         </div>
-        <div className="caption-style-preview__frame">
+        <div className={`caption-style-preview__frame caption-style-preview__frame--${position}`}>
           <span className={`caption-style-preview__text caption-style-preview__text--${value}`}>{sample}</span>
         </div>
         <dl>
@@ -390,7 +673,7 @@ function CaptionStylePicker({
           <div><dt>Color</dt><dd><i style={{ background: selected.color }} />{selected.color}</dd></div>
         </dl>
       </div>
-      <p className="caption-placement-note">Bottom-centered with side margins and automatic line wrapping inside the 9:16 safe area.</p>
+      <p className="caption-placement-note">Centered horizontally with side margins and automatic line wrapping inside the 9:16 safe area.</p>
     </div>
   )
 }
@@ -413,31 +696,69 @@ function EditorPanel({
   setSettings,
   captions,
   setCaptions,
+  socialCaption,
+  setSocialCaption,
+  imageOverlays,
+  setImageOverlays,
+  selectedOverlayId,
+  onSelectOverlay,
+  onDeleteImage,
   onSave,
   onTranscribe,
+  onRewriteCaption,
   onRender,
   saving,
   rendering,
+  rewritingCaption,
 }: {
   project: Project
   settings: ProjectSettings
   setSettings: (next: ProjectSettings) => void
   captions: CaptionSegment[]
   setCaptions: (next: CaptionSegment[]) => void
+  socialCaption: string
+  setSocialCaption: (next: string) => void
+  imageOverlays: ImageOverlay[]
+  setImageOverlays: (next: ImageOverlay[]) => void
+  selectedOverlayId: string | null
+  onSelectOverlay: (id: string) => void
+  onDeleteImage: (id: string) => void
   onSave: () => void
   onTranscribe: () => void
+  onRewriteCaption: () => void
   onRender: () => void
   saving: boolean
   rendering: boolean
+  rewritingCaption: boolean
 }) {
-  const [tab, setTab] = useState<'frame' | 'captions'>('frame')
+  const [tab, setTab] = useState<'frame' | 'captions' | 'social' | 'images'>('frame')
+  const [captionCopied, setCaptionCopied] = useState(false)
+  const previousOverlayId = useRef(selectedOverlayId)
   const duration = project.duration_ms ?? 1
+  const selectedOverlay = imageOverlays.find((overlay) => overlay.id === selectedOverlayId) ?? imageOverlays[0]
+
+  function updateSelectedOverlay(update: Partial<ImageOverlay>) {
+    if (!selectedOverlay) return
+    setImageOverlays(imageOverlays.map((overlay) => (
+      overlay.id === selectedOverlay.id ? { ...overlay, ...update } : overlay
+    )))
+  }
+
+  useEffect(() => {
+    if (selectedOverlayId && selectedOverlayId !== previousOverlayId.current) setTab('images')
+    previousOverlayId.current = selectedOverlayId
+  }, [selectedOverlayId])
 
   return (
     <section className="editor-panel">
       <div className="editor-tabs" role="tablist">
         <button className={tab === 'frame' ? 'is-active' : ''} onClick={() => setTab('frame')}><Crop size={17} /> Frame</button>
         <button className={tab === 'captions' ? 'is-active' : ''} onClick={() => setTab('captions')}><Captions size={17} /> Captions <span>{captions.length}</span></button>
+        <button className={tab === 'social' ? 'is-active' : ''} onClick={() => setTab('social')}><MessageSquareQuote size={17} /> Post</button>
+        <button className={tab === 'images' ? 'is-active' : ''} onClick={() => {
+          setTab('images')
+          if (!selectedOverlayId && imageOverlays[0]) onSelectOverlay(imageOverlays[0].id)
+        }}><Images size={17} /> Images <span>{imageOverlays.length}</span></button>
       </div>
 
       <div className="editor-panel__body">
@@ -494,7 +815,7 @@ function EditorPanel({
               </dl>
             </div>
           </>
-        ) : (
+        ) : tab === 'captions' ? (
           <>
             <div className="caption-head">
               <label className="toggle-row">
@@ -504,8 +825,10 @@ function EditorPanel({
               </label>
               <CaptionStylePicker
                 value={settings.caption_style}
+                position={settings.caption_position}
                 captions={captions}
                 onChange={(caption_style) => setSettings({ ...settings, caption_style })}
+                onPositionChange={(caption_position) => setSettings({ ...settings, caption_position })}
               />
             </div>
             {captions.length ? (
@@ -535,6 +858,132 @@ function EditorPanel({
               </div>
             )}
           </>
+        ) : tab === 'social' ? (
+          <div className="social-caption-editor">
+            <div className="social-caption-editor__intro">
+              <div>
+                <span>Instagram caption draft</span>
+                <strong>Post text travels with the clip.</strong>
+              </div>
+              <MessageSquareQuote size={25} />
+            </div>
+            <label className="social-caption-field">
+              <span>Extracted from X</span>
+              <textarea value={project.source_caption ?? ''} rows={5} readOnly placeholder="No post text was exposed by X." />
+            </label>
+            <label className="social-caption-field social-caption-field--draft">
+              <span>Upload caption <output className={socialCaption.length > 2200 ? 'is-over' : ''}>{socialCaption.length} / 2,200</output></span>
+              <textarea
+                value={socialCaption}
+                rows={8}
+                maxLength={5000}
+                onChange={(event) => setSocialCaption(event.target.value)}
+                placeholder="Write the caption that will accompany the uploaded Reel."
+              />
+            </label>
+            <p className="social-caption-editor__note">
+              AI rewrites the surrounding text in brand-safe language and masks profanity. Text inside direct double quotes stays verbatim.
+            </p>
+            <div className="social-caption-editor__actions">
+              <button className="secondary-button" onClick={() => {
+                void navigator.clipboard.writeText(socialCaption).then(() => {
+                  setCaptionCopied(true)
+                  window.setTimeout(() => setCaptionCopied(false), 1500)
+                }).catch(() => setCaptionCopied(false))
+              }} disabled={!socialCaption.trim()}>
+                {captionCopied ? <Check size={16} /> : <Copy size={16} />} {captionCopied ? 'Copied' : 'Copy'}
+              </button>
+              <button className="ai-caption-button" onClick={onRewriteCaption} disabled={rewritingCaption || !socialCaption.trim()}>
+                {rewritingCaption ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+                Rewrite &amp; censor
+              </button>
+            </div>
+          </div>
+        ) : selectedOverlay ? (
+          <div className="image-editor">
+            <div className="image-editor__selected">
+              <img src={api.mediaUrl(selectedOverlay.url)} alt="" />
+              <div>
+                <strong>{selectedOverlay.name}</strong>
+                <span>{formatBytes(selectedOverlay.size_bytes)}</span>
+              </div>
+              <button className="image-delete-button" onClick={() => onDeleteImage(selectedOverlay.id)} title="Remove image overlay">
+                <Trash2 size={16} />
+              </button>
+            </div>
+            <div className="image-editor__gesture-hint"><Move size={13} /> Drag in the preview to move · use the corner handle to resize</div>
+            <div className="image-quick-tools" aria-label="Quick image tools">
+              <button onClick={() => updateSelectedOverlay({ center_x: 50, center_y: 50 })}><Move size={14} /> Center</button>
+              <button onClick={() => updateSelectedOverlay({ center_x: 50, center_y: 50, width_percent: 88 })}><Maximize2 size={14} /> Fit safe</button>
+              <button onClick={() => updateSelectedOverlay({ center_x: 50, center_y: 50, width_percent: 65, rotation_deg: 0, opacity: 1 })}><RotateCcw size={14} /> Reset</button>
+            </div>
+            <div className="control-group image-time-controls">
+              <div className="control-label"><span>On screen</span><output>{formatTime(selectedOverlay.end_ms - selectedOverlay.start_ms)}</output></div>
+              <label>Start <time>{formatTime(selectedOverlay.start_ms)}</time></label>
+              <input
+                type="range"
+                min="0"
+                max={Math.max(0, selectedOverlay.end_ms - 100)}
+                step="100"
+                value={selectedOverlay.start_ms}
+                onChange={(event) => updateSelectedOverlay({ start_ms: Number(event.target.value) })}
+              />
+              <label>End <time>{formatTime(selectedOverlay.end_ms)}</time></label>
+              <input
+                type="range"
+                min={selectedOverlay.start_ms + 100}
+                max={duration}
+                step="100"
+                value={selectedOverlay.end_ms}
+                onChange={(event) => updateSelectedOverlay({ end_ms: Number(event.target.value) })}
+              />
+            </div>
+            <div className="control-group">
+              <div className="control-label"><span>Image size</span><output>{Math.round(selectedOverlay.width_percent)}%</output></div>
+              <input type="range" min="10" max="100" value={selectedOverlay.width_percent} onChange={(event) => updateSelectedOverlay({ width_percent: Number(event.target.value) })} />
+              <div className="image-transform-row">
+                <label>Rotation <output>{Math.round(selectedOverlay.rotation_deg)}°</output></label>
+                <input type="range" min="-180" max="180" step="1" value={selectedOverlay.rotation_deg} onChange={(event) => updateSelectedOverlay({ rotation_deg: Number(event.target.value) })} />
+                <label>Opacity <output>{Math.round(selectedOverlay.opacity * 100)}%</output></label>
+                <input type="range" min="0.1" max="1" step="0.05" value={selectedOverlay.opacity} onChange={(event) => updateSelectedOverlay({ opacity: Number(event.target.value) })} />
+              </div>
+            </div>
+            <div className="control-group image-position-controls">
+              <div className="control-label"><span>Position</span><output>{Math.round(selectedOverlay.center_x)} · {Math.round(selectedOverlay.center_y)}</output></div>
+              <label>Horizontal</label>
+              <input type="range" min="0" max="100" value={selectedOverlay.center_x} onChange={(event) => updateSelectedOverlay({ center_x: Number(event.target.value) })} />
+              <label>Vertical</label>
+              <input type="range" min="0" max="100" value={selectedOverlay.center_y} onChange={(event) => updateSelectedOverlay({ center_y: Number(event.target.value) })} />
+              <div className="position-pad" aria-label="Position presets">
+                {[20, 50, 80].flatMap((centerY) => [20, 50, 80].map((centerX) => (
+                  <button
+                    key={`${centerX}-${centerY}`}
+                    aria-label={`Position image at ${centerX} percent horizontal, ${centerY} percent vertical`}
+                    className={Math.abs(selectedOverlay.center_x - centerX) < 6 && Math.abs(selectedOverlay.center_y - centerY) < 6 ? 'is-active' : ''}
+                    onClick={() => updateSelectedOverlay({ center_x: centerX, center_y: centerY })}
+                  ><i /></button>
+                )))}
+              </div>
+            </div>
+            {imageOverlays.length > 1 && (
+              <div className="image-layer-list">
+                <span>Image clips</span>
+                {imageOverlays.map((overlay) => (
+                  <button key={overlay.id} className={overlay.id === selectedOverlay.id ? 'is-active' : ''} onClick={() => onSelectOverlay(overlay.id)}>
+                    <img src={api.mediaUrl(overlay.url)} alt="" />
+                    <span>{overlay.name}</span>
+                    <time>{formatTime(overlay.start_ms)}</time>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="image-empty">
+            <span><ImagePlus size={27} /></span>
+            <strong>No image clips yet</strong>
+            <p>Move the playhead under the preview, then choose <em>Add image here</em>.</p>
+          </div>
         )}
       </div>
 
@@ -600,18 +1049,28 @@ function Workspace({ project, projects, activeId, onSelect, onNew, onDelete, onC
   const [railCollapsed, setRailCollapsed] = useState(false)
   const [settings, setSettings] = useState<ProjectSettings>(() => getSettings(project))
   const [captions, setCaptions] = useState<CaptionSegment[]>(project.captions)
+  const [socialCaption, setSocialCaption] = useState(project.social_caption ?? project.source_caption ?? '')
+  const [imageOverlays, setImageOverlays] = useState<ImageOverlay[]>(project.image_overlays)
+  const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null)
   const [previewMode, setPreviewMode] = useState<'source' | 'output'>('source')
   const [jobId, setJobId] = useState<string | null>(null)
 
   useEffect(() => {
     setSettings(getSettings(project))
     setCaptions(project.captions)
+    setSocialCaption(project.social_caption ?? project.source_caption ?? '')
+    setImageOverlays(project.image_overlays)
+    setSelectedOverlayId((current) => project.image_overlays.some((overlay) => overlay.id === current)
+      ? current
+      : null)
   }, [project.id, project.updated_at])
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       const updated = await api.updateProject(project.id, settings)
       if (captions.length) await api.updateCaptions(project.id, captions)
+      await api.updateSocialCaption(project.id, socialCaption)
+      for (const overlay of imageOverlays) await api.updateImageOverlay(project.id, overlay)
       return updated
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects'] }),
@@ -626,6 +1085,29 @@ function Workspace({ project, projects, activeId, onSelect, onNew, onDelete, onC
   const transcribeMutation = useMutation({
     mutationFn: () => api.transcribe(project.id),
     onSuccess: (job) => setJobId(job.id),
+  })
+  const rewriteCaptionMutation = useMutation({
+    mutationFn: () => api.rewriteSocialCaption(project.id, socialCaption),
+    onSuccess: ({ text }) => {
+      setSocialCaption(text)
+      void queryClient.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+  const uploadImageMutation = useMutation({
+    mutationFn: ({ file, startMs }: { file: File; startMs: number }) => api.uploadImageOverlay(project.id, file, startMs),
+    onSuccess: (overlay) => {
+      setImageOverlays((current) => [...current, overlay])
+      setSelectedOverlayId(overlay.id)
+      void queryClient.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+  const deleteImageMutation = useMutation({
+    mutationFn: (overlayId: string) => api.deleteImageOverlay(project.id, overlayId),
+    onSuccess: (_result, overlayId) => {
+      setImageOverlays((current) => current.filter((overlay) => overlay.id !== overlayId))
+      setSelectedOverlayId((current) => current === overlayId ? null : current)
+      void queryClient.invalidateQueries({ queryKey: ['projects'] })
+    },
   })
   const jobQuery = useQuery({
     queryKey: ['job', jobId],
@@ -678,23 +1160,50 @@ function Workspace({ project, projects, activeId, onSelect, onNew, onDelete, onC
           <ImportFailure project={project} />
         ) : (
           <div className="editing-grid">
-            <VideoStage project={project} settings={settings} captions={captions} outputUrl={outputUrl} previewMode={previewMode} onPreviewMode={setPreviewMode} />
+            <VideoStage
+              project={project}
+              settings={settings}
+              captions={captions}
+              outputUrl={outputUrl}
+              previewMode={previewMode}
+              onPreviewMode={setPreviewMode}
+              imageOverlays={imageOverlays}
+              selectedOverlayId={selectedOverlayId}
+              onSelectOverlay={setSelectedOverlayId}
+              onChangeOverlay={(id, update) => setImageOverlays((current) => current.map((overlay) => (
+                overlay.id === id ? { ...overlay, ...update } : overlay
+              )))}
+              onUploadImage={(file, startMs) => uploadImageMutation.mutate({ file, startMs })}
+              uploadingImage={uploadImageMutation.isPending}
+            />
             <EditorPanel
               project={project}
               settings={settings}
               setSettings={setSettings}
               captions={captions}
               setCaptions={setCaptions}
+              socialCaption={socialCaption}
+              setSocialCaption={setSocialCaption}
+              imageOverlays={imageOverlays}
+              setImageOverlays={setImageOverlays}
+              selectedOverlayId={selectedOverlayId}
+              onSelectOverlay={setSelectedOverlayId}
+              onDeleteImage={(id) => deleteImageMutation.mutate(id)}
               onSave={() => saveMutation.mutate()}
               onTranscribe={() => transcribeMutation.mutate()}
+              onRewriteCaption={() => rewriteCaptionMutation.mutate()}
               onRender={() => renderMutation.mutate()}
-              saving={saveMutation.isPending}
+              saving={saveMutation.isPending || deleteImageMutation.isPending}
               rendering={renderMutation.isPending || (jobQuery.data?.kind === 'render' && !['complete', 'failed'].includes(jobQuery.data.status))}
+              rewritingCaption={rewriteCaptionMutation.isPending}
             />
           </div>
         )}
         {jobQuery.data && <JobBanner job={jobQuery.data} />}
         {renderMutation.error && <div className="toast-error">{renderMutation.error.message}</div>}
+        {uploadImageMutation.error && <div className="toast-error">{uploadImageMutation.error.message}</div>}
+        {deleteImageMutation.error && <div className="toast-error">{deleteImageMutation.error.message}</div>}
+        {rewriteCaptionMutation.error && <div className="toast-error">{rewriteCaptionMutation.error.message}</div>}
       </main>
     </div>
   )

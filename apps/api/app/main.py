@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 import shutil
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy import select
@@ -12,16 +12,23 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
 from app.database import get_db, init_db
-from app.models import Artifact, CaptionSegment, Job, Project, Render
+from app.models import Artifact, CaptionSegment, ImageOverlay, Job, Project, Render
 from app.schemas import (
     CaptionUpdateRequest,
     DeletionOut,
     ImportRequest,
+    ImageOverlayOut,
+    ImageOverlayUpdate,
     JobOut,
     ProjectOut,
     ProjectUpdate,
+    SocialCaptionOut,
+    SocialCaptionRewriteRequest,
+    SocialCaptionUpdate,
 )
+from app.services.caption_rewrite import CaptionRewriteError, rewrite_social_caption
 from app.services.x_download import normalize_x_post_url
+from app.services.media import MediaProcessingError, validate_overlay_image
 from app.tasks import import_project_task, render_project_task, transcribe_project_task
 
 
@@ -51,6 +58,7 @@ def project_query():
     return select(Project).options(
         selectinload(Project.artifacts),
         selectinload(Project.captions),
+        selectinload(Project.image_overlays).selectinload(ImageOverlay.artifact),
         selectinload(Project.renders),
         selectinload(Project.jobs),
     )
@@ -73,8 +81,18 @@ def serialize_project(project: Project) -> ProjectOut:
     for render in output.renders:
         if render.status == "complete":
             render.download_url = f"{settings.api_prefix}/renders/{render.id}/download"
+    for overlay in output.image_overlays:
+        source = next(item for item in project.image_overlays if item.id == overlay.id)
+        overlay.url = f"{settings.api_prefix}/artifacts/{source.artifact_id}"
     output.renders.sort(key=lambda item: item.created_at, reverse=True)
     return output
+
+
+def image_overlay_or_404(session: Session, project_id: str, overlay_id: str) -> ImageOverlay:
+    overlay = session.get(ImageOverlay, overlay_id)
+    if not overlay or overlay.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Image overlay not found")
+    return overlay
 
 
 def ensure_project_can_be_deleted(project: Project) -> None:
@@ -208,6 +226,163 @@ def update_captions(
     return serialize_project(get_project_or_404(session, project.id))
 
 
+@app.put(
+    f"{settings.api_prefix}/projects/{{project_id}}/social-caption",
+    response_model=ProjectOut,
+)
+def update_social_caption(
+    project_id: str, payload: SocialCaptionUpdate, session: Session = Depends(get_db)
+) -> ProjectOut:
+    project = get_project_or_404(session, project_id)
+    project.social_caption = payload.text.strip()
+    project.updated_at = datetime.now(timezone.utc)
+    session.commit()
+    return serialize_project(get_project_or_404(session, project.id))
+
+
+@app.post(
+    f"{settings.api_prefix}/projects/{{project_id}}/social-caption/rewrite",
+    response_model=SocialCaptionOut,
+)
+def rewrite_project_social_caption(
+    project_id: str,
+    payload: SocialCaptionRewriteRequest,
+    session: Session = Depends(get_db),
+) -> SocialCaptionOut:
+    project = get_project_or_404(session, project_id)
+    try:
+        rewritten = rewrite_social_caption(caption=payload.text, settings=settings)
+    except CaptionRewriteError as exc:
+        status_code = 503 if not settings.google_cloud_project else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    project.social_caption = rewritten
+    project.updated_at = datetime.now(timezone.utc)
+    session.commit()
+    return SocialCaptionOut(text=rewritten)
+
+
+@app.post(
+    f"{settings.api_prefix}/projects/{{project_id}}/image-overlays",
+    response_model=ImageOverlayOut,
+    status_code=201,
+)
+async def upload_image_overlay(
+    project_id: str,
+    image: UploadFile = File(),
+    start_ms: int = Form(0),
+    session: Session = Depends(get_db),
+) -> ImageOverlayOut:
+    project = get_project_or_404(session, project_id)
+    duration = project.duration_ms or 0
+    if duration < 100:
+        raise HTTPException(status_code=409, detail="The source video is not ready")
+    allowed_types = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    suffix = allowed_types.get(image.content_type or "")
+    if not suffix:
+        raise HTTPException(status_code=415, detail="Use a JPG, PNG, or WebP image")
+
+    start = min(max(0, start_ms), duration - 100)
+    end = min(duration, start + 3000)
+    project_dir = settings.projects_dir / project.id / "overlays"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    artifact = Artifact(
+        project_id=project.id,
+        kind="overlay_image",
+        path="",
+        mime_type=image.content_type or "image/jpeg",
+        size_bytes=0,
+    )
+    session.add(artifact)
+    session.flush()
+    image_path = project_dir / f"{artifact.id}{suffix}"
+    size = 0
+    try:
+        with image_path.open("wb") as output:
+            while chunk := await image.read(1024 * 1024):
+                size += len(chunk)
+                if size > 10 * 1024 * 1024:
+                    raise HTTPException(status_code=413, detail="Images must be 10 MB or smaller")
+                output.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=422, detail="The uploaded image is empty")
+        try:
+            validate_overlay_image(image_path)
+        except MediaProcessingError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        artifact.path = str(image_path)
+        artifact.size_bytes = size
+        overlay = ImageOverlay(
+            project_id=project.id,
+            artifact_id=artifact.id,
+            name=Path(image.filename or "Image").name[:120],
+            start_ms=start,
+            end_ms=end,
+        )
+        session.add(overlay)
+        project.updated_at = datetime.now(timezone.utc)
+        session.commit()
+    except Exception:
+        image_path.unlink(missing_ok=True)
+        session.rollback()
+        raise
+    output = ImageOverlayOut.model_validate(overlay)
+    output.url = f"{settings.api_prefix}/artifacts/{artifact.id}"
+    return output
+
+
+@app.patch(
+    f"{settings.api_prefix}/projects/{{project_id}}/image-overlays/{{overlay_id}}",
+    response_model=ImageOverlayOut,
+)
+def update_image_overlay(
+    project_id: str,
+    overlay_id: str,
+    payload: ImageOverlayUpdate,
+    session: Session = Depends(get_db),
+) -> ImageOverlayOut:
+    project = get_project_or_404(session, project_id)
+    overlay = image_overlay_or_404(session, project_id, overlay_id)
+    updates = payload.model_dump(exclude_none=True)
+    start = updates.get("start_ms", overlay.start_ms)
+    end = updates.get("end_ms", overlay.end_ms)
+    if end <= start:
+        raise HTTPException(status_code=422, detail="Image end must be after its start")
+    if project.duration_ms is not None and end > project.duration_ms:
+        raise HTTPException(status_code=422, detail="Image timing exceeds source duration")
+    for field, value in updates.items():
+        setattr(overlay, field, value)
+    project.updated_at = datetime.now(timezone.utc)
+    session.commit()
+    output = ImageOverlayOut.model_validate(overlay)
+    output.url = f"{settings.api_prefix}/artifacts/{overlay.artifact_id}"
+    return output
+
+
+@app.delete(
+    f"{settings.api_prefix}/projects/{{project_id}}/image-overlays/{{overlay_id}}",
+    response_model=DeletionOut,
+)
+def delete_image_overlay(
+    project_id: str,
+    overlay_id: str,
+    session: Session = Depends(get_db),
+) -> DeletionOut:
+    project = get_project_or_404(session, project_id)
+    overlay = image_overlay_or_404(session, project_id, overlay_id)
+    artifact = overlay.artifact
+    image_path = Path(artifact.path)
+    session.delete(overlay)
+    session.delete(artifact)
+    project.updated_at = datetime.now(timezone.utc)
+    session.commit()
+    image_path.unlink(missing_ok=True)
+    return DeletionOut(deleted=1)
+
+
 @app.post(f"{settings.api_prefix}/projects/{{project_id}}/transcribe", response_model=JobOut, status_code=202)
 def transcribe_project(project_id: str, session: Session = Depends(get_db)) -> Job:
     project = get_project_or_404(session, project_id)
@@ -233,6 +408,7 @@ def render_project(project_id: str, session: Session = Depends(get_db)) -> Job:
         trim_end_ms=end_ms,
         captions_enabled=project.captions_enabled,
         caption_style=project.caption_style,
+        caption_position=project.caption_position,
     )
     session.add(render)
     session.flush()

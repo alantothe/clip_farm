@@ -1,7 +1,12 @@
 import pytest
 
 from app.config import Settings
-from app.services.x_download import SourceDownloadError, download_x_video, normalize_x_post_url
+from app.services.x_download import (
+    SourceDownloadError,
+    download_x_video,
+    extract_post_caption,
+    normalize_x_post_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -55,3 +60,9 @@ def test_cookie_file_setting_rejects_a_directory(tmp_path) -> None:
             output_dir=tmp_path / "output",
             settings=settings,
         )
+
+
+def test_extract_post_caption_prefers_description() -> None:
+    assert extract_post_caption({"description": "  Post text  ", "title": "Fallback"}) == "Post text"
+    assert extract_post_caption({"description": "", "title": "Fallback"}) == "Fallback"
+    assert extract_post_caption({}) is None

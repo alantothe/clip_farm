@@ -48,6 +48,8 @@ test('shows detailed diagnostics for a failed import', async () => {
     source_url: 'https://x.com/i/status/123',
     source_post_id: '123',
     title: 'Failed clip',
+    source_caption: null,
+    social_caption: null,
     status: 'failed',
     transcription_status: 'pending',
     error_message: 'Stage: Reading X post\nError type: SourceDownloadError\nMessage: Cookie configuration is invalid',
@@ -61,10 +63,12 @@ test('shows detailed diagnostics for a failed import', async () => {
     crop_center_x: 50,
     captions_enabled: true,
     caption_style: 'bold',
+    caption_position: 'bottom',
     created_at: '2026-07-16T12:00:00Z',
     updated_at: '2026-07-16T12:01:00Z',
     artifacts: [],
     captions: [],
+    image_overlays: [],
     renders: [],
     latest_job: {
       id: 'job-1',
@@ -101,6 +105,8 @@ test('previews caption presets and unsaved caption edits', async () => {
     source_url: 'https://x.com/i/status/456',
     source_post_id: '456',
     title: 'Ready clip',
+    source_caption: 'A useful source post',
+    social_caption: 'A useful source post',
     status: 'ready',
     transcription_status: 'complete',
     error_message: null,
@@ -114,6 +120,7 @@ test('previews caption presets and unsaved caption edits', async () => {
     crop_center_x: 50,
     captions_enabled: true,
     caption_style: 'bold',
+    caption_position: 'bottom',
     created_at: '2026-07-16T12:00:00Z',
     updated_at: '2026-07-16T12:01:00Z',
     artifacts: [],
@@ -124,6 +131,20 @@ test('previews caption presets and unsaved caption edits', async () => {
       end_ms: 1200,
       text: 'Original caption',
       edited: false,
+    }],
+    image_overlays: [{
+      id: 'image-1',
+      name: 'callout.png',
+      start_ms: 0,
+      end_ms: 3000,
+      center_x: 50,
+      center_y: 50,
+      width_percent: 65,
+      rotation_deg: 0,
+      opacity: 1,
+      mime_type: 'image/png',
+      size_bytes: 1024,
+      url: '/api/artifacts/image-1',
     }],
     renders: [],
     latest_job: null,
@@ -140,13 +161,29 @@ test('previews caption presets and unsaved caption edits', async () => {
   const minimal = screen.getByRole('radio', { name: /Minimal, DejaVu Sans, 56 pixels/ })
   fireEvent.click(minimal)
   expect(minimal).toHaveAttribute('aria-checked', 'true')
-  expect(screen.getByText('Bottom · 13% safe')).toBeVisible()
+  const topPlacement = screen.getByRole('radio', { name: 'Place captions at top' })
+  fireEvent.click(topPlacement)
+  expect(topPlacement).toHaveAttribute('aria-checked', 'true')
+  expect(screen.getByText('Top placement')).toBeVisible()
+  expect(document.querySelector('.caption-preview')).toHaveClass('caption-preview--position-top')
 
   const captionEditor = screen.getByRole('textbox')
   fireEvent.change(captionEditor, { target: { value: 'Edited before saving' } })
   expect(captionEditor).toHaveValue('Edited before saving')
   expect(document.querySelector('.caption-preview')).toHaveTextContent('Edited before saving')
   expect(document.querySelector('.caption-style-preview__text')).toHaveTextContent('Edited before saving')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Post' }))
+  const socialCaptionFields = screen.getAllByRole('textbox')
+  expect(socialCaptionFields).toHaveLength(2)
+  expect(socialCaptionFields[0]).toHaveAttribute('readonly')
+  expect(socialCaptionFields[0]).toHaveValue('A useful source post')
+  expect(screen.getByRole('button', { name: 'Rewrite & censor' })).toBeEnabled()
+
+  fireEvent.click(screen.getByRole('button', { name: /Images 1/ }))
+  expect(screen.getByText(/Drag in the preview to move/)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Fit safe' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Reset' })).toBeVisible()
 })
 
 test('deletes one video or clears the full video library after confirmation', async () => {
@@ -155,6 +192,8 @@ test('deletes one video or clears the full video library after confirmation', as
     source_url: `https://x.com/i/status/${id}`,
     source_post_id: id,
     title,
+    source_caption: null,
+    social_caption: null,
     status: 'ready',
     transcription_status: 'complete',
     error_message: null,
@@ -168,10 +207,12 @@ test('deletes one video or clears the full video library after confirmation', as
     crop_center_x: 50,
     captions_enabled: true,
     caption_style: 'bold',
+    caption_position: 'bottom',
     created_at: '2026-07-16T12:00:00Z',
     updated_at: '2026-07-16T12:01:00Z',
     artifacts: [],
     captions: [],
+    image_overlays: [],
     renders: [],
     latest_job: null,
   })
