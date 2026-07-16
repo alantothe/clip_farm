@@ -1,3 +1,7 @@
+from datetime import timedelta
+from types import SimpleNamespace
+
+from app.services import transcription
 from app.services.transcription import TranscriptWord, segment_words
 
 
@@ -27,3 +31,59 @@ def test_segment_words_caps_caption_length() -> None:
     assert len(segments[0]["text"].split()) == 7
     assert len(segments[1]["text"].split()) == 2
 
+
+def test_result_words_can_be_offset_to_the_source_timeline() -> None:
+    word = SimpleNamespace(
+        word="continued",
+        start_offset=timedelta(milliseconds=100),
+        end_offset=timedelta(milliseconds=450),
+    )
+    result = SimpleNamespace(
+        alternatives=[SimpleNamespace(words=[word], transcript="continued")],
+        result_end_offset=timedelta(milliseconds=450),
+    )
+
+    words = transcription._words_from_results([result], offset_ms=55_000)
+
+    assert words == [TranscriptWord("continued", 55_100, 55_450)]
+
+
+def test_long_audio_is_chunked_without_a_gcs_bucket(monkeypatch, tmp_path) -> None:
+    audio = tmp_path / "audio.flac"
+    audio.write_bytes(b"source audio")
+    chunk_requests: list[tuple[int, int]] = []
+
+    def fake_extract(*, audio, output, start_ms, duration_ms):
+        chunk_requests.append((start_ms, duration_ms))
+        output.write_bytes(b"chunk audio")
+
+    result = SimpleNamespace(
+        alternatives=[
+            SimpleNamespace(
+                words=[
+                    SimpleNamespace(
+                        word="word",
+                        start_offset=timedelta(milliseconds=100),
+                        end_offset=timedelta(milliseconds=300),
+                    )
+                ],
+                transcript="word",
+            )
+        ],
+        result_end_offset=timedelta(milliseconds=300),
+    )
+    client = SimpleNamespace(
+        recognize=lambda **_kwargs: SimpleNamespace(results=[result]),
+    )
+    monkeypatch.setattr(transcription, "_extract_audio_chunk", fake_extract)
+
+    words = transcription._transcribe_audio_chunks(
+        client=client,
+        recognizer="projects/example/locations/global/recognizers/_",
+        config=transcription.cloud_speech.RecognitionConfig(),
+        audio=audio,
+        duration_ms=120_000,
+    )
+
+    assert chunk_requests == [(0, 55_000), (55_000, 55_000), (110_000, 10_000)]
+    assert [word.start_ms for word in words] == [100, 55_100, 110_100]

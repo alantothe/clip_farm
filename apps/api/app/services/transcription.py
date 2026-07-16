@@ -1,3 +1,5 @@
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +21,10 @@ class TranscriptionError(RuntimeError):
     pass
 
 
+INLINE_RECOGNITION_LIMIT_MS = 55_000
+INLINE_CONTENT_LIMIT_BYTES = 10_000_000
+
+
 def _project_id(settings: Settings) -> str:
     if settings.google_cloud_project:
         return settings.google_cloud_project
@@ -34,27 +40,87 @@ def _duration_ms(value) -> int:
     return round(value.total_seconds() * 1000)
 
 
-def _words_from_results(results) -> list[TranscriptWord]:
+def _words_from_results(results, *, offset_ms: int = 0) -> list[TranscriptWord]:
     words: list[TranscriptWord] = []
-    prior_end = 0
+    prior_end = offset_ms
     for result in results:
         if not result.alternatives:
             continue
         alternative = result.alternatives[0]
         if alternative.words:
             for word in alternative.words:
-                start_ms = _duration_ms(word.start_offset)
-                end_ms = max(start_ms + 1, _duration_ms(word.end_offset))
+                start_ms = offset_ms + _duration_ms(word.start_offset)
+                end_ms = max(start_ms + 1, offset_ms + _duration_ms(word.end_offset))
                 words.append(TranscriptWord(word.word.strip(), start_ms, end_ms))
                 prior_end = end_ms
         elif alternative.transcript.strip():
-            end_ms = max(prior_end + 1000, _duration_ms(result.result_end_offset))
+            end_ms = max(
+                prior_end + 1000,
+                offset_ms + _duration_ms(result.result_end_offset),
+            )
             tokens = alternative.transcript.strip().split()
             step = max(1, (end_ms - prior_end) // max(1, len(tokens)))
             for index, token in enumerate(tokens):
                 start = prior_end + index * step
                 words.append(TranscriptWord(token, start, min(end_ms, start + step)))
             prior_end = end_ms
+    return words
+
+
+def _extract_audio_chunk(*, audio: Path, output: Path, start_ms: int, duration_ms: int) -> None:
+    command = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        f"{start_ms / 1000:.3f}",
+        "-i",
+        str(audio),
+        "-t",
+        f"{duration_ms / 1000:.3f}",
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "flac",
+        str(output),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        raise TranscriptionError("FFmpeg is required to caption long videos") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "FFmpeg could not split the audio").strip().splitlines()
+        raise TranscriptionError(detail[-1] if detail else "FFmpeg could not split the audio") from exc
+
+
+def _transcribe_audio_chunks(
+    *, client, recognizer: str, config, audio: Path, duration_ms: int
+) -> list[TranscriptWord]:
+    if duration_ms <= 0:
+        raise TranscriptionError("The video duration is unavailable for captioning")
+
+    words: list[TranscriptWord] = []
+    with tempfile.TemporaryDirectory(prefix="caption-chunks-", dir=audio.parent) as temp_dir:
+        chunk_dir = Path(temp_dir)
+        for start_ms in range(0, duration_ms, INLINE_RECOGNITION_LIMIT_MS):
+            chunk_duration_ms = min(INLINE_RECOGNITION_LIMIT_MS, duration_ms - start_ms)
+            chunk = chunk_dir / f"chunk-{start_ms:010d}.flac"
+            _extract_audio_chunk(
+                audio=audio,
+                output=chunk,
+                start_ms=start_ms,
+                duration_ms=chunk_duration_ms,
+            )
+            response = client.recognize(
+                request=cloud_speech.RecognizeRequest(
+                    recognizer=recognizer,
+                    config=config,
+                    content=chunk.read_bytes(),
+                )
+            )
+            words.extend(_words_from_results(response.results, offset_ms=start_ms))
     return words
 
 
@@ -101,7 +167,10 @@ def transcribe_audio(*, audio: Path, duration_ms: int, settings: Settings) -> li
     recognizer = f"projects/{project}/locations/{settings.google_cloud_location}/recognizers/_"
 
     try:
-        if duration_ms < 60_000 and audio.stat().st_size < 10_000_000:
+        if (
+            duration_ms <= INLINE_RECOGNITION_LIMIT_MS
+            and audio.stat().st_size < INLINE_CONTENT_LIMIT_BYTES
+        ):
             response = client.recognize(
                 request=cloud_speech.RecognizeRequest(
                     recognizer=recognizer,
@@ -110,11 +179,7 @@ def transcribe_audio(*, audio: Path, duration_ms: int, settings: Settings) -> li
                 )
             )
             words = _words_from_results(response.results)
-        else:
-            if not settings.gcs_bucket:
-                raise TranscriptionError(
-                    "GCS_BUCKET is required to transcribe videos of 60 seconds or longer"
-                )
+        elif settings.gcs_bucket:
             storage_client = storage.Client(project=project)
             bucket = storage_client.bucket(settings.gcs_bucket)
             object_name = f"clip-farm/transcription/{audio.parent.name}/{audio.name}"
@@ -136,10 +201,17 @@ def transcribe_audio(*, audio: Path, duration_ms: int, settings: Settings) -> li
                 words = _words_from_results(response.results[uri].transcript.results)
             finally:
                 blob.delete()
+        else:
+            words = _transcribe_audio_chunks(
+                client=client,
+                recognizer=recognizer,
+                config=config,
+                audio=audio,
+                duration_ms=duration_ms,
+            )
     except TranscriptionError:
         raise
     except Exception as exc:
         raise TranscriptionError(f"Google Speech-to-Text failed: {exc}") from exc
 
     return segment_words(words)
-

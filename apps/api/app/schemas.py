@@ -12,6 +12,10 @@ class ImportRequest(BaseModel):
     url: str = Field(min_length=10, max_length=500)
 
 
+class DeletionOut(BaseModel):
+    deleted: int
+
+
 class ProjectUpdate(BaseModel):
     trim_start_ms: int | None = Field(default=None, ge=0)
     trim_end_ms: int | None = Field(default=None, ge=1)
@@ -89,6 +93,8 @@ class JobOut(BaseModel):
     attempts: int
     error_message: str | None
     created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
 
 
 class ProjectOut(BaseModel):
@@ -116,4 +122,4 @@ class ProjectOut(BaseModel):
     artifacts: list[ArtifactOut] = []
     captions: list[CaptionSegmentOut] = []
     renders: list[RenderOut] = []
-
+    latest_job: JobOut | None = None

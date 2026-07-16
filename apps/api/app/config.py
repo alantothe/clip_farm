@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     ytdlp_cookies_file: Path | None = None
     worker_immediate: bool = Field(default=False, validation_alias="HUEY_IMMEDIATE")
 
+    @field_validator("ytdlp_cookies_file", mode="before")
+    @classmethod
+    def blank_cookie_path_is_unset(cls, value):
+        # Path("") becomes Path("."), which makes yt-dlp try to open the
+        # current directory as a cookie file. An empty env value means the
+        # optional cookie file is not configured.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @property
     def database_url(self) -> str:
         return f"sqlite:///{self.data_dir / 'app.db'}"
@@ -55,4 +65,3 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.ensure_directories()
     return settings
-

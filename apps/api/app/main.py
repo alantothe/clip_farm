@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
+import shutil
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +15,7 @@ from app.database import get_db, init_db
 from app.models import Artifact, CaptionSegment, Job, Project, Render
 from app.schemas import (
     CaptionUpdateRequest,
+    DeletionOut,
     ImportRequest,
     JobOut,
     ProjectOut,
@@ -23,6 +26,9 @@ from app.tasks import import_project_task, render_project_task, transcribe_proje
 
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
+ACTIVE_PROJECT_STATUSES = {"queued", "processing"}
+ACTIVE_JOB_STATUSES = {"queued", "running"}
 
 
 @asynccontextmanager
@@ -46,6 +52,7 @@ def project_query():
         selectinload(Project.artifacts),
         selectinload(Project.captions),
         selectinload(Project.renders),
+        selectinload(Project.jobs),
     )
 
 
@@ -58,6 +65,9 @@ def get_project_or_404(session: Session, project_id: str) -> Project:
 
 def serialize_project(project: Project) -> ProjectOut:
     output = ProjectOut.model_validate(project)
+    if project.jobs:
+        latest_job = max(project.jobs, key=lambda job: job.created_at)
+        output.latest_job = JobOut.model_validate(latest_job)
     for artifact in output.artifacts:
         artifact.url = f"{settings.api_prefix}/artifacts/{artifact.id}"
     for render in output.renders:
@@ -65,6 +75,29 @@ def serialize_project(project: Project) -> ProjectOut:
             render.download_url = f"{settings.api_prefix}/renders/{render.id}/download"
     output.renders.sort(key=lambda item: item.created_at, reverse=True)
     return output
+
+
+def ensure_project_can_be_deleted(project: Project) -> None:
+    if project.status in ACTIVE_PROJECT_STATUSES or any(
+        job.status in ACTIVE_JOB_STATUSES for job in project.jobs
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Wait for the active import or render to finish before deleting this video",
+        )
+
+
+def remove_project_files(project_id: str) -> None:
+    project_dir = settings.projects_dir / project_id
+    try:
+        if project_dir.is_symlink():
+            project_dir.unlink()
+        else:
+            shutil.rmtree(project_dir, ignore_errors=False)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.warning("Could not remove media directory for project %s", project_id, exc_info=True)
 
 
 @app.get("/health")
@@ -107,9 +140,33 @@ def list_projects(session: Session = Depends(get_db)) -> list[ProjectOut]:
     return [serialize_project(project) for project in projects]
 
 
+@app.delete(f"{settings.api_prefix}/projects", response_model=DeletionOut)
+def delete_all_projects(session: Session = Depends(get_db)) -> DeletionOut:
+    projects = list(session.scalars(project_query()).all())
+    for project in projects:
+        ensure_project_can_be_deleted(project)
+    project_ids = [project.id for project in projects]
+    for project in projects:
+        session.delete(project)
+    session.commit()
+    for project_id in project_ids:
+        remove_project_files(project_id)
+    return DeletionOut(deleted=len(project_ids))
+
+
 @app.get(f"{settings.api_prefix}/projects/{{project_id}}", response_model=ProjectOut)
 def get_project(project_id: str, session: Session = Depends(get_db)) -> ProjectOut:
     return serialize_project(get_project_or_404(session, project_id))
+
+
+@app.delete(f"{settings.api_prefix}/projects/{{project_id}}", response_model=DeletionOut)
+def delete_project(project_id: str, session: Session = Depends(get_db)) -> DeletionOut:
+    project = get_project_or_404(session, project_id)
+    ensure_project_can_be_deleted(project)
+    session.delete(project)
+    session.commit()
+    remove_project_files(project_id)
+    return DeletionOut(deleted=1)
 
 
 @app.patch(f"{settings.api_prefix}/projects/{{project_id}}", response_model=ProjectOut)

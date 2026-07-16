@@ -140,7 +140,9 @@ CAPTION_STYLES = {
         "outline": 6,
         "shadow": 1,
         "bold": True,
-        "marginv": 250,
+        "marginl": 86,
+        "marginr": 86,
+        "marginv": 280,
     },
     "classic": {
         "fontname": "DejaVu Sans",
@@ -150,17 +152,22 @@ CAPTION_STYLES = {
         "outline": 4,
         "shadow": 2,
         "bold": False,
-        "marginv": 220,
+        "marginl": 86,
+        "marginr": 86,
+        "marginv": 260,
     },
     "minimal": {
         "fontname": "DejaVu Sans",
         "fontsize": 56,
         "primarycolor": pysubs2.Color(245, 246, 240),
         "outlinecolor": pysubs2.Color(18, 22, 24),
-        "outline": 2,
+        "borderstyle": 3,
+        "outline": 10,
         "shadow": 0,
         "bold": True,
-        "marginv": 190,
+        "marginl": 86,
+        "marginr": 86,
+        "marginv": 240,
     },
 }
 
@@ -169,6 +176,11 @@ def create_ass_captions(
     *, segments: list, trim_start_ms: int, trim_end_ms: int, style_name: str, output: Path
 ) -> bool:
     subtitles = pysubs2.SSAFile()
+    # Anchor all subtitle measurements to the final vertical canvas. Without an
+    # explicit play resolution, libass uses a small fallback canvas and scales
+    # fonts and margins unpredictably on the 1080 x 1920 export.
+    subtitles.info["PlayResX"] = "1080"
+    subtitles.info["PlayResY"] = "1920"
     style_values = CAPTION_STYLES.get(style_name, CAPTION_STYLES["bold"])
     style = pysubs2.SSAStyle(**style_values)
     style.alignment = pysubs2.Alignment.BOTTOM_CENTER
@@ -407,4 +419,3 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: file.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-

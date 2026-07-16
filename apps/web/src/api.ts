@@ -20,6 +20,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   listProjects: () => request<Project[]>('/api/projects'),
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
+  deleteProject: (id: string) =>
+    request<{ deleted: number }>(`/api/projects/${id}`, { method: 'DELETE' }),
+  deleteAllProjects: () =>
+    request<{ deleted: number }>('/api/projects', { method: 'DELETE' }),
   importProject: (url: string) =>
     request<Project>('/api/projects/import', {
       method: 'POST',
@@ -47,4 +51,3 @@ export const api = {
   getJob: (id: string) => request<Job>(`/api/jobs/${id}`),
   mediaUrl: (path: string | null) => (path ? `${API_BASE}${path}` : ''),
 }
-

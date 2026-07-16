@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from app.services.x_download import download_x_video
 
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -99,6 +101,7 @@ def import_project_task(project_id: str, job_id: str) -> None:
         try:
             job.started_at = _now()
             job.attempts += 1
+            job.error_message = None
             project.status = "processing"
             project.error_message = None
             _update_job(job, status="running", progress=4, message="Reading X post")
@@ -155,12 +158,28 @@ def import_project_task(project_id: str, job_id: str) -> None:
             _update_job(job, status="complete", progress=100, message=final_message)
             session.commit()
         except Exception as exc:
+            failed_stage = job.message
+            error_detail = (
+                f"Stage: {failed_stage}\n"
+                f"Error type: {type(exc).__name__}\n"
+                f"Message: {exc or 'No error message was provided'}"
+            )
             project.status = "failed"
-            project.error_message = str(exc)
-            job.error_message = str(exc)
+            project.error_message = error_detail
+            job.error_message = error_detail
             job.completed_at = _now()
-            _update_job(job, status="failed", message="Import failed")
+            _update_job(
+                job,
+                status="failed",
+                message=f"Import failed while {failed_stage.lower()}",
+            )
             session.commit()
+            logger.exception(
+                "Project import failed during %s (project=%s, job=%s)",
+                failed_stage,
+                project_id,
+                job_id,
+            )
             raise
 
 

@@ -30,7 +30,7 @@ npm run setup
 cp apps/api/.env.example apps/api/.env
 ```
 
-Set `GOOGLE_CLOUD_PROJECT` in `apps/api/.env`. For videos at least 60 seconds long, also set a `GCS_BUCKET` that the current Google identity can access. The app remains usable without Google configuration, but automatic captioning will report a retryable error.
+Set `GOOGLE_CLOUD_PROJECT` in `apps/api/.env`. A `GCS_BUCKET` is optional: when configured, long videos use one Speech-to-Text batch job; otherwise, Clip Farm transcribes them locally in 55-second chunks through the synchronous API. The app remains usable without Google configuration, but automatic captions require Google Application Default Credentials.
 
 Start the frontend, API, and worker together from the repository root:
 

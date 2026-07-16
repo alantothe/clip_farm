@@ -52,6 +52,7 @@ export interface Project {
   artifacts: Artifact[]
   captions: CaptionSegment[]
   renders: Render[]
+  latest_job: Job | null
 }
 
 export interface Job {
@@ -65,6 +66,8 @@ export interface Job {
   attempts: number
   error_message: string | null
   created_at: string
+  started_at: string | null
+  completed_at: string | null
 }
 
 export interface ProjectSettings {
@@ -75,4 +78,3 @@ export interface ProjectSettings {
   captions_enabled: boolean
   caption_style: CaptionStyle
 }
-

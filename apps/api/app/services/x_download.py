@@ -47,7 +47,12 @@ def download_x_video(
         "max_filesize": settings.max_source_bytes,
     }
     if settings.ytdlp_cookies_file:
-        options["cookiefile"] = str(settings.ytdlp_cookies_file)
+        cookie_path = settings.ytdlp_cookies_file.expanduser()
+        if not cookie_path.is_file():
+            raise SourceDownloadError(
+                f"YTDLP_COOKIES_FILE must point to a readable cookie file; got {cookie_path}"
+            )
+        options["cookiefile"] = str(cookie_path)
 
     try:
         with YoutubeDL(options) as ydl:
@@ -75,4 +80,3 @@ def download_x_video(
         path.unlink(missing_ok=True)
         raise SourceDownloadError("The downloaded video exceeds the configured file-size limit")
     return path, info
-
