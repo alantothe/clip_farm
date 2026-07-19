@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 Layout = Literal["smart_crop", "fit_background"]
@@ -114,6 +114,26 @@ class ImageOverlayOut(BaseModel):
     url: str
 
 
+class PublicationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    job_id: str | None
+    platform: str
+    status: str
+    share_to_feed: bool
+    remote_media_id: str | None
+    permalink: str | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class InstagramPublishRequest(BaseModel):
+    caption: str = Field(default="", max_length=2200)
+    share_to_feed: bool = True
+
+
 class RenderOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -125,6 +145,7 @@ class RenderOut(BaseModel):
     error_message: str | None
     created_at: datetime
     download_url: str | None = None
+    publications: list[PublicationOut] = []
 
 
 class JobOut(BaseModel):
@@ -174,3 +195,33 @@ class ProjectOut(BaseModel):
     image_overlays: list[ImageOverlayOut] = []
     renders: list[RenderOut] = []
     latest_job: JobOut | None = None
+
+
+class ConnectedAccountOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    platform: str
+    remote_user_id: str
+    username: str
+    display_name: str | None
+    scopes: list[str]
+    status: str
+    token_expires_at: datetime | None
+    connected_at: datetime
+    updated_at: datetime
+
+    @field_validator("scopes", mode="before")
+    @classmethod
+    def split_scopes(cls, value):
+        if isinstance(value, str):
+            return [scope for scope in value.split(",") if scope]
+        return value
+
+
+class PlatformConnectionOut(BaseModel):
+    platform: str
+    display_name: str
+    configured: bool
+    missing_configuration: list[str]
+    account: ConnectedAccountOut | None

@@ -1,4 +1,4 @@
-import type { CaptionSegment, ImageOverlay, Job, Project, ProjectSettings } from './types'
+import type { CaptionSegment, ImageOverlay, Job, PlatformConnection, Project, ProjectSettings } from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
@@ -13,12 +13,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const payload = await response.json().catch(() => null)
-    throw new Error(payload?.detail ?? `Request failed (${response.status})`)
+    const detail = payload?.detail
+    const message = typeof detail === 'string' ? detail : detail?.message
+    throw new Error(message ?? `Request failed (${response.status})`)
   }
   return response.json() as Promise<T>
 }
 
 export const api = {
+  listPlatformConnections: () => request<PlatformConnection[]>('/api/platforms'),
+  platformConnectUrl: (platform: string) => `${API_BASE}/api/platforms/${platform}/connect`,
+  disconnectInstagram: () =>
+    request<{ deleted: number }>('/api/platforms/instagram', { method: 'DELETE' }),
   listProjects: () => request<Project[]>('/api/projects'),
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
   deleteProject: (id: string) =>
@@ -85,6 +91,11 @@ export const api = {
     }),
   transcribe: (id: string) => request<Job>(`/api/projects/${id}/transcribe`, { method: 'POST' }),
   render: (id: string) => request<Job>(`/api/projects/${id}/render`, { method: 'POST' }),
+  publishInstagram: (renderId: string, caption: string, shareToFeed: boolean) =>
+    request<Job>(`/api/renders/${renderId}/publish/instagram`, {
+      method: 'POST',
+      body: JSON.stringify({ caption, share_to_feed: shareToFeed }),
+    }),
   getJob: (id: string) => request<Job>(`/api/jobs/${id}`),
   mediaUrl: (path: string | null) => (path ? `${API_BASE}${path}` : ''),
 }

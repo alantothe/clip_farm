@@ -1,18 +1,35 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import base64
+import hashlib
+import hmac
+import json
 import logging
 from pathlib import Path
+import secrets
 import shutil
+import time
+from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
 from app.database import get_db, init_db
-from app.models import Artifact, CaptionSegment, ImageOverlay, Job, Project, Render
+from app.models import (
+    Artifact,
+    CaptionSegment,
+    ImageOverlay,
+    Job,
+    PlatformAccount,
+    Publication,
+    Project,
+    Render,
+)
 from app.schemas import (
     CaptionUpdateRequest,
     DeletionOut,
@@ -22,6 +39,9 @@ from app.schemas import (
     JobOut,
     ProjectOut,
     ProjectUpdate,
+    ConnectedAccountOut,
+    PlatformConnectionOut,
+    InstagramPublishRequest,
     SocialCaptionOut,
     SocialCaptionRewriteRequest,
     SocialCaptionUpdate,
@@ -29,13 +49,27 @@ from app.schemas import (
 from app.services.caption_rewrite import CaptionRewriteError, rewrite_social_caption
 from app.services.x_download import normalize_x_post_url
 from app.services.media import MediaProcessingError, validate_overlay_image
-from app.tasks import import_project_task, render_project_task, transcribe_project_task
+from app.services.instagram import (
+    INSTAGRAM_SCOPES,
+    InstagramConnectionError,
+    encrypt_token,
+    exchange_authorization_code,
+    media_signature_is_valid,
+)
+from app.tasks import (
+    import_project_task,
+    publish_instagram_task,
+    render_project_task,
+    transcribe_project_task,
+)
 
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 ACTIVE_PROJECT_STATUSES = {"queued", "processing"}
 ACTIVE_JOB_STATUSES = {"queued", "running"}
+INSTAGRAM_STATE_COOKIE = "clip_farm_instagram_oauth_state"
+INSTAGRAM_STATE_TTL_SECONDS = 10 * 60
 
 
 @asynccontextmanager
@@ -59,7 +93,7 @@ def project_query():
         selectinload(Project.artifacts),
         selectinload(Project.captions),
         selectinload(Project.image_overlays).selectinload(ImageOverlay.artifact),
-        selectinload(Project.renders),
+        selectinload(Project.renders).selectinload(Render.publications),
         selectinload(Project.jobs),
     )
 
@@ -116,6 +150,275 @@ def remove_project_files(project_id: str) -> None:
         pass
     except OSError:
         logger.warning("Could not remove media directory for project %s", project_id, exc_info=True)
+
+
+def _encode_oauth_state() -> str:
+    if not settings.instagram_app_secret:
+        raise HTTPException(status_code=503, detail="Instagram connection is not configured")
+    payload = base64.urlsafe_b64encode(
+        json.dumps(
+            {"nonce": secrets.token_urlsafe(24), "issued_at": int(time.time())},
+            separators=(",", ":"),
+        ).encode()
+    ).decode().rstrip("=")
+    signature = hmac.new(
+        settings.instagram_app_secret.encode(), payload.encode(), hashlib.sha256
+    ).hexdigest()
+    return f"{payload}.{signature}"
+
+
+def _oauth_state_is_valid(state: str, cookie_state: str | None) -> bool:
+    if not settings.instagram_app_secret or not cookie_state:
+        return False
+    if not hmac.compare_digest(state, cookie_state):
+        return False
+    try:
+        payload, supplied_signature = state.rsplit(".", 1)
+        expected_signature = hmac.new(
+            settings.instagram_app_secret.encode(), payload.encode(), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            return False
+        padded = payload + "=" * (-len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded).decode())
+        age = int(time.time()) - int(data["issued_at"])
+        return 0 <= age <= INSTAGRAM_STATE_TTL_SECONDS and bool(data["nonce"])
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+
+
+def _settings_redirect(instagram: str, reason: str | None = None) -> RedirectResponse:
+    query = {"instagram": instagram}
+    if reason:
+        query["reason"] = reason
+    response = RedirectResponse(
+        f"{settings.frontend_url.rstrip('/')}/settings?{urlencode(query)}",
+        status_code=302,
+    )
+    response.delete_cookie(INSTAGRAM_STATE_COOKIE)
+    return response
+
+
+def _serialize_connected_account(account: PlatformAccount) -> ConnectedAccountOut:
+    return ConnectedAccountOut.model_validate(account)
+
+
+@app.get(f"{settings.api_prefix}/platforms", response_model=list[PlatformConnectionOut])
+def list_platform_connections(
+    session: Session = Depends(get_db),
+) -> list[PlatformConnectionOut]:
+    account = session.scalar(
+        select(PlatformAccount).where(PlatformAccount.platform == "instagram")
+    )
+    return [
+        PlatformConnectionOut(
+            platform="instagram",
+            display_name="Instagram",
+            configured=settings.instagram_is_configured,
+            missing_configuration=settings.instagram_missing_configuration,
+            account=_serialize_connected_account(account) if account else None,
+        )
+    ]
+
+
+@app.get(f"{settings.api_prefix}/platforms/instagram/connect")
+def connect_instagram() -> RedirectResponse:
+    if not settings.instagram_is_configured:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Instagram connection is not configured",
+                "missing": settings.instagram_missing_configuration,
+            },
+        )
+    state = _encode_oauth_state()
+    authorization_url = "https://www.instagram.com/oauth/authorize?" + urlencode(
+        {
+            "client_id": settings.instagram_app_id,
+            "redirect_uri": settings.instagram_redirect_uri,
+            "response_type": "code",
+            "scope": ",".join(INSTAGRAM_SCOPES),
+            "state": state,
+            "force_reauth": "true",
+        }
+    )
+    response = RedirectResponse(authorization_url, status_code=302)
+    response.set_cookie(
+        INSTAGRAM_STATE_COOKIE,
+        state,
+        max_age=INSTAGRAM_STATE_TTL_SECONDS,
+        httponly=True,
+        secure=settings.instagram_redirect_uri.startswith("https://"),
+        samesite="lax",
+    )
+    return response
+
+
+@app.get(f"{settings.api_prefix}/platforms/instagram/callback")
+def instagram_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    session: Session = Depends(get_db),
+) -> RedirectResponse:
+    if error:
+        return _settings_redirect("error", "authorization_denied")
+    cookie_state = request.cookies.get(INSTAGRAM_STATE_COOKIE)
+    if not state or not _oauth_state_is_valid(state, cookie_state):
+        return _settings_redirect("error", "invalid_state")
+    if not code:
+        return _settings_redirect("error", "missing_code")
+    try:
+        identity = exchange_authorization_code(code, settings)
+        encrypted_token = encrypt_token(identity.access_token, settings.token_encryption_key or "")
+    except InstagramConnectionError:
+        logger.warning("Instagram OAuth callback failed", exc_info=True)
+        return _settings_redirect("error", "connection_failed")
+
+    account = session.scalar(
+        select(PlatformAccount).where(PlatformAccount.platform == "instagram")
+    )
+    if not account:
+        account = PlatformAccount(platform="instagram")
+        session.add(account)
+    account.remote_user_id = identity.remote_user_id
+    account.username = identity.username
+    account.display_name = identity.display_name
+    account.access_token_encrypted = encrypted_token
+    account.scopes = ",".join(INSTAGRAM_SCOPES)
+    account.token_expires_at = identity.expires_at
+    account.status = "connected"
+    account.connected_at = datetime.now(timezone.utc)
+    account.updated_at = datetime.now(timezone.utc)
+    session.commit()
+    return _settings_redirect("connected")
+
+
+@app.delete(
+    f"{settings.api_prefix}/platforms/instagram",
+    response_model=DeletionOut,
+)
+def disconnect_instagram(session: Session = Depends(get_db)) -> DeletionOut:
+    account = session.scalar(
+        select(PlatformAccount).where(PlatformAccount.platform == "instagram")
+    )
+    if not account:
+        return DeletionOut(deleted=0)
+    session.delete(account)
+    session.commit()
+    return DeletionOut(deleted=1)
+
+
+@app.post(
+    f"{settings.api_prefix}/renders/{{render_id}}/publish/instagram",
+    response_model=JobOut,
+    status_code=202,
+)
+def publish_render_to_instagram(
+    render_id: str,
+    payload: InstagramPublishRequest,
+    session: Session = Depends(get_db),
+) -> Job:
+    render = session.get(Render, render_id)
+    if not render or render.status != "complete" or not render.path:
+        raise HTTPException(status_code=404, detail="Completed render not found")
+    if not Path(render.path).is_file():
+        raise HTTPException(status_code=404, detail="Rendered file is missing")
+    if render.duration_ms is not None and render.duration_ms < 3000:
+        raise HTTPException(status_code=422, detail="Instagram Reels must be at least 3 seconds")
+    if render.duration_ms is not None and render.duration_ms > 15 * 60 * 1000:
+        raise HTTPException(status_code=422, detail="Instagram Reels cannot exceed 15 minutes")
+    if Path(render.path).stat().st_size > 1_000_000_000:
+        raise HTTPException(status_code=422, detail="Instagram Reels must be smaller than 1 GB")
+    if not settings.instagram_is_configured:
+        raise HTTPException(status_code=503, detail="Instagram publishing is not configured")
+    if not settings.external_base_url.startswith("https://"):
+        raise HTTPException(
+            status_code=503,
+            detail="Set PUBLIC_BASE_URL to the public HTTPS address of Clip Farm before posting",
+        )
+
+    account = session.scalar(
+        select(PlatformAccount).where(PlatformAccount.platform == "instagram")
+    )
+    if not account or account.status != "connected":
+        raise HTTPException(status_code=409, detail="Connect Instagram before posting")
+    if "instagram_business_content_publish" not in account.scopes.split(","):
+        raise HTTPException(
+            status_code=409,
+            detail="Reconnect Instagram and grant content publishing access",
+        )
+
+    publication = session.scalar(
+        select(Publication).where(
+            Publication.render_id == render.id,
+            Publication.platform == "instagram",
+        )
+    )
+    if publication and publication.status in {"queued", "processing", "publishing"}:
+        raise HTTPException(status_code=409, detail="This Reel is already being posted")
+    if publication and publication.status == "complete":
+        raise HTTPException(status_code=409, detail="This render has already been posted to Instagram")
+    if not publication:
+        publication = Publication(
+            render_id=render.id,
+            account_id=account.id,
+            platform="instagram",
+        )
+        session.add(publication)
+    publication.account_id = account.id
+    publication.caption = payload.caption.strip()
+    publication.share_to_feed = payload.share_to_feed
+    publication.status = "queued"
+    publication.remote_container_id = None
+    publication.remote_media_id = None
+    publication.permalink = None
+    publication.error_message = None
+    publication.started_at = None
+    publication.completed_at = None
+    job = Job(
+        project_id=render.project_id,
+        render_id=render.id,
+        kind="publish_instagram",
+        message="Queued for Instagram",
+    )
+    session.add(job)
+    session.flush()
+    publication.job_id = job.id
+    session.commit()
+    publish_instagram_task(publication.id, job.id)
+    return job
+
+
+@app.get(f"{settings.api_prefix}/media/instagram/{{render_id}}", include_in_schema=False)
+def serve_instagram_render(
+    render_id: str,
+    expires: int,
+    signature: str,
+    session: Session = Depends(get_db),
+) -> FileResponse:
+    if expires < int(time.time()):
+        raise HTTPException(status_code=403, detail="Media URL expired")
+    signing_secret = settings.token_encryption_key or ""
+    if not signing_secret or not media_signature_is_valid(
+        render_id, expires, signature, signing_secret
+    ):
+        raise HTTPException(status_code=403, detail="Invalid media signature")
+    render = session.get(Render, render_id)
+    if not render or render.status != "complete" or not render.path:
+        raise HTTPException(status_code=404, detail="Completed render not found")
+    path = Path(render.path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Rendered file is missing")
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f'inline; filename="clip-farm-{render.project_id[:8]}.mp4"',
+        },
+    )
 
 
 @app.get("/health")
@@ -456,3 +759,16 @@ def download_render(render_id: str, session: Session = Depends(get_db)) -> FileR
         media_type="video/mp4",
         filename=f"clip-farm-{render.project_id[:8]}.mp4",
     )
+
+
+if settings.web_dist_dir and (settings.web_dist_dir / "index.html").is_file():
+    assets_dir = settings.web_dist_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="web-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_web_app(full_path: str) -> FileResponse:
+        requested_file = settings.web_dist_dir / full_path
+        if full_path and requested_file.is_file():
+            return FileResponse(requested_file)
+        return FileResponse(settings.web_dist_dir / "index.html")

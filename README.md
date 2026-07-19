@@ -40,6 +40,48 @@ npm start
 
 Open `http://localhost:5173`.
 
+## Connect Instagram
+
+Clip Farm uses the Instagram API with Instagram Login for professional Business
+and Creator accounts. In the Meta developer dashboard:
+
+1. Create a Business app and add the Instagram product.
+2. Configure Business Login for Instagram with these permissions:
+   `instagram_business_basic` and `instagram_business_content_publish`.
+3. Register `http://localhost:8000/api/platforms/instagram/callback` as the
+   OAuth redirect URI for local development.
+4. Copy the Instagram app ID and app secret into `apps/api/.env`.
+5. Generate `TOKEN_ENCRYPTION_KEY` using the command documented in
+   `apps/api/.env.example`. Keep this key stable; changing it invalidates stored
+   account credentials.
+
+Restart the API and open **Settings → Connected Apps → Connect Instagram**.
+Clip Farm stores the returned long-lived access token encrypted in SQLite and
+never returns it to the browser.
+
+## Publish an Instagram Reel
+
+Instagram publishing runs entirely through the backend and Huey worker. After
+a vertical render completes, use **Post to Instagram** in the editor. Clip Farm
+creates a one-hour HMAC-signed MP4 URL, asks Instagram to create a Reel
+container, waits for processing, and then publishes it. The UI reports the
+worker job status and links to the published Reel when Meta returns a permalink.
+
+For deployment, set `PUBLIC_BASE_URL` to the public HTTPS origin that serves the
+API (for example, `https://clip-farm-production.up.railway.app`). It must be
+reachable by Meta; `localhost` cannot be used for a real test post. Publishing
+automatically refreshes a long-lived token when it is within seven days of
+expiration, and the worker also checks it daily.
+
+Test the live flow in this order:
+
+1. Open **Settings** and confirm the Instagram username shows as connected.
+2. Complete a vertical render that is at least three seconds long.
+3. Review the Post-tab caption and **Also share to feed** option.
+4. Click **Post to Instagram** once and keep the worker running while Meta
+   processes the video.
+5. Wait for **Reel posted to Instagram**, then open the returned Reel link.
+
 To run processes separately, use `make dev-api`, `make dev-worker`, and
 `make dev-web` in three terminals.
 
@@ -50,6 +92,37 @@ docker compose up --build
 ```
 
 The Compose setup persists SQLite and media in a named volume and mounts local gcloud credentials read-only. The API is available at `http://localhost:8000`, with OpenAPI at `/docs`.
+
+## Railway
+
+Production runs as one Railway service so the API and Huey worker share the
+same SQLite database, queue, and media files. `Dockerfile.railway` builds the
+React app and starts both Python processes; `railway.toml` configures the
+`/health` deployment check. Mount a persistent Railway volume at `/data`.
+
+Set these service variables before deploying:
+
+```text
+DATA_DIR=/data
+WEB_DIST_DIR=/app/web
+FRONTEND_URL=https://your-domain.example
+CORS_ORIGINS=https://your-domain.example
+INSTAGRAM_REDIRECT_URI=https://your-domain.example/api/platforms/instagram/callback
+PUBLIC_BASE_URL=https://your-domain.example
+INSTAGRAM_APP_ID=...
+INSTAGRAM_APP_SECRET=...
+TOKEN_ENCRYPTION_KEY=...
+GOOGLE_CLOUD_PROJECT=...
+GOOGLE_SERVICE_ACCOUNT_JSON={...}
+```
+
+Keep `TOKEN_ENCRYPTION_KEY` stable between deployments. The Instagram redirect
+URI must exactly match the URI registered in the Meta developer dashboard.
+Store `GOOGLE_SERVICE_ACCOUNT_JSON` as a secret variable containing the entire
+service-account key JSON. Grant that account only the permissions the enabled
+features require (at minimum, Cloud Speech Client for automatic captions, plus
+Vertex AI User for Gemini rewrites). Prefer workload identity federation over a
+long-lived service-account key when the deployment platform supports it.
 
 ## Verification
 

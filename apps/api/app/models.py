@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -146,6 +146,9 @@ class Render(Base):
 
     project: Mapped[Project] = relationship(back_populates="renders")
     jobs: Mapped[list["Job"]] = relationship(back_populates="render")
+    publications: Mapped[list["Publication"]] = relationship(
+        back_populates="render", cascade="all, delete-orphan"
+    )
 
 
 class Job(Base):
@@ -168,3 +171,49 @@ class Job(Base):
 
     project: Mapped[Project] = relationship(back_populates="jobs")
     render: Mapped[Render | None] = relationship(back_populates="jobs")
+
+
+class PlatformAccount(Base):
+    __tablename__ = "platform_accounts"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    platform: Mapped[str] = mapped_column(String, unique=True, index=True)
+    remote_user_id: Mapped[str] = mapped_column(String)
+    username: Mapped[str] = mapped_column(String)
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    access_token_encrypted: Mapped[str] = mapped_column(Text)
+    scopes: Mapped[str] = mapped_column(Text)
+    token_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(String, default="connected", index=True)
+    connected_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class Publication(Base):
+    __tablename__ = "publications"
+    __table_args__ = (UniqueConstraint("render_id", "platform"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    render_id: Mapped[str] = mapped_column(
+        ForeignKey("renders.id", ondelete="CASCADE"), index=True
+    )
+    account_id: Mapped[str | None] = mapped_column(
+        ForeignKey("platform_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    platform: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[str] = mapped_column(String, default="queued", index=True)
+    caption: Mapped[str] = mapped_column(Text, default="")
+    share_to_feed: Mapped[bool] = mapped_column(Boolean, default=True)
+    remote_container_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    remote_media_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    permalink: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    render: Mapped[Render] = relationship(back_populates="publications")

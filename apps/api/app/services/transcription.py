@@ -8,6 +8,7 @@ from google.cloud import speech_v2, storage
 from google.cloud.speech_v2.types import cloud_speech
 
 from app.config import Settings
+from app.services.google_credentials import service_account_credentials
 
 
 @dataclass
@@ -25,9 +26,12 @@ INLINE_RECOGNITION_LIMIT_MS = 55_000
 INLINE_CONTENT_LIMIT_BYTES = 10_000_000
 
 
-def _project_id(settings: Settings) -> str:
+def _project_id(settings: Settings, credentials=None) -> str:
     if settings.google_cloud_project:
         return settings.google_cloud_project
+    credential_project = getattr(credentials, "project_id", None)
+    if credential_project:
+        return credential_project
     _credentials, project = google.auth.default()
     if not project:
         raise TranscriptionError("GOOGLE_CLOUD_PROJECT is not configured")
@@ -152,21 +156,25 @@ def segment_words(words: list[TranscriptWord]) -> list[dict]:
 
 
 def transcribe_audio(*, audio: Path, duration_ms: int, settings: Settings) -> list[dict]:
-    project = _project_id(settings)
-    client = speech_v2.SpeechClient()
-    features = cloud_speech.RecognitionFeatures(
-        enable_word_time_offsets=True,
-        enable_automatic_punctuation=True,
-    )
-    config = cloud_speech.RecognitionConfig(
-        auto_decoding_config=cloud_speech.AutoDetectDecodingConfig(),
-        language_codes=[settings.speech_language],
-        model=settings.speech_model,
-        features=features,
-    )
-    recognizer = f"projects/{project}/locations/{settings.google_cloud_location}/recognizers/_"
-
     try:
+        credentials = service_account_credentials(settings)
+        project = _project_id(settings, credentials)
+        client = speech_v2.SpeechClient(credentials=credentials)
+        features = cloud_speech.RecognitionFeatures(
+            enable_word_time_offsets=True,
+            enable_automatic_punctuation=True,
+        )
+        config = cloud_speech.RecognitionConfig(
+            auto_decoding_config=cloud_speech.AutoDetectDecodingConfig(),
+            language_codes=[settings.speech_language],
+            model=settings.speech_model,
+            features=features,
+        )
+        recognizer = (
+            f"projects/{project}/locations/"
+            f"{settings.google_cloud_location}/recognizers/_"
+        )
+
         if (
             duration_ms <= INLINE_RECOGNITION_LIMIT_MS
             and audio.stat().st_size < INLINE_CONTENT_LIMIT_BYTES
@@ -180,7 +188,7 @@ def transcribe_audio(*, audio: Path, duration_ms: int, settings: Settings) -> li
             )
             words = _words_from_results(response.results)
         elif settings.gcs_bucket:
-            storage_client = storage.Client(project=project)
+            storage_client = storage.Client(project=project, credentials=credentials)
             bucket = storage_client.bucket(settings.gcs_bucket)
             object_name = f"clip-farm/transcription/{audio.parent.name}/{audio.name}"
             blob = bucket.blob(object_name)

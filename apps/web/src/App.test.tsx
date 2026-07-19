@@ -242,3 +242,183 @@ test('deletes one video or clears the full video library after confirmation', as
   expect(fetchMock).toHaveBeenCalledWith('/api/projects', expect.objectContaining({ method: 'DELETE' }))
   expect(await screen.findByLabelText('X post URL')).toBeInTheDocument()
 })
+
+test('shows Instagram setup requirements in connected apps settings', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => [{
+      platform: 'instagram',
+      display_name: 'Instagram',
+      configured: false,
+      missing_configuration: ['INSTAGRAM_APP_ID', 'INSTAGRAM_APP_SECRET', 'TOKEN_ENCRYPTION_KEY'],
+      account: null,
+    }],
+  }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+  renderApp(client, '/settings')
+
+  expect(screen.getByRole('heading', { name: 'Your publishing connections.' })).toBeVisible()
+  expect(await screen.findByText('Setup required')).toBeVisible()
+  expect(screen.getByText('INSTAGRAM_APP_ID')).toBeVisible()
+  expect(screen.getByRole('button', { name: /Connect Instagram/ })).toBeDisabled()
+  expect(screen.getByText(/Tokens are encrypted at rest/)).toBeVisible()
+})
+
+test('shows and disconnects a connected Instagram account', async () => {
+  const account = {
+    id: 'account-1',
+    platform: 'instagram',
+    remote_user_id: '456',
+    username: 'clipfarmer',
+    display_name: 'Clip Farmer',
+    scopes: ['instagram_business_basic', 'instagram_business_content_publish'],
+    status: 'connected',
+    token_expires_at: '2026-09-14T12:00:00Z',
+    connected_at: '2026-07-16T12:00:00Z',
+    updated_at: '2026-07-16T12:00:00Z',
+  }
+  let connected = true
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === 'DELETE') {
+      connected = false
+      return { ok: true, json: async () => ({ deleted: 1 }) }
+    }
+    return {
+      ok: true,
+      json: async () => [{
+        platform: 'instagram',
+        display_name: 'Instagram',
+        configured: true,
+        missing_configuration: [],
+        account: connected ? account : null,
+      }],
+    }
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+  renderApp(client, '/settings?instagram=connected')
+
+  expect(await screen.findByText('@clipfarmer')).toBeVisible()
+  expect(screen.getByText(/Instagram connected/)).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+  expect(screen.getByRole('alert')).toHaveTextContent('Disconnect @clipfarmer?')
+  fireEvent.click(within(screen.getByRole('alert')).getByRole('button', { name: 'Disconnect' }))
+
+  await waitFor(() => expect(screen.getByText('Not connected')).toBeVisible())
+  expect(fetchMock).toHaveBeenCalledWith('/api/platforms/instagram', expect.objectContaining({ method: 'DELETE' }))
+})
+
+test('posts a completed render to Instagram through the backend', async () => {
+  const project: Project = {
+    id: 'project-post',
+    source_url: 'https://x.com/i/status/789',
+    source_post_id: '789',
+    title: 'Postable clip',
+    source_caption: 'Source caption',
+    social_caption: 'Reel caption',
+    status: 'ready',
+    transcription_status: 'complete',
+    error_message: null,
+    duration_ms: 5000,
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    trim_start_ms: 0,
+    trim_end_ms: 5000,
+    layout: 'fit_background',
+    crop_center_x: 50,
+    captions_enabled: true,
+    caption_style: 'bold',
+    caption_position: 'bottom',
+    created_at: '2026-07-16T12:00:00Z',
+    updated_at: '2026-07-16T12:01:00Z',
+    artifacts: [],
+    captions: [],
+    image_overlays: [],
+    renders: [{
+      id: 'render-1',
+      status: 'complete',
+      size_bytes: 1024,
+      duration_ms: 5000,
+      layout: 'fit_background',
+      error_message: null,
+      created_at: '2026-07-16T12:01:00Z',
+      download_url: '/api/renders/render-1/download',
+      publications: [],
+    }],
+    latest_job: null,
+  }
+  const queuedJob = {
+    id: 'publish-job-1',
+    project_id: project.id,
+    render_id: 'render-1',
+    kind: 'publish_instagram',
+    status: 'queued',
+    progress: 0,
+    message: 'Queued for Instagram',
+    attempts: 0,
+    error_message: null,
+    created_at: '2026-07-16T12:02:00Z',
+    started_at: null,
+    completed_at: null,
+  }
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input)
+    if (path === '/api/platforms') {
+      return {
+        ok: true,
+        json: async () => [{
+          platform: 'instagram',
+          display_name: 'Instagram',
+          configured: true,
+          missing_configuration: [],
+          account: {
+            id: 'account-1',
+            platform: 'instagram',
+            remote_user_id: 'ig-user-1',
+            username: 'clipfarmer',
+            display_name: null,
+            scopes: ['instagram_business_basic', 'instagram_business_content_publish'],
+            status: 'connected',
+            token_expires_at: null,
+            connected_at: '2026-07-16T12:00:00Z',
+            updated_at: '2026-07-16T12:00:00Z',
+          },
+        }],
+      }
+    }
+    if (path === '/api/renders/render-1/publish/instagram') {
+      return { ok: true, json: async () => queuedJob }
+    }
+    if (path === '/api/jobs/publish-job-1') {
+      return {
+        ok: true,
+        json: async () => ({
+          ...queuedJob,
+          status: 'complete',
+          progress: 100,
+          message: 'Reel posted to Instagram',
+        }),
+      }
+    }
+    if (init?.method === 'PUT') return { ok: true, json: async () => project }
+    return { ok: true, json: async () => [project] }
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+  renderApp(client, '/modes/x-to-vertical/projects/project-post')
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Post to Instagram' }))
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    '/api/renders/render-1/publish/instagram',
+    expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ caption: 'Reel caption', share_to_feed: true }),
+    }),
+  ))
+  expect(await screen.findByText('Reel posted to Instagram')).toBeVisible()
+})

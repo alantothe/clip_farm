@@ -1,6 +1,7 @@
 import re
 
 from app.config import Settings
+from app.services.google_credentials import service_account_credentials
 
 
 DIRECT_QUOTE_RE = re.compile(r'"[^"]*"|“[^”]*”')
@@ -52,7 +53,7 @@ def rewrite_social_caption(*, caption: str, settings: Settings) -> str:
     value = caption.strip()
     if not value:
         raise CaptionRewriteError("Add a caption before asking AI to rewrite it")
-    if not settings.google_cloud_project:
+    if not settings.google_cloud_project and not settings.google_service_account_json:
         raise CaptionRewriteError("Set GOOGLE_CLOUD_PROJECT to enable AI caption rewrites")
 
     protected, quotes = _protect_direct_quotes(value)
@@ -60,9 +61,14 @@ def rewrite_social_caption(*, caption: str, settings: Settings) -> str:
         from google import genai
         from google.genai import types
 
+        credentials = service_account_credentials(settings)
+        project = settings.google_cloud_project or getattr(credentials, "project_id", None)
+        if not project:
+            raise CaptionRewriteError("Set GOOGLE_CLOUD_PROJECT to enable AI caption rewrites")
         with genai.Client(
             vertexai=True,
-            project=settings.google_cloud_project,
+            credentials=credentials,
+            project=project,
             location=settings.google_cloud_location,
         ) as client:
             response = client.models.generate_content(

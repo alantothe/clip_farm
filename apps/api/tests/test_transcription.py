@@ -1,8 +1,12 @@
 from datetime import timedelta
 from types import SimpleNamespace
 
+import pytest
+from google.auth.exceptions import DefaultCredentialsError
+
+from app.config import Settings
 from app.services import transcription
-from app.services.transcription import TranscriptWord, segment_words
+from app.services.transcription import TranscriptWord, TranscriptionError, segment_words
 
 
 def test_segment_words_respects_word_and_sentence_boundaries() -> None:
@@ -87,3 +91,27 @@ def test_long_audio_is_chunked_without_a_gcs_bucket(monkeypatch, tmp_path) -> No
 
     assert chunk_requests == [(0, 55_000), (55_000, 55_000), (110_000, 10_000)]
     assert [word.start_ms for word in words] == [100, 55_100, 110_100]
+
+
+def test_missing_credentials_is_reported_as_a_transcription_error(
+    monkeypatch, tmp_path
+) -> None:
+    audio = tmp_path / "audio.flac"
+    audio.write_bytes(b"audio")
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "data",
+        google_cloud_project="test-project",
+    )
+
+    def missing_credentials(**_kwargs):
+        raise DefaultCredentialsError("credentials unavailable")
+
+    monkeypatch.setattr(transcription.speech_v2, "SpeechClient", missing_credentials)
+
+    with pytest.raises(TranscriptionError, match="credentials unavailable"):
+        transcription.transcribe_audio(
+            audio=audio,
+            duration_ms=1_000,
+            settings=settings,
+        )

@@ -43,6 +43,20 @@ export interface Render {
   error_message: string | null
   created_at: string
   download_url: string | null
+  publications?: Publication[]
+}
+
+export interface Publication {
+  id: string
+  job_id: string | null
+  platform: string
+  status: 'queued' | 'processing' | 'publishing' | 'complete' | 'failed'
+  share_to_feed: boolean
+  remote_media_id: string | null
+  permalink: string | null
+  error_message: string | null
+  created_at: string
+  completed_at: string | null
 }
 
 export interface Project {
@@ -98,4 +112,25 @@ export interface ProjectSettings {
   captions_enabled: boolean
   caption_style: CaptionStyle
   caption_position: CaptionPosition
+}
+
+export interface ConnectedAccount {
+  id: string
+  platform: string
+  remote_user_id: string
+  username: string
+  display_name: string | null
+  scopes: string[]
+  status: string
+  token_expires_at: string | null
+  connected_at: string
+  updated_at: string
+}
+
+export interface PlatformConnection {
+  platform: string
+  display_name: string
+  configured: boolean
+  missing_configuration: string[]
+  account: ConnectedAccount | null
 }

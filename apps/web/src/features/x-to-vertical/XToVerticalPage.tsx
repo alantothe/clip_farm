@@ -15,6 +15,7 @@ import {
   Import,
   ImagePlus,
   Images,
+  Instagram,
   LoaderCircle,
   Maximize2,
   MessageSquareQuote,
@@ -710,6 +711,8 @@ function EditorPanel({
   saving,
   rendering,
   rewritingCaption,
+  shareToFeed,
+  setShareToFeed,
 }: {
   project: Project
   settings: ProjectSettings
@@ -730,6 +733,8 @@ function EditorPanel({
   saving: boolean
   rendering: boolean
   rewritingCaption: boolean
+  shareToFeed: boolean
+  setShareToFeed: (next: boolean) => void
 }) {
   const [tab, setTab] = useState<'frame' | 'captions' | 'social' | 'images'>('frame')
   const [captionCopied, setCaptionCopied] = useState(false)
@@ -884,6 +889,14 @@ function EditorPanel({
             <p className="social-caption-editor__note">
               AI rewrites the surrounding text in brand-safe language and masks profanity. Text inside direct double quotes stays verbatim.
             </p>
+            <label className="instagram-feed-option">
+              <input
+                type="checkbox"
+                checked={shareToFeed}
+                onChange={(event) => setShareToFeed(event.target.checked)}
+              />
+              <span><strong>Also share to feed</strong><small>Show the Reel in both your main feed and Reels tab.</small></span>
+            </label>
             <div className="social-caption-editor__actions">
               <button className="secondary-button" onClick={() => {
                 void navigator.clipboard.writeText(socialCaption).then(() => {
@@ -1054,6 +1067,12 @@ function Workspace({ project, projects, activeId, onSelect, onNew, onDelete, onC
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null)
   const [previewMode, setPreviewMode] = useState<'source' | 'output'>('source')
   const [jobId, setJobId] = useState<string | null>(null)
+  const [shareToFeed, setShareToFeed] = useState(true)
+
+  const connectionsQuery = useQuery({
+    queryKey: ['platform-connections'],
+    queryFn: api.listPlatformConnections,
+  })
 
   useEffect(() => {
     setSettings(getSettings(project))
@@ -1093,6 +1112,13 @@ function Workspace({ project, projects, activeId, onSelect, onNew, onDelete, onC
       void queryClient.invalidateQueries({ queryKey: ['projects'] })
     },
   })
+  const publishMutation = useMutation({
+    mutationFn: async ({ renderId }: { renderId: string }) => {
+      await api.updateSocialCaption(project.id, socialCaption)
+      return api.publishInstagram(renderId, socialCaption, shareToFeed)
+    },
+    onSuccess: (job) => setJobId(job.id),
+  })
   const uploadImageMutation = useMutation({
     mutationFn: ({ file, startMs }: { file: File; startMs: number }) => api.uploadImageOverlay(project.id, file, startMs),
     onSuccess: (overlay) => {
@@ -1128,6 +1154,12 @@ function Workspace({ project, projects, activeId, onSelect, onNew, onDelete, onC
 
   const completeRender = project.renders.find((render) => render.status === 'complete')
   const outputUrl = api.mediaUrl(completeRender?.download_url ?? null)
+  const instagramAccount = connectionsQuery.data
+    ?.find((connection) => connection.platform === 'instagram')?.account
+  const instagramPublication = completeRender?.publications
+    ?.find((publication) => publication.platform === 'instagram')
+  const postingToInstagram = publishMutation.isPending
+    || Boolean(instagramPublication && ['queued', 'processing', 'publishing'].includes(instagramPublication.status))
 
   return (
     <div className="workspace-shell">
@@ -1150,6 +1182,27 @@ function Workspace({ project, projects, activeId, onSelect, onNew, onDelete, onC
           </div>
           <div className="workspace-title__actions">
             <a className="icon-command" href={project.source_url} target="_blank" rel="noreferrer" title="Open source post"><ExternalLink size={18} /></a>
+            {completeRender && instagramPublication?.status === 'complete' ? (
+              <a
+                className="instagram-publish-button is-complete"
+                href={instagramPublication.permalink ?? undefined}
+                target={instagramPublication.permalink ? '_blank' : undefined}
+                rel={instagramPublication.permalink ? 'noreferrer' : undefined}
+                aria-disabled={!instagramPublication.permalink}
+              ><Check size={17} /> Posted</a>
+            ) : completeRender && instagramAccount?.status === 'connected' ? (
+              <button
+                className="instagram-publish-button"
+                type="button"
+                onClick={() => publishMutation.mutate({ renderId: completeRender.id })}
+                disabled={postingToInstagram}
+              >
+                {postingToInstagram ? <LoaderCircle className="spin" size={17} /> : <Instagram size={17} />}
+                {postingToInstagram ? 'Posting…' : instagramPublication?.status === 'failed' ? 'Retry Instagram' : 'Post to Instagram'}
+              </button>
+            ) : completeRender ? (
+              <a className="instagram-publish-button is-connect" href="/settings"><Instagram size={17} /> Connect Instagram</a>
+            ) : null}
             {completeRender?.download_url && (
               <a className="download-button" href={outputUrl} download><Download size={18} /> Download <span>{formatBytes(completeRender.size_bytes)}</span></a>
             )}
@@ -1196,11 +1249,14 @@ function Workspace({ project, projects, activeId, onSelect, onNew, onDelete, onC
               saving={saveMutation.isPending || deleteImageMutation.isPending}
               rendering={renderMutation.isPending || (jobQuery.data?.kind === 'render' && !['complete', 'failed'].includes(jobQuery.data.status))}
               rewritingCaption={rewriteCaptionMutation.isPending}
+              shareToFeed={shareToFeed}
+              setShareToFeed={setShareToFeed}
             />
           </div>
         )}
         {jobQuery.data && <JobBanner job={jobQuery.data} />}
         {renderMutation.error && <div className="toast-error">{renderMutation.error.message}</div>}
+        {publishMutation.error && <div className="toast-error">{publishMutation.error.message}</div>}
         {uploadImageMutation.error && <div className="toast-error">{uploadImageMutation.error.message}</div>}
         {deleteImageMutation.error && <div className="toast-error">{deleteImageMutation.error.message}</div>}
         {rewriteCaptionMutation.error && <div className="toast-error">{rewriteCaptionMutation.error.message}</div>}
