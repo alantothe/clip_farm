@@ -1,7 +1,6 @@
 import logging
 import mimetypes
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from huey import crontab
@@ -21,17 +20,13 @@ from app.services.media import (
 )
 from app.services.transcription import TranscriptionError, transcribe_audio
 from app.services.x_download import download_x_video, extract_post_caption
-from app.services.instagram import (
-    InstagramConnectionError,
-    create_reel_container,
-    decrypt_token,
-    encrypt_token,
-    get_container_status,
-    get_media_permalink,
-    publish_reel,
-    refresh_long_lived_token,
-    sign_media_url,
+from app.publishers import (
+    PublishContext,
+    PublishError,
+    check_account,
+    get_publisher,
 )
+from app.services.instagram import InstagramConnectionError
 
 
 settings = get_settings()
@@ -40,30 +35,6 @@ logger = logging.getLogger(__name__)
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _as_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
-
-
-def _instagram_access_token(session, account: PlatformAccount) -> str:
-    key = settings.token_encryption_key or ""
-    access_token = decrypt_token(account.access_token_encrypted, key)
-    expires_at = _as_utc(account.token_expires_at)
-    if expires_at and expires_at <= _now():
-        account.status = "expired"
-        session.commit()
-        raise InstagramConnectionError("The Instagram login expired; reconnect the account")
-    if expires_at and expires_at <= _now() + timedelta(days=7):
-        refreshed = refresh_long_lived_token(access_token, settings)
-        access_token = refreshed.access_token
-        account.access_token_encrypted = encrypt_token(access_token, key)
-        account.token_expires_at = refreshed.expires_at
-        account.updated_at = _now()
-        session.commit()
-    return access_token
 
 
 def _update_job(job: Job, *, status: str | None = None, progress: int | None = None, message: str | None = None) -> None:
@@ -330,7 +301,13 @@ def render_project_task(project_id: str, render_id: str, job_id: str) -> None:
 
 
 @huey.task(retries=0)
-def publish_instagram_task(publication_id: str, job_id: str) -> None:
+def publish_task(publication_id: str, job_id: str) -> None:
+    """Post a finished render to whichever platform the publication names.
+
+    The platform-specific work lives behind the Publisher protocol; this task
+    owns the shared bookkeeping — job progress, publication status, and turning
+    any failure into a message the UI can show.
+    """
     with SessionLocal() as session:
         publication = session.get(Publication, publication_id)
         job = session.get(Job, job_id)
@@ -338,11 +315,11 @@ def publish_instagram_task(publication_id: str, job_id: str) -> None:
             return
         render = publication.render
         account = session.get(PlatformAccount, publication.account_id)
+        label = publication.platform.title()
         try:
-            if not account or account.status != "connected":
-                raise InstagramConnectionError("The Instagram account is no longer connected")
-            if render.status != "complete" or not render.path or not Path(render.path).is_file():
-                raise InstagramConnectionError("The rendered video is no longer available")
+            publisher = get_publisher(publication.platform)
+            check_account(publisher, account)
+            publisher.check_render(render)
 
             publication.started_at = _now()
             publication.status = "processing"
@@ -350,72 +327,29 @@ def publish_instagram_task(publication_id: str, job_id: str) -> None:
             job.started_at = _now()
             job.attempts += 1
             job.error_message = None
-            _update_job(job, status="running", progress=5, message="Preparing Instagram upload")
+            _update_job(job, status="running", progress=5, message=f"Preparing {label} upload")
             session.commit()
 
-            access_token = _instagram_access_token(session, account)
-            expires = int(time.time()) + settings.instagram_media_url_ttl_seconds
-            signature = sign_media_url(render.id, expires, settings.token_encryption_key or "")
-            video_url = (
-                f"{settings.external_base_url}{settings.api_prefix}/media/instagram/{render.id}"
-                f"?expires={expires}&signature={signature}"
-            )
-            _update_job(job, progress=12, message="Sending video to Instagram")
-            session.commit()
-            container_id = create_reel_container(
-                remote_user_id=account.remote_user_id,
-                access_token=access_token,
-                video_url=video_url,
-                caption=publication.caption,
-                share_to_feed=publication.share_to_feed,
-                settings=settings,
-            )
-            publication.remote_container_id = container_id
-            _update_job(job, progress=24, message="Instagram is processing the Reel")
-            session.commit()
-
-            deadline = time.monotonic() + settings.instagram_processing_timeout_seconds
-            while True:
-                status_code, _status_message = get_container_status(
-                    container_id, access_token, settings
-                )
-                if status_code == "FINISHED":
-                    break
-                if status_code in {"ERROR", "EXPIRED"}:
-                    raise InstagramConnectionError(
-                        "Instagram could not process the rendered video"
-                    )
-                if time.monotonic() >= deadline:
-                    raise InstagramConnectionError(
-                        "Instagram took too long to process the Reel; try posting again"
-                    )
-                remaining = max(0, deadline - time.monotonic())
-                elapsed_fraction = 1 - (
-                    remaining / max(1, settings.instagram_processing_timeout_seconds)
-                )
-                _update_job(
-                    job,
-                    progress=min(82, 24 + round(elapsed_fraction * 58)),
-                    message="Instagram is processing the Reel",
-                )
+            def report(progress: int, message: str) -> None:
+                _update_job(job, progress=progress, message=message)
                 session.commit()
-                time.sleep(settings.instagram_poll_interval_seconds)
 
-            publication.status = "publishing"
-            _update_job(job, progress=90, message="Publishing Reel to Instagram")
-            session.commit()
-            media_id = publish_reel(
-                remote_user_id=account.remote_user_id,
-                container_id=container_id,
-                access_token=access_token,
-                settings=settings,
+            result = publisher.publish(
+                PublishContext(
+                    publication=publication,
+                    account=account,
+                    render=render,
+                    access_token=publisher.access_token(session, account),
+                    report=report,
+                )
             )
-            publication.remote_media_id = media_id
-            publication.permalink = get_media_permalink(media_id, access_token, settings)
+
+            publication.remote_media_id = result.remote_media_id
+            publication.permalink = result.permalink
             publication.status = "complete"
             publication.completed_at = _now()
             job.completed_at = _now()
-            _update_job(job, status="complete", progress=100, message="Reel posted to Instagram")
+            _update_job(job, status="complete", progress=100, message=f"Posted to {label}")
             session.commit()
         except Exception as exc:
             publication.status = "failed"
@@ -423,14 +357,21 @@ def publish_instagram_task(publication_id: str, job_id: str) -> None:
             publication.completed_at = _now()
             job.error_message = str(exc)
             job.completed_at = _now()
-            _update_job(job, status="failed", message="Instagram post failed")
+            _update_job(job, status="failed", message=f"{label} post failed")
             session.commit()
             logger.exception(
-                "Instagram publication failed (publication=%s, render=%s, job=%s)",
+                "Publication failed (platform=%s, publication=%s, render=%s, job=%s)",
+                publication.platform,
                 publication_id,
                 render.id,
                 job_id,
             )
+
+
+@huey.task(retries=0)
+def publish_instagram_task(publication_id: str, job_id: str) -> None:
+    """Kept so publications enqueued under the old task name still resolve."""
+    publish_task.call_local(publication_id, job_id)
 
 
 @huey.periodic_task(crontab(hour="3", minute="15"))
@@ -440,6 +381,6 @@ def refresh_instagram_token_task() -> None:
         if not account or account.status != "connected":
             return
         try:
-            _instagram_access_token(session, account)
-        except InstagramConnectionError:
+            get_publisher("instagram").access_token(session, account)
+        except (PublishError, InstagramConnectionError):
             logger.warning("Scheduled Instagram token refresh failed", exc_info=True)

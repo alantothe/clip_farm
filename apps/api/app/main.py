@@ -42,11 +42,12 @@ from app.schemas import (
     ProjectUpdate,
     ConnectedAccountOut,
     PlatformConnectionOut,
-    InstagramPublishRequest,
+    PublishRequest,
     SocialCaptionOut,
     SocialCaptionRewriteRequest,
     SocialCaptionUpdate,
 )
+from app.publishers import PublishError, check_account, get_publisher
 from app.services.caption_rewrite import CaptionRewriteError, rewrite_social_caption
 from app.services.x_download import normalize_x_post_url
 from app.services.media import MediaProcessingError, validate_overlay_image
@@ -59,7 +60,7 @@ from app.services.instagram import (
 )
 from app.tasks import (
     import_project_task,
-    publish_instagram_task,
+    publish_task,
     render_project_task,
     transcribe_project_task,
 )
@@ -312,60 +313,55 @@ def disconnect_instagram(session: Session = Depends(get_db)) -> DeletionOut:
 
 
 @app.post(
-    f"{settings.api_prefix}/renders/{{render_id}}/publish/instagram",
+    f"{settings.api_prefix}/renders/{{render_id}}/publish/{{platform}}",
     response_model=JobOut,
     status_code=202,
 )
-def publish_render_to_instagram(
+def publish_render(
     render_id: str,
-    payload: InstagramPublishRequest,
+    platform: str,
+    payload: PublishRequest,
     session: Session = Depends(get_db),
 ) -> Job:
+    # Platform rules (duration, size, scopes, configuration) live in the
+    # publisher; this route only sequences them and owns the Publication row.
+    try:
+        publisher = get_publisher(platform)
+    except PublishError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
     render = session.get(Render, render_id)
     if not render or render.status != "complete" or not render.path:
         raise HTTPException(status_code=404, detail="Completed render not found")
     if not Path(render.path).is_file():
         raise HTTPException(status_code=404, detail="Rendered file is missing")
-    if render.duration_ms is not None and render.duration_ms < 3000:
-        raise HTTPException(status_code=422, detail="Instagram Reels must be at least 3 seconds")
-    if render.duration_ms is not None and render.duration_ms > 15 * 60 * 1000:
-        raise HTTPException(status_code=422, detail="Instagram Reels cannot exceed 15 minutes")
-    if Path(render.path).stat().st_size > 1_000_000_000:
-        raise HTTPException(status_code=422, detail="Instagram Reels must be smaller than 1 GB")
-    if not settings.instagram_is_configured:
-        raise HTTPException(status_code=503, detail="Instagram publishing is not configured")
-    if not settings.external_base_url.startswith("https://"):
-        raise HTTPException(
-            status_code=503,
-            detail="Set PUBLIC_BASE_URL to the public HTTPS address of Clip Farm before posting",
-        )
 
     account = session.scalar(
-        select(PlatformAccount).where(PlatformAccount.platform == "instagram")
+        select(PlatformAccount).where(PlatformAccount.platform == platform)
     )
-    if not account or account.status != "connected":
-        raise HTTPException(status_code=409, detail="Connect Instagram before posting")
-    if "instagram_business_content_publish" not in account.scopes.split(","):
-        raise HTTPException(
-            status_code=409,
-            detail="Reconnect Instagram and grant content publishing access",
-        )
+    try:
+        publisher.check_render(render)
+        publisher.check_configured()
+        check_account(publisher, account)
+    except PublishError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
+    label = platform.title()
     publication = session.scalar(
         select(Publication).where(
             Publication.render_id == render.id,
-            Publication.platform == "instagram",
+            Publication.platform == platform,
         )
     )
     if publication and publication.status in {"queued", "processing", "publishing"}:
-        raise HTTPException(status_code=409, detail="This Reel is already being posted")
+        raise HTTPException(status_code=409, detail=f"This render is already being posted to {label}")
     if publication and publication.status == "complete":
-        raise HTTPException(status_code=409, detail="This render has already been posted to Instagram")
+        raise HTTPException(status_code=409, detail=f"This render has already been posted to {label}")
     if not publication:
         publication = Publication(
             render_id=render.id,
             account_id=account.id,
-            platform="instagram",
+            platform=platform,
         )
         session.add(publication)
     publication.account_id = account.id
@@ -381,14 +377,14 @@ def publish_render_to_instagram(
     job = Job(
         project_id=render.project_id,
         render_id=render.id,
-        kind="publish_instagram",
-        message="Queued for Instagram",
+        kind=f"publish_{platform}",
+        message=f"Queued for {label}",
     )
     session.add(job)
     session.flush()
     publication.job_id = job.id
     session.commit()
-    publish_instagram_task(publication.id, job.id)
+    publish_task(publication.id, job.id)
     return job
 
 

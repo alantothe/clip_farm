@@ -129,7 +129,7 @@ class PublicationOut(BaseModel):
     completed_at: datetime | None
 
 
-class InstagramPublishRequest(BaseModel):
+class PublishRequest(BaseModel):
     caption: str = Field(default="", max_length=2200)
     share_to_feed: bool = True
 

@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import Base
 from app.models import Job, PlatformAccount, Project, Publication, Render
-from app.schemas import InstagramPublishRequest
+from app.publishers import instagram as instagram_publisher
+from app.schemas import PublishRequest
 from app.services import instagram
 from app import main, tasks
 
@@ -141,17 +142,19 @@ def test_instagram_publish_worker_completes_and_uses_signed_media_url(tmp_path, 
         return "container-1"
 
     monkeypatch.setattr(tasks, "SessionLocal", session_factory)
-    monkeypatch.setattr(tasks, "settings", worker_settings)
-    monkeypatch.setattr(tasks, "create_reel_container", create_container)
-    monkeypatch.setattr(tasks, "get_container_status", lambda *_args: ("FINISHED", "ready"))
-    monkeypatch.setattr(tasks, "publish_reel", lambda **_kwargs: "media-1")
+    monkeypatch.setattr(instagram_publisher, "settings", worker_settings)
+    monkeypatch.setattr(instagram_publisher, "create_reel_container", create_container)
     monkeypatch.setattr(
-        tasks,
+        instagram_publisher, "get_container_status", lambda *_args: ("FINISHED", "ready")
+    )
+    monkeypatch.setattr(instagram_publisher, "publish_reel", lambda **_kwargs: "media-1")
+    monkeypatch.setattr(
+        instagram_publisher,
         "get_media_permalink",
         lambda *_args: "https://www.instagram.com/reel/test/",
     )
 
-    tasks.publish_instagram_task.call_local(publication_id, job_id)
+    tasks.publish_task.call_local(publication_id, job_id)
 
     with Session(engine) as session:
         publication = session.get(Publication, publication_id)
@@ -258,13 +261,13 @@ def test_publish_endpoint_queues_connected_completed_render(tmp_path, monkeypatc
     video.write_bytes(b"rendered-video")
     queued: dict[str, str] = {}
     monkeypatch.setattr(
-        main,
+        instagram_publisher,
         "settings",
         SimpleNamespace(instagram_is_configured=True, external_base_url="https://clips.example"),
     )
     monkeypatch.setattr(
         main,
-        "publish_instagram_task",
+        "publish_task",
         lambda publication_id, job_id: queued.update(
             publication_id=publication_id, job_id=job_id
         ),
@@ -294,9 +297,10 @@ def test_publish_endpoint_queues_connected_completed_render(tmp_path, monkeypatc
         session.add_all([render, account])
         session.commit()
 
-        job = main.publish_render_to_instagram(
+        job = main.publish_render(
             render.id,
-            InstagramPublishRequest(caption="  Reel caption  ", share_to_feed=False),
+            "instagram",
+            PublishRequest(caption="  Reel caption  ", share_to_feed=False),
             session,
         )
         publication = session.query(Publication).one()
