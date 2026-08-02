@@ -490,6 +490,7 @@ function EditorPanel({
   onTranscribe,
   onRewriteCaption,
   onRender,
+  ownRender,
   saving,
   rendering,
   rewritingCaption,
@@ -512,6 +513,7 @@ function EditorPanel({
   onTranscribe: () => void
   onRewriteCaption: () => void
   onRender: () => void
+  ownRender: boolean
   saving: boolean
   rendering: boolean
   rewritingCaption: boolean
@@ -786,10 +788,12 @@ function EditorPanel({
         <button className="icon-command" onClick={onSave} disabled={saving} title="Save edits">
           {saving ? <LoaderCircle className="spin" size={18} /> : <Save size={18} />}
         </button>
-        <button className="render-button" onClick={onRender} disabled={rendering || project.status !== 'ready'}>
-          {rendering ? <LoaderCircle className="spin" size={18} /> : <Play size={18} fill="currentColor" />}
-          Render vertical
-        </button>
+        {ownRender && (
+          <button className="render-button" onClick={onRender} disabled={rendering || project.status !== 'ready'}>
+            {rendering ? <LoaderCircle className="spin" size={18} /> : <Play size={18} fill="currentColor" />}
+            Render vertical
+          </button>
+        )}
       </div>
     </section>
   )
@@ -830,7 +834,7 @@ function ImportFailure({ project }: { project: Project }) {
   )
 }
 
-export function ClipEditor({ clip: project, rail, collectionKey }: {
+export function ClipEditor({ clip: project, rail, collectionKey, ownRender = true }: {
   clip: Project
   /** The Mode's own sidebar, rendered beside the editor. */
   rail: ReactNode
@@ -839,6 +843,15 @@ export function ClipEditor({ clip: project, rail, collectionKey }: {
    * an edit lands so the rail and grid outside the editor stay in step.
    */
   collectionKey: readonly unknown[]
+  /**
+   * Whether this Clip delivers a finished video of its own.
+   *
+   * False inside a Batch, where the Sequence is the deliverable and a per-Clip
+   * Render would only ever be an intermediate. The editing controls are
+   * identical either way — a Batch holds no edit settings of its own — so only
+   * the output controls differ.
+   */
+  ownRender?: boolean
 }) {
   const queryClient = useQueryClient()
   const [settings, setSettings] = useState<ProjectSettings>(() => getSettings(project))
@@ -853,6 +866,8 @@ export function ClipEditor({ clip: project, rail, collectionKey }: {
   const connectionsQuery = useQuery({
     queryKey: ['platform-connections'],
     queryFn: api.listPlatformConnections,
+    // Nothing here publishes when the Batch owns the output.
+    enabled: ownRender,
   })
 
   useEffect(() => {
@@ -958,7 +973,7 @@ export function ClipEditor({ clip: project, rail, collectionKey }: {
             {project.source_url && (
               <a className="icon-command" href={project.source_url} target="_blank" rel="noreferrer" title="Open source post"><ExternalLink size={18} /></a>
             )}
-            {completeRender && instagramPublication?.status === 'complete' ? (
+            {!ownRender ? null : completeRender && instagramPublication?.status === 'complete' ? (
               <a
                 className="instagram-publish-button is-complete"
                 href={instagramPublication.permalink ?? undefined}
@@ -979,7 +994,7 @@ export function ClipEditor({ clip: project, rail, collectionKey }: {
             ) : completeRender ? (
               <a className="instagram-publish-button is-connect" href="/settings"><Instagram size={17} /> Connect Instagram</a>
             ) : null}
-            {completeRender?.download_url && (
+            {ownRender && completeRender?.download_url && (
               <a className="download-button" href={outputUrl} download><Download size={18} /> Download <span>{formatBytes(completeRender.size_bytes)}</span></a>
             )}
           </div>
@@ -1022,6 +1037,7 @@ export function ClipEditor({ clip: project, rail, collectionKey }: {
               onTranscribe={() => transcribeMutation.mutate()}
               onRewriteCaption={() => rewriteCaptionMutation.mutate()}
               onRender={() => renderMutation.mutate()}
+              ownRender={ownRender}
               saving={saveMutation.isPending || deleteImageMutation.isPending}
               rendering={renderMutation.isPending || (jobQuery.data?.kind === 'render' && !['complete', 'failed'].includes(jobQuery.data.status))}
               rewritingCaption={rewriteCaptionMutation.isPending}
