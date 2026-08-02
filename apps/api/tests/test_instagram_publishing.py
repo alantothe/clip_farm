@@ -13,7 +13,8 @@ from app.models import Job, PlatformAccount, Project, Publication, Render
 from app.publishers import instagram as instagram_publisher
 from app.schemas import PublishRequest
 from app.services import instagram
-from app import main, tasks
+from app.routers import media, publishing
+from app import tasks
 
 
 def test_instagram_reel_requests_use_server_side_bearer_token(monkeypatch) -> None:
@@ -233,19 +234,19 @@ def test_instagram_media_route_requires_an_unexpired_signature(tmp_path, monkeyp
         now = int(datetime.now(timezone.utc).timestamp())
         expires = now + 600
         signature = instagram.sign_media_url(render.id, expires, key)
-        monkeypatch.setattr(main, "settings", SimpleNamespace(token_encryption_key=key))
+        monkeypatch.setattr(media, "settings", SimpleNamespace(token_encryption_key=key))
 
-        response = main.serve_instagram_render(render.id, expires, signature, session)
+        response = media.serve_instagram_render(render.id, expires, signature, session)
         assert Path(response.path) == video
         assert response.media_type == "video/mp4"
         assert response.headers["cache-control"] == "private, no-store"
 
         with pytest.raises(HTTPException) as invalid:
-            main.serve_instagram_render(render.id, expires, "not-a-signature", session)
+            media.serve_instagram_render(render.id, expires, "not-a-signature", session)
         assert invalid.value.status_code == 403
 
         with pytest.raises(HTTPException) as expired:
-            main.serve_instagram_render(
+            media.serve_instagram_render(
                 render.id,
                 now - 1,
                 instagram.sign_media_url(render.id, now - 1, key),
@@ -266,7 +267,7 @@ def test_publish_endpoint_queues_connected_completed_render(tmp_path, monkeypatc
         SimpleNamespace(instagram_is_configured=True, external_base_url="https://clips.example"),
     )
     monkeypatch.setattr(
-        main,
+        publishing,
         "publish_task",
         lambda publication_id, job_id: queued.update(
             publication_id=publication_id, job_id=job_id
@@ -297,7 +298,7 @@ def test_publish_endpoint_queues_connected_completed_render(tmp_path, monkeypatc
         session.add_all([render, account])
         session.commit()
 
-        job = main.publish_render(
+        job = publishing.publish_render(
             render.id,
             "instagram",
             PublishRequest(caption="  Reel caption  ", share_to_feed=False),

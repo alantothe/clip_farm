@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app import main
+from app.routers import publishing
 from app.database import Base
 from app.models import PlatformAccount, Project, Render
 from app.publishers import (
@@ -107,5 +107,5 @@ def test_publish_route_rejects_an_unsupported_platform(tmp_path, monkeypatch) ->
         session.commit()
 
         with pytest.raises(HTTPException) as excinfo:
-            main.publish_render(render.id, "tiktok", PublishRequest(caption="hi"), session)
+            publishing.publish_render(render.id, "tiktok", PublishRequest(caption="hi"), session)
         assert excinfo.value.status_code == 404

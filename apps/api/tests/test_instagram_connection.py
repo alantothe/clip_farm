@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
-from app import main
+from app.routers import platforms
 from app.config import Settings
 from app.database import Base
 from app.models import PlatformAccount
@@ -127,9 +127,9 @@ def test_instagram_callback_stores_encrypted_account_and_redirects(tmp_path, mon
         token_encryption_key=key,
         frontend_url="http://localhost:5173",
     )
-    monkeypatch.setattr(main, "settings", callback_settings)
+    monkeypatch.setattr(platforms, "settings", callback_settings)
     monkeypatch.setattr(
-        main,
+        platforms,
         "exchange_authorization_code",
         lambda _code, _settings: instagram.InstagramIdentity(
             remote_user_id="456",
@@ -139,15 +139,15 @@ def test_instagram_callback_stores_encrypted_account_and_redirects(tmp_path, mon
             expires_at=datetime(2026, 9, 14, tzinfo=timezone.utc),
         ),
     )
-    state = main._encode_oauth_state()
+    state = platforms._encode_oauth_state()
     request = Request(
         {
             "type": "http",
-            "headers": [(b"cookie", f"{main.INSTAGRAM_STATE_COOKIE}={state}".encode())],
+            "headers": [(b"cookie", f"{platforms.INSTAGRAM_STATE_COOKIE}={state}".encode())],
         }
     )
 
-    response = main.instagram_callback(
+    response = platforms.instagram_callback(
         request=request,
         code="authorization-code",
         state=state,

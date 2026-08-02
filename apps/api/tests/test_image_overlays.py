@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers, UploadFile
 
-from app import main
+from app.routers import projects as projects_router
 from app.database import Base
 from app.models import ImageOverlay, Project
 from app.schemas import ImageOverlayUpdate
@@ -32,7 +32,7 @@ def test_image_overlay_upload_update_and_delete(tmp_path, monkeypatch) -> None:
     session.add(project)
     session.commit()
     monkeypatch.setattr(
-        main,
+        projects_router,
         "settings",
         SimpleNamespace(projects_dir=tmp_path / "projects", api_prefix="/api"),
     )
@@ -45,7 +45,7 @@ def test_image_overlay_upload_update_and_delete(tmp_path, monkeypatch) -> None:
         headers=Headers({"content-type": "image/png"}),
     )
 
-    created = asyncio.run(main.upload_image_overlay("project", upload, 1200, session))
+    created = asyncio.run(projects_router.upload_image_overlay("project", upload, 1200, session))
 
     assert created.name == "callout.png"
     assert created.start_ms == 1200
@@ -57,7 +57,7 @@ def test_image_overlay_upload_update_and_delete(tmp_path, monkeypatch) -> None:
     assert overlay is not None
     assert overlay.artifact.size_bytes == len(image_bytes)
 
-    updated = main.update_image_overlay(
+    updated = projects_router.update_image_overlay(
         "project",
         created.id,
         ImageOverlayUpdate(end_ms=4800, width_percent=42, center_y=25, rotation_deg=-12, opacity=0.6),
@@ -71,7 +71,7 @@ def test_image_overlay_upload_update_and_delete(tmp_path, monkeypatch) -> None:
 
     image_path = tmp_path / "projects" / "project" / "overlays" / f"{overlay.artifact_id}.png"
     assert image_path.is_file()
-    assert main.delete_image_overlay("project", created.id, session).deleted == 1
+    assert projects_router.delete_image_overlay("project", created.id, session).deleted == 1
     assert session.get(ImageOverlay, created.id) is None
     assert not image_path.exists()
     session.close()
