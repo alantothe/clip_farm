@@ -16,6 +16,7 @@ from app.models import (
     Batch,
     Job,
     Project,
+    Shot,
     new_id,
 )
 from app.schemas import (
@@ -25,15 +26,19 @@ from app.schemas import (
     BatchUpdate,
     BatchUploadOut,
     DeletionOut,
+    ShotCreate,
+    ShotMove,
 )
 from app.services.upload import UploadRejected, clip_title, source_suffix, store_source_video
 from app.tasks import import_upload_task
 
 from app.routers._helpers import (
     batch_clips,
+    batch_shots,
     ensure_project_can_be_deleted,
     get_batch_or_404,
     remove_project_files,
+    renumber_shots,
     serialize_batch,
     summarize_batch,
 )
@@ -99,6 +104,78 @@ def delete_batch(batch_id: str, session: Session = Depends(get_db)) -> DeletionO
     for clip_id in clip_ids:
         remove_project_files(clip_id)
     return DeletionOut(deleted=len(clip_ids))
+
+
+def _touch(session: Session, batch: Batch) -> BatchOut:
+    """Stamp the Batch as edited and hand back its current state."""
+    batch.updated_at = datetime.now(timezone.utc)
+    session.commit()
+    return serialize_batch(session, batch)
+
+
+@router.post(
+    f"{settings.api_prefix}/batches/{{batch_id}}/shots",
+    response_model=BatchOut,
+    status_code=201,
+)
+def add_shot(
+    batch_id: str, payload: ShotCreate, session: Session = Depends(get_db)
+) -> BatchOut:
+    """Put a Clip at the end of the Sequence.
+
+    Being in a Batch and being in its Sequence are different things: uploading
+    a video is not the same act as deciding it makes the cut.
+    """
+    batch = get_batch_or_404(session, batch_id)
+    clip = session.get(Project, payload.clip_id)
+    if not clip or clip.batch_id != batch.id:
+        raise HTTPException(status_code=404, detail="That clip is not in this batch")
+    if clip.shot:
+        raise HTTPException(
+            status_code=409, detail="That clip is already in the sequence"
+        )
+    shots = batch_shots(session, batch.id)
+    session.add(Shot(batch_id=batch.id, project_id=clip.id, position=len(shots)))
+    return _touch(session, batch)
+
+
+@router.delete(
+    f"{settings.api_prefix}/batches/{{batch_id}}/shots/{{shot_id}}",
+    response_model=BatchOut,
+)
+def remove_shot(batch_id: str, shot_id: str, session: Session = Depends(get_db)) -> BatchOut:
+    """Take a Shot out of the Sequence. The Clip stays in the Batch."""
+    batch = get_batch_or_404(session, batch_id)
+    shots = batch_shots(session, batch.id)
+    shot = next((item for item in shots if item.id == shot_id), None)
+    if not shot:
+        raise HTTPException(status_code=404, detail="Shot not found")
+    shots.remove(shot)
+    session.delete(shot)
+    renumber_shots(shots)
+    return _touch(session, batch)
+
+
+@router.patch(
+    f"{settings.api_prefix}/batches/{{batch_id}}/shots/{{shot_id}}",
+    response_model=BatchOut,
+)
+def move_shot(
+    batch_id: str, shot_id: str, payload: ShotMove, session: Session = Depends(get_db)
+) -> BatchOut:
+    """Move a Shot to a position, sliding everything between it and there."""
+    batch = get_batch_or_404(session, batch_id)
+    shots = batch_shots(session, batch.id)
+    shot = next((item for item in shots if item.id == shot_id), None)
+    if not shot:
+        raise HTTPException(status_code=404, detail="Shot not found")
+    # Past the end means the end, rather than an error the UI would have to
+    # pre-empt by knowing the length.
+    target = min(payload.position, len(shots) - 1)
+    shots.remove(shot)
+    shots.insert(target, shot)
+    renumber_shots(shots)
+    return _touch(session, batch)
 
 
 @router.post(

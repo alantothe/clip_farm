@@ -228,6 +228,26 @@ class ProjectOut(BaseModel):
         return value or None
 
 
+class ShotCreate(BaseModel):
+    clip_id: str
+
+
+class ShotMove(BaseModel):
+    position: int = Field(ge=0)
+
+
+class ShotOut(BaseModel):
+    """One Shot. The Clip itself travels in the Batch's `clips`, not here."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: str
+    # `project_id` is the stale column name for what the glossary calls a Clip;
+    # the API boundary speaks the glossary.
+    clip_id: str = Field(validation_alias="project_id")
+    position: int
+
+
 class BatchOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -236,6 +256,8 @@ class BatchOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     clips: list[ProjectOut] = []
+    # The Sequence, in play order.
+    shots: list[ShotOut] = []
 
 
 class BatchSummaryOut(BaseModel):
@@ -250,6 +272,7 @@ class BatchSummaryOut(BaseModel):
     clip_count: int = 0
     importing_count: int = 0
     failed_count: int = 0
+    shot_count: int = 0
 
 
 class BatchUploadOut(BaseModel):

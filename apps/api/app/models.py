@@ -31,7 +31,8 @@ class Batch(Base):
 
     Batches exist so several imports can run in parallel without their Clips
     crowding each other in one flat list. A Batch owns no edit settings of its
-    own — each Clip inside it is edited and rendered exactly as any other.
+    own — each Clip inside it is trimmed, cropped, and subtitled on its own —
+    but it does own a Sequence, and renders through it into one video.
     """
 
     __tablename__ = "batches"
@@ -44,6 +45,41 @@ class Batch(Base):
     clips: Mapped[list["Project"]] = relationship(
         back_populates="batch", order_by="Project.created_at"
     )
+    # The Sequence: the Batch's Shots in the order they play.
+    shots: Mapped[list["Shot"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        order_by="Shot.position",
+    )
+
+
+class Shot(Base):
+    """One Clip's placement in a Batch's Sequence.
+
+    The span that plays is the Clip's own Trim, so a Clip earns at most one
+    Shot: a second placement would play identically twice. Per-Shot trim is the
+    change that would make repeats useful, and this row is where it would go.
+
+    Positions are renumbered to 0..n-1 whenever the Sequence is edited. A gap
+    left by deleting a Clip elsewhere is harmless — order is what is read, not
+    contiguity.
+    """
+
+    __tablename__ = "shots"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_shots_project"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    batch: Mapped[Batch] = relationship(back_populates="shots")
+    clip: Mapped["Project"] = relationship(back_populates="shot")
 
 
 class Project(Base):
@@ -99,6 +135,10 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     batch: Mapped["Batch | None"] = relationship(back_populates="clips")
+    # Deleting a Clip takes its Shot out of the Sequence with it.
+    shot: Mapped["Shot | None"] = relationship(
+        back_populates="clip", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class Artifact(Base):
