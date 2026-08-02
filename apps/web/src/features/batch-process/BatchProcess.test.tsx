@@ -508,3 +508,16 @@ test('reports a failed export instead of a download', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Export failed while rendering clip 2 of 2')
   expect(screen.queryByRole('link', { name: /Download MP4/ })).toBeNull()
 })
+
+test('a clip inside a batch edits but does not render or publish on its own', async () => {
+  stubApi({ 'GET /api/batches/batch-1': sequencedBatch() })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1/clips/clip-ready')
+
+  // The editing controls are all still there — a batch holds no edit settings.
+  expect(await screen.findByTitle('Save edits')).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'first' })).toBeVisible()
+  // The batch is the deliverable, so the clip offers no output of its own.
+  expect(screen.queryByRole('button', { name: /Render vertical/ })).toBeNull()
+  expect(screen.queryByRole('button', { name: /Post to Instagram/ })).toBeNull()
+})

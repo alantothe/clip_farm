@@ -255,6 +255,9 @@ export function BatchProcessPage() {
       <ClipEditor
         clip={activeClip}
         collectionKey={batchKey(batch.id)}
+        // The Batch delivers one video, so a per-Clip render here would only
+        // ever be an intermediate. Editing is unchanged.
+        ownRender={false}
         rail={(
           <ProjectRail
             projects={clips}
