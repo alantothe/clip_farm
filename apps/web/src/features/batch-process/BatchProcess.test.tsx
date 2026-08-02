@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { vi } from 'vitest'
 import { App } from '../../App'
-import type { Batch, BatchSummary, Project } from '../../types'
+import type { Batch, BatchSummary, Project, SequenceRender } from '../../types'
 
 function LocationDisplay() {
   return <output data-testid="location">{useLocation().pathname}</output>
@@ -65,6 +65,7 @@ const summary: BatchSummary = {
   clip_count: 2,
   importing_count: 1,
   failed_count: 0,
+  shot_count: 0,
 }
 
 const importingClip = makeClip({
@@ -94,6 +95,8 @@ const batch: Batch = {
   created_at: '2026-08-02T12:00:00Z',
   updated_at: '2026-08-02T12:00:00Z',
   clips: [makeClip({ id: 'clip-ready', title: 'first' }), importingClip],
+  shots: [],
+  sequence_render: null,
 }
 
 function stubApi(overrides: Record<string, unknown> = {}) {
@@ -279,4 +282,229 @@ test('renames a batch in place', async () => {
       expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: 'Client cuts' }) }),
     ),
   )
+})
+
+// --- the timeline, and the one video it exports --------------------------
+
+const readyClip = makeClip({ id: 'clip-ready', title: 'first' })
+const secondClip = makeClip({ id: 'clip-second', title: 'second', duration_ms: 3000, trim_end_ms: 3000 })
+
+/** A batch whose clips have all imported, so they can be placed and exported. */
+function sequencedBatch(overrides: Partial<Batch> = {}): Batch {
+  return {
+    ...batch,
+    clips: [readyClip, secondClip],
+    shots: [],
+    sequence_render: null,
+    ...overrides,
+  }
+}
+
+const placed: Batch = sequencedBatch({
+  shots: [
+    { id: 'shot-1', clip_id: 'clip-ready', position: 0 },
+    { id: 'shot-2', clip_id: 'clip-second', position: 1 },
+  ],
+})
+
+test('an imported clip waits off the timeline until it is added', async () => {
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': sequencedBatch() })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  // In the batch, but not yet in the sequence.
+  expect(await screen.findByText(/Nothing on the timeline yet/)).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Add first to the timeline' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ clip_id: 'clip-ready' }),
+      }),
+    ),
+  )
+})
+
+test('shows the placed clips in order with a running total', async () => {
+  stubApi({ 'GET /api/batches/batch-1': placed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const timeline = await screen.findByRole('list', { name: 'Timeline' })
+  const entries = within(timeline).getAllByRole('listitem')
+  expect(entries).toHaveLength(2)
+  expect(entries[0]).toHaveTextContent('first')
+  expect(entries[1]).toHaveTextContent('second')
+  // 5s + 3s of trimmed clip, not the raw sources.
+  expect(screen.getByRole('heading', { name: /2 clips/ })).toHaveTextContent('0:08')
+  // A clip already placed is not offered again.
+  expect(screen.queryByRole('button', { name: 'Add first to the timeline' })).toBeNull()
+})
+
+test('reorders the timeline by position rather than by swap', async () => {
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': placed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Move second earlier' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots/shot-2',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ position: 0 }) }),
+    ),
+  )
+})
+
+test('the first clip cannot move earlier and the last cannot move later', async () => {
+  stubApi({ 'GET /api/batches/batch-1': placed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  expect(await screen.findByRole('button', { name: 'Move first earlier' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Move second later' })).toBeDisabled()
+})
+
+test('removing a clip from the timeline leaves it in the batch', async () => {
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': placed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Remove first from the timeline' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots/shot-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+  // Still in the grid, ready to add back.
+  expect(screen.getByRole('button', { name: 'Edit first' })).toBeVisible()
+})
+
+test('exporting is refused until something is on the timeline', async () => {
+  stubApi({ 'GET /api/batches/batch-1': sequencedBatch() })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  expect(await screen.findByRole('button', { name: /Export video/ })).toBeDisabled()
+})
+
+test('exports the timeline as one video', async () => {
+  const queued: SequenceRender = {
+    id: 'seq-1',
+    batch_id: 'batch-1',
+    status: 'queued',
+    progress: 0,
+    message: 'Queued for export',
+    size_bytes: null,
+    duration_ms: null,
+    shot_count: 2,
+    error_message: null,
+    created_at: '2026-08-02T12:00:00Z',
+    completed_at: null,
+    download_url: null,
+  }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': placed,
+    'POST /api/batches/batch-1/render': queued,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: /Export video/ }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/render',
+      expect.objectContaining({ method: 'POST' }),
+    ),
+  )
+})
+
+test('shows export progress while the sequence renders', async () => {
+  stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      sequence_render: {
+        id: 'seq-1',
+        batch_id: 'batch-1',
+        status: 'running',
+        progress: 45,
+        message: 'Rendering clip 1 of 2',
+        size_bytes: null,
+        duration_ms: null,
+        shot_count: 2,
+        error_message: null,
+        created_at: '2026-08-02T12:00:00Z',
+        completed_at: null,
+        download_url: null,
+      },
+    }),
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const bar = await screen.findByRole('progressbar', { name: 'Export progress' })
+  expect(bar).toHaveAttribute('aria-valuenow', '45')
+  expect(screen.getByText('Rendering clip 1 of 2')).toBeVisible()
+  expect(screen.getByRole('button', { name: /Exporting/ })).toBeDisabled()
+})
+
+test('offers the finished video for download, and flags a timeline changed since', async () => {
+  stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      sequence_render: {
+        id: 'seq-1',
+        batch_id: 'batch-1',
+        status: 'complete',
+        progress: 100,
+        message: 'Sequence ready',
+        size_bytes: 4_200_000,
+        duration_ms: 8000,
+        // Rendered from one clip; the timeline now holds two.
+        shot_count: 1,
+        error_message: null,
+        created_at: '2026-08-02T12:00:00Z',
+        completed_at: '2026-08-02T12:02:00Z',
+        download_url: '/api/batches/batch-1/render/download',
+      },
+    }),
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const link = await screen.findByRole('link', { name: /Download MP4/ })
+  expect(link).toHaveAttribute('href', '/api/batches/batch-1/render/download')
+  expect(screen.getByText(/timeline changed since this export/)).toBeVisible()
+})
+
+test('reports a failed export instead of a download', async () => {
+  stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      sequence_render: {
+        id: 'seq-1',
+        batch_id: 'batch-1',
+        status: 'failed',
+        progress: 40,
+        message: 'Export failed while rendering clip 2 of 2',
+        size_bytes: null,
+        duration_ms: null,
+        shot_count: 2,
+        error_message: 'Stage: Rendering clip 2 of 2',
+        created_at: '2026-08-02T12:00:00Z',
+        completed_at: '2026-08-02T12:01:00Z',
+        download_url: null,
+      },
+    }),
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Export failed while rendering clip 2 of 2')
+  expect(screen.queryByRole('link', { name: /Download MP4/ })).toBeNull()
 })

@@ -111,6 +111,29 @@ export interface Job {
   completed_at: string | null
 }
 
+/** One Clip's placement in a Sequence. The Clip itself is in `Batch.clips`. */
+export interface Shot {
+  id: string
+  clip_id: string
+  position: number
+}
+
+/** The finished video a Sequence produces: every Shot in order, joined. */
+export interface SequenceRender {
+  id: string
+  batch_id: string
+  status: 'queued' | 'running' | 'complete' | 'failed'
+  progress: number
+  message: string
+  size_bytes: number | null
+  duration_ms: number | null
+  shot_count: number
+  error_message: string | null
+  created_at: string
+  completed_at: string | null
+  download_url: string | null
+}
+
 /** A named set of Clips imported and worked on together. */
 export interface Batch {
   id: string
@@ -118,6 +141,9 @@ export interface Batch {
   created_at: string
   updated_at: string
   clips: Project[]
+  /** The Sequence, in play order. A Clip can be in a Batch without a Shot. */
+  shots: Shot[]
+  sequence_render: SequenceRender | null
 }
 
 /** A Batch without its Clips, for the list that picks between Batches. */
@@ -129,6 +155,7 @@ export interface BatchSummary {
   clip_count: number
   importing_count: number
   failed_count: number
+  shot_count: number
 }
 
 export interface BatchUploadResult {
