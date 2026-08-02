@@ -59,11 +59,17 @@ export interface Publication {
   completed_at: string | null
 }
 
+export type OriginKind = 'x' | 'upload'
+
 export interface Project {
   id: string
   mode: string
-  source_url: string
-  source_post_id: string
+  origin_kind: OriginKind
+  /** Null unless the Clip belongs to a Batch. */
+  batch_id: string | null
+  /** Null for uploads, which have no Origin URL. */
+  source_url: string | null
+  source_post_id: string | null
   title: string
   source_caption: string | null
   social_caption: string | null
@@ -103,6 +109,33 @@ export interface Job {
   created_at: string
   started_at: string | null
   completed_at: string | null
+}
+
+/** A named set of Clips imported and worked on together. */
+export interface Batch {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+  clips: Project[]
+}
+
+/** A Batch without its Clips, for the list that picks between Batches. */
+export interface BatchSummary {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+  clip_count: number
+  importing_count: number
+  failed_count: number
+}
+
+export interface BatchUploadResult {
+  batch: Batch
+  accepted: number
+  /** One message per file that could not become a Clip. */
+  rejected: string[]
 }
 
 export interface ProjectSettings {
