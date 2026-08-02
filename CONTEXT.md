@@ -1,0 +1,95 @@
+# Clip Farm
+
+Clip Farm turns a landscape video you own into a vertical, subtitled video ready to publish to Instagram Reels. One operator, working on their own material.
+
+## Language
+
+### The work
+
+**Clip**:
+One source video together with the edit decisions applied to it. The unit you open, edit, render, and publish.
+_Avoid_: project, video, item
+
+**Batch**:
+A named set of Clips imported and worked on together. A Clip belongs to at most one Batch. A Batch holds no edit settings of its own — each Clip in it is edited and rendered like any other. Several Batches run at once; that is the point of them.
+_Avoid_: project, group, folder, run
+
+**Origin**:
+Where a Clip came from — an X post, or a file uploaded from disk. Some Origins have a URL; uploads do not.
+_Avoid_: source, source post, provenance
+
+**Origin Kind**:
+Which way a Clip entered Clip Farm: `x` or `upload`.
+_Avoid_: mode, source type, ingest type
+
+**Source Video**:
+The unmodified video file a Clip is built from, exactly as downloaded or uploaded.
+_Avoid_: source, original, raw, master
+
+**Format**:
+The shape of the finished video. Vertical today.
+_Avoid_: mode, aspect, output type
+
+**Mode**:
+A signposted way in on the home page, pairing an Origin Kind with a Format. A Mode is a door, not a property of a Clip — a Clip has an Origin Kind and a Format.
+_Avoid_: workflow, flow
+
+**Mode Library**:
+The full set of Modes, and the home page that presents them.
+_Avoid_: modes page, gallery, tool picker
+
+### Editing
+
+**Subtitle**:
+Timed text burned into the video image.
+_Avoid_: caption, subs, CC, transcript
+
+**Caption**:
+The text posted alongside a Render on the Platform.
+_Avoid_: description, post text, social caption, blurb
+
+**Overlay**:
+An image placed on top of the video for a defined span of the Clip.
+_Avoid_: sticker, watermark, image
+
+**Trim**:
+The span of the Source Video that survives into the Render.
+_Avoid_: cut, range, in/out
+
+**Layout**:
+How the source frame is fitted into the Format — cropped to fill, or fitted whole against a background.
+_Avoid_: crop mode, fit, framing
+
+### Output
+
+**Render**:
+A finished video file, frozen together with the exact edit settings that produced it. A Clip's settings can change afterwards; a Render's cannot.
+_Avoid_: rendition, export, output, version
+
+**Artifact**:
+A supporting file belonging to a Clip — its Source Video, preview, thumbnail, extracted audio, or an Overlay image. A Render is not an Artifact.
+_Avoid_: asset, file, media
+
+### Publishing
+
+**Platform**:
+An external service a Render is published to. Instagram today.
+_Avoid_: destination, channel, network
+
+**Platform Account**:
+The account Clip Farm publishes through on a Platform. One per Platform.
+_Avoid_: account, connection, integration
+
+**Publication**:
+One attempt to publish one Render to one Platform. A given Render reaches a given Platform once.
+_Avoid_: post, upload, publish
+
+### Process
+
+**Import**:
+Bringing a Source Video onto disk and preparing its Clip for editing — inspecting it, building the preview and thumbnail, and generating Subtitles.
+_Avoid_: ingest, download, fetch
+
+**Job**:
+The visible progress of one background task — its status, percentage, and current step.
+_Avoid_: task, queue item, worker
