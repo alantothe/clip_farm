@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.database import init_db
 from app.routers import (
+    batches_router,
     jobs_router,
     media_router,
     platforms_router,
@@ -43,6 +44,7 @@ def health() -> dict:
 app.include_router(platforms_router)
 app.include_router(publishing_router)
 app.include_router(media_router)
+app.include_router(batches_router)
 app.include_router(projects_router)
 app.include_router(jobs_router)
 

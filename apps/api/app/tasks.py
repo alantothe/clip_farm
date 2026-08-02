@@ -99,6 +99,92 @@ def _transcribe_project(session, project: Project, audio: Path, job: Job) -> Non
     session.commit()
 
 
+def _prepare_clip(session, project: Project, job: Job, source: Path) -> None:
+    """Turn a Source Video already on disk into a Clip that can be edited.
+
+    Shared by both Origin Kinds: an `x` Clip reaches this point by downloading
+    its Source Video, an `upload` Clip by having it written during the request.
+    Everything downstream — inspection, preview, thumbnail, Subtitles — is the
+    same work, so it lives here rather than in each importer.
+    """
+    project_dir = settings.projects_dir / project.id
+    _update_job(job, progress=32, message="Inspecting source video")
+    session.commit()
+
+    metadata = inspect_media(source)
+    project.duration_ms = metadata["duration_ms"]
+    project.trim_end_ms = metadata["duration_ms"]
+    project.width = metadata["width"]
+    project.height = metadata["height"]
+    project.fps = metadata["fps"]
+
+    session.execute(delete(Artifact).where(Artifact.project_id == project.id))
+    _add_artifact(session, project.id, "source", source)
+    session.commit()
+
+    preview = project_dir / "preview.mp4"
+    thumbnail = project_dir / "thumbnail.jpg"
+    _update_job(job, progress=40, message="Building editor preview")
+    session.commit()
+    create_preview(source, preview)
+    create_thumbnail(source, thumbnail)
+    _add_artifact(session, project.id, "preview", preview, "video/mp4")
+    _add_artifact(session, project.id, "thumbnail", thumbnail, "image/jpeg")
+
+    if metadata["has_audio"]:
+        audio = project_dir / "speech.flac"
+        _update_job(job, progress=58, message="Extracting speech")
+        session.commit()
+        extract_audio(source, audio)
+        _add_artifact(session, project.id, "audio", audio, "audio/flac")
+        session.commit()
+        _transcribe_project(session, project, audio, job)
+    else:
+        project.transcription_status = "no_audio"
+
+    project.status = "ready"
+    job.completed_at = _now()
+    final_message = (
+        "Ready to edit"
+        if project.transcription_status in {"complete", "empty", "no_audio"}
+        else "Ready to edit; captions need attention"
+    )
+    _update_job(job, status="complete", progress=100, message=final_message)
+    session.commit()
+
+
+def _fail_import(session, project: Project, job: Job, exc: Exception) -> None:
+    """Record why an import stopped, naming the stage that was running."""
+    failed_stage = job.message
+    error_detail = (
+        f"Stage: {failed_stage}\n"
+        f"Error type: {type(exc).__name__}\n"
+        f"Message: {exc or 'No error message was provided'}"
+    )
+    project.status = "failed"
+    project.error_message = error_detail
+    job.error_message = error_detail
+    job.completed_at = _now()
+    _update_job(job, status="failed", message=f"Import failed while {failed_stage.lower()}")
+    session.commit()
+    logger.exception(
+        "Clip import failed during %s (project=%s, job=%s)",
+        failed_stage,
+        project.id,
+        job.id,
+    )
+
+
+def _start_import(session, project: Project, job: Job, message: str) -> None:
+    job.started_at = _now()
+    job.attempts += 1
+    job.error_message = None
+    project.status = "processing"
+    project.error_message = None
+    _update_job(job, status="running", progress=4, message=message)
+    session.commit()
+
+
 @huey.task(retries=1, retry_delay=15)
 def import_project_task(project_id: str, job_id: str) -> None:
     with SessionLocal() as session:
@@ -107,90 +193,56 @@ def import_project_task(project_id: str, job_id: str) -> None:
         if not project or not job:
             return
         try:
-            job.started_at = _now()
-            job.attempts += 1
-            job.error_message = None
-            project.status = "processing"
-            project.error_message = None
-            _update_job(job, status="running", progress=4, message="Reading X post")
-            session.commit()
-
-            project_dir = settings.projects_dir / project.id
+            _start_import(session, project, job, "Reading X post")
             source, info = download_x_video(
                 url=project.source_url,
-                output_dir=project_dir,
+                output_dir=settings.projects_dir / project.id,
                 settings=settings,
             )
-            _update_job(job, progress=32, message="Inspecting source video")
-            session.commit()
-
-            metadata = inspect_media(source)
             source_caption = extract_post_caption(info)
             project.source_caption = source_caption
             project.social_caption = source_caption
             project.title = str(info.get("title") or source_caption or "Imported X clip")[:160]
-            project.duration_ms = metadata["duration_ms"]
-            project.trim_end_ms = metadata["duration_ms"]
-            project.width = metadata["width"]
-            project.height = metadata["height"]
-            project.fps = metadata["fps"]
-
-            session.execute(delete(Artifact).where(Artifact.project_id == project.id))
-            _add_artifact(session, project.id, "source", source)
-            session.commit()
-
-            preview = project_dir / "preview.mp4"
-            thumbnail = project_dir / "thumbnail.jpg"
-            _update_job(job, progress=40, message="Building editor preview")
-            session.commit()
-            create_preview(source, preview)
-            create_thumbnail(source, thumbnail)
-            _add_artifact(session, project.id, "preview", preview, "video/mp4")
-            _add_artifact(session, project.id, "thumbnail", thumbnail, "image/jpeg")
-
-            if metadata["has_audio"]:
-                audio = project_dir / "speech.flac"
-                _update_job(job, progress=58, message="Extracting speech")
-                session.commit()
-                extract_audio(source, audio)
-                _add_artifact(session, project.id, "audio", audio, "audio/flac")
-                session.commit()
-                _transcribe_project(session, project, audio, job)
-            else:
-                project.transcription_status = "no_audio"
-
-            project.status = "ready"
-            job.completed_at = _now()
-            final_message = (
-                "Ready to edit"
-                if project.transcription_status in {"complete", "empty", "no_audio"}
-                else "Ready to edit; captions need attention"
-            )
-            _update_job(job, status="complete", progress=100, message=final_message)
-            session.commit()
+            _prepare_clip(session, project, job, source)
         except Exception as exc:
-            failed_stage = job.message
-            error_detail = (
-                f"Stage: {failed_stage}\n"
-                f"Error type: {type(exc).__name__}\n"
-                f"Message: {exc or 'No error message was provided'}"
+            _fail_import(session, project, job, exc)
+            raise
+
+
+@huey.task(retries=1, retry_delay=15)
+def import_upload_task(project_id: str, job_id: str) -> None:
+    """Prepare an uploaded Clip. Its Source Video is already on disk.
+
+    Unlike the X importer, a retry here cannot fetch the Source Video again —
+    the only copy is the one the upload route wrote. So the file is located by
+    name as well as by Artifact: a first attempt that failed midway may have
+    cleared the Artifact rows, and re-uploading gigabytes because of a
+    transient ffmpeg error would be a poor trade.
+    """
+    with SessionLocal() as session:
+        project = session.get(Project, project_id)
+        job = session.get(Job, job_id)
+        if not project or not job:
+            return
+        try:
+            _start_import(session, project, job, "Reading uploaded video")
+            source = next(
+                (
+                    Path(item.path)
+                    for item in project.artifacts
+                    if item.kind == "source" and Path(item.path).is_file()
+                ),
+                None,
             )
-            project.status = "failed"
-            project.error_message = error_detail
-            job.error_message = error_detail
-            job.completed_at = _now()
-            _update_job(
-                job,
-                status="failed",
-                message=f"Import failed while {failed_stage.lower()}",
-            )
-            session.commit()
-            logger.exception(
-                "Project import failed during %s (project=%s, job=%s)",
-                failed_stage,
-                project_id,
-                job_id,
-            )
+            if not source:
+                source = next(
+                    (settings.projects_dir / project.id).glob("source.*"), None
+                )
+            if not source or not source.is_file():
+                raise RuntimeError("The uploaded source video is missing from disk")
+            _prepare_clip(session, project, job, source)
+        except Exception as exc:
+            _fail_import(session, project, job, exc)
             raise
 
 

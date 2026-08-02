@@ -49,6 +49,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def unbatched_clips():
+    return project_query().where(Project.batch_id.is_(None))
+
+
 @router.post(f"{settings.api_prefix}/projects/import", response_model=ProjectOut, status_code=202)
 def import_project(payload: ImportRequest, session: Session = Depends(get_db)) -> ProjectOut:
     try:
@@ -84,13 +88,21 @@ def import_project(payload: ImportRequest, session: Session = Depends(get_db)) -
 
 @router.get(f"{settings.api_prefix}/projects", response_model=list[ProjectOut])
 def list_projects(session: Session = Depends(get_db)) -> list[ProjectOut]:
-    projects = session.scalars(project_query().order_by(Project.created_at.desc()).limit(50)).all()
+    """Every loose Clip, newest first.
+
+    Clips inside a Batch are left out: they are presented by their Batch, and
+    letting them into this list would put uploads in the X mode's rail.
+    """
+    projects = session.scalars(
+        unbatched_clips().order_by(Project.created_at.desc()).limit(50)
+    ).all()
     return [serialize_project(project) for project in projects]
 
 
 @router.delete(f"{settings.api_prefix}/projects", response_model=DeletionOut)
 def delete_all_projects(session: Session = Depends(get_db)) -> DeletionOut:
-    projects = list(session.scalars(project_query()).all())
+    """Clear every loose Clip. Batches are cleared one Batch at a time."""
+    projects = list(session.scalars(unbatched_clips()).all())
     for project in projects:
         ensure_project_can_be_deleted(project)
     project_ids = [project.id for project in projects]

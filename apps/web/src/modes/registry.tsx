@@ -41,6 +41,20 @@ const xToVerticalVisual = (
   </span>
 )
 
+const batchProcessVisual = (
+  <span className="mode-card__visual" aria-hidden="true">
+    <span className="mode-card__source mode-card__source--stack">
+      <span className="mode-card__stack"><i /><i /><i /></span>
+      <small>Many files</small>
+    </span>
+    <span className="mode-card__transfer"><ArrowRight size={23} /></span>
+    <span className="mode-card__output">
+      <span className="mode-card__crop"><i /><i /></span>
+      <small>9:16 each</small>
+    </span>
+  </span>
+)
+
 export const MODES: ModeDefinition[] = [
   {
     id: 'x-to-vertical',
@@ -53,6 +67,19 @@ export const MODES: ModeDefinition[] = [
     steps: ['Paste X link', 'Crop + caption', 'Export vertical'],
     stepsLabel: 'Workflow: paste an X link, crop and caption, export vertical',
     visual: xToVerticalVisual,
+    status: 'available',
+  },
+  {
+    id: 'batch-process',
+    number: '02',
+    route: '/modes/batch-process',
+    titleLines: ['Batch', 'Process'],
+    name: 'Batch Process',
+    blurb:
+      'Upload a set of videos at once and turn each into a vertical clip. Keep several batches going at the same time and work through them in any order.',
+    steps: ['Start a batch', 'Drop in videos', 'Edit each clip'],
+    stepsLabel: 'Workflow: start a batch, drop in videos, edit each clip',
+    visual: batchProcessVisual,
     status: 'available',
   },
 ]

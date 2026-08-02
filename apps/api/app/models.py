@@ -15,9 +15,35 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-# Workflow a project belongs to. Every project predating the mode library was an
+# The Mode a Clip came in through. Every Clip predating the Mode Library was an
 # X-to-vertical clip, so that is both the default and the backfill value.
 MODE_X_TO_VERTICAL = "x-to-vertical"
+MODE_BATCH_PROCESS = "batch-process"
+
+# Origin Kind: which way a Clip entered Clip Farm. An `x` Clip has an Origin URL
+# and post id; an `upload` Clip has neither, and stores empty strings for both.
+ORIGIN_KIND_X = "x"
+ORIGIN_KIND_UPLOAD = "upload"
+
+
+class Batch(Base):
+    """A named set of Clips imported and worked on together.
+
+    Batches exist so several imports can run in parallel without their Clips
+    crowding each other in one flat list. A Batch owns no edit settings of its
+    own — each Clip inside it is edited and rendered exactly as any other.
+    """
+
+    __tablename__ = "batches"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String, default="Untitled batch")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    clips: Mapped[list["Project"]] = relationship(
+        back_populates="batch", order_by="Project.created_at"
+    )
 
 
 class Project(Base):
@@ -25,8 +51,14 @@ class Project(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     mode: Mapped[str] = mapped_column(String, default=MODE_X_TO_VERTICAL, index=True)
-    source_url: Mapped[str] = mapped_column(String, index=True)
-    source_post_id: Mapped[str] = mapped_column(String, index=True)
+    origin_kind: Mapped[str] = mapped_column(String, default=ORIGIN_KIND_X, index=True)
+    batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("batches.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Empty for uploads, which have no Origin URL. Serialization turns the empty
+    # string back into null at the API boundary.
+    source_url: Mapped[str] = mapped_column(String, default="", index=True)
+    source_post_id: Mapped[str] = mapped_column(String, default="", index=True)
     title: Mapped[str] = mapped_column(String, default="Untitled clip")
     source_caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     social_caption: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -66,6 +98,7 @@ class Project(Base):
     jobs: Mapped[list["Job"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    batch: Mapped["Batch | None"] = relationship(back_populates="clips")
 
 
 class Artifact(Base):

@@ -2605,3 +2605,253 @@ input[type='range']::-webkit-slider-thumb {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* ---------- Batch Process ---------- */
+
+.mode-card__source--stack {
+  display: grid;
+  place-items: center;
+}
+
+.mode-card__stack {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(172deg, #7183c9 0 48%, #35453b 49% 66%, #1e2621 67%);
+}
+
+.mode-card__stack i {
+  position: absolute;
+  top: 22%;
+  left: 16%;
+  width: 44%;
+  height: 30%;
+  border: 1px solid #4d5650;
+  border-radius: 2px;
+  background: #1b201d;
+}
+
+.mode-card__stack i + i {
+  top: 34%;
+  left: 28%;
+}
+
+.mode-card__stack i + i + i {
+  top: 46%;
+  left: 40%;
+  border-color: var(--acid);
+}
+
+.batch-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 780px;
+  margin: 0;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.batch-title .icon-button {
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.batch-title:hover .icon-button,
+.batch-title .icon-button:focus-visible {
+  opacity: 1;
+}
+
+.batch-title-input {
+  width: min(480px, 100%);
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.batch-lede {
+  max-width: 46ch;
+  margin: 0 0 26px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.batch-empty {
+  max-width: 52ch;
+  margin: 26px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.clip-drop {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 28px 24px;
+  border: 2px dashed var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.clip-drop--compact {
+  padding: 14px 18px;
+}
+
+.clip-drop.is-dragging {
+  border-color: #9fad37;
+  background: #fbfde9;
+}
+
+.clip-drop__mark {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 58px;
+  border-radius: 50%;
+  background: #eef1ec;
+  color: #58635b;
+}
+
+.clip-drop--compact .clip-drop__mark {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
+}
+
+.clip-drop__copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.clip-drop__copy strong {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 19px;
+}
+
+.clip-drop__copy small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.clip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clip-card {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.clip-card:hover:not(:disabled) {
+  border-color: #9aa39c;
+  transform: translateY(-1px);
+}
+
+.clip-card:disabled {
+  cursor: default;
+}
+
+.clip-card--failed {
+  border-color: #c25d4b;
+}
+
+.clip-card__thumb {
+  width: 62px;
+  height: 54px;
+  flex: 0 0 62px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #242925;
+  color: #8f9992;
+}
+
+.clip-card__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.clip-card__body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.clip-card__body strong {
+  overflow: hidden;
+  color: #252a27;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clip-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #758079;
+  font-size: 10px;
+}
+
+.clip-card__progress {
+  position: relative;
+  display: block;
+  height: 3px;
+  /* Room for the absolutely positioned step message sitting under the bar. */
+  margin-bottom: 16px;
+  border-radius: 2px;
+  background: #e4e8e4;
+}
+
+.clip-card__progress-bar {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--acid);
+  transition: width 400ms ease;
+}
+
+.clip-card__progress small {
+  position: absolute;
+  top: 7px;
+  left: 0;
+  color: #758079;
+  font-size: 10px;
+}
+
+.clip-card__error {
+  color: #a43120;
+  font-size: 10px;
+}

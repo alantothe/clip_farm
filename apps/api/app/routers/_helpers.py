@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
-from app.models import ImageOverlay, Project, Render
-from app.schemas import JobOut, ProjectOut
+from app.models import Batch, ImageOverlay, Project, Render
+from app.schemas import BatchOut, BatchSummaryOut, JobOut, ProjectOut
 
 
 settings = get_settings()
@@ -33,6 +33,36 @@ def get_project_or_404(session: Session, project_id: str) -> Project:
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+def get_batch_or_404(session: Session, batch_id: str) -> Batch:
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return batch
+
+
+def batch_clips(session: Session, batch_id: str) -> list[Project]:
+    """Every Clip in a Batch, oldest first, so the grid keeps drop order."""
+    return list(
+        session.scalars(
+            project_query().where(Project.batch_id == batch_id).order_by(Project.created_at)
+        ).all()
+    )
+
+
+def serialize_batch(session: Session, batch: Batch) -> BatchOut:
+    output = BatchOut.model_validate(batch)
+    output.clips = [serialize_project(clip) for clip in batch_clips(session, batch.id)]
+    return output
+
+
+def summarize_batch(batch: Batch, clips: list[Project]) -> BatchSummaryOut:
+    output = BatchSummaryOut.model_validate(batch)
+    output.clip_count = len(clips)
+    output.importing_count = sum(1 for clip in clips if clip.status in ACTIVE_PROJECT_STATUSES)
+    output.failed_count = sum(1 for clip in clips if clip.status == "failed")
+    return output
 
 
 def serialize_project(project: Project) -> ProjectOut:

@@ -1,3 +1,4 @@
+import * as batches from './batches'
 import { mediaUrl } from './client'
 import * as jobs from './jobs'
 import * as platforms from './platforms'
@@ -5,6 +6,7 @@ import * as projects from './projects'
 import * as publishing from './publishing'
 
 export { API_BASE, mediaUrl, request } from './client'
+export * as batchesApi from './batches'
 export * as jobsApi from './jobs'
 export * as platformsApi from './platforms'
 export * as projectsApi from './projects'
@@ -19,5 +21,6 @@ export const api = {
   ...projects,
   ...publishing,
   ...jobs,
+  ...batches,
   mediaUrl,
 }

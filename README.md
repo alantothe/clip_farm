@@ -1,13 +1,21 @@
 # Clip Farm
 
-Clip Farm converts an authorized landscape video from an individual X post into a 1080x1920 MP4 for manual upload to Instagram Reels or TikTok.
+Clip Farm converts authorized landscape video into 1080x1920 MP4s for manual upload to Instagram Reels or TikTok. Two modes on the home page decide how video gets in.
 
-## Current Workflow
+## Landscape X to Vertical
 
 1. Paste an `x.com/.../status/...` link.
 2. Wait for `yt-dlp` import, X post-text extraction, preview generation, and optional Google Speech-to-Text captions.
 3. Choose Smart Crop or Full Frame, adjust trim and captions, and optionally create a brand-safe Instagram caption with Gemini.
 4. Preview and download the vertical MP4.
+
+## Batch Process
+
+1. Start a batch — a named set of clips worked on together.
+2. Drop in several videos, or pick them from a file dialog. Each becomes its own clip and imports on its own, so the grid shows several imports running at once.
+3. Open any clip in the same editor the X mode uses, then render and publish it.
+
+Batches are independent, so several can be in flight at the same time. See `docs/adr/0002-batches-group-clips-for-parallel-work.md` for why a batch holds no shared edit settings.
 
 Only process videos you own or have permission to repurpose.
 

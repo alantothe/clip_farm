@@ -56,6 +56,15 @@ def init_db() -> None:
         "mode": (
             "ALTER TABLE projects ADD COLUMN mode VARCHAR NOT NULL DEFAULT 'x-to-vertical'"
         ),
+        "origin_kind": (
+            "ALTER TABLE projects ADD COLUMN origin_kind VARCHAR NOT NULL DEFAULT 'x'"
+        ),
+        # SQLite only accepts a REFERENCES column through ADD COLUMN when it
+        # defaults to NULL, which a Clip outside any Batch does anyway.
+        "batch_id": (
+            "ALTER TABLE projects ADD COLUMN batch_id VARCHAR "
+            "REFERENCES batches(id) ON DELETE SET NULL"
+        ),
     }
     render_columns = {column["name"] for column in inspect(engine).get_columns("renders")}
     render_additions = {

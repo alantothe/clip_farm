@@ -17,6 +17,27 @@ class DeletionOut(BaseModel):
     deleted: int
 
 
+class BatchCreate(BaseModel):
+    name: str = Field(default="Untitled batch", max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def name_is_not_blank(cls, value: str) -> str:
+        return value.strip() or "Untitled batch"
+
+
+class BatchUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def name_is_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("A batch needs a name")
+        return cleaned
+
+
 class ProjectUpdate(BaseModel):
     trim_start_ms: int | None = Field(default=None, ge=0)
     trim_end_ms: int | None = Field(default=None, ge=1)
@@ -170,8 +191,12 @@ class ProjectOut(BaseModel):
 
     id: str
     mode: str
-    source_url: str
-    source_post_id: str
+    origin_kind: str
+    batch_id: str | None
+    # Uploads have no Origin URL. The column stores an empty string; the API
+    # reports the absence honestly as null.
+    source_url: str | None
+    source_post_id: str | None
     title: str
     source_caption: str | None
     social_caption: str | None
@@ -196,6 +221,43 @@ class ProjectOut(BaseModel):
     image_overlays: list[ImageOverlayOut] = []
     renders: list[RenderOut] = []
     latest_job: JobOut | None = None
+
+    @field_validator("source_url", "source_post_id", mode="before")
+    @classmethod
+    def blank_origin_is_absent(cls, value):
+        return value or None
+
+
+class BatchOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    created_at: datetime
+    updated_at: datetime
+    clips: list[ProjectOut] = []
+
+
+class BatchSummaryOut(BaseModel):
+    """A Batch without its Clips, for the list that picks between Batches."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    created_at: datetime
+    updated_at: datetime
+    clip_count: int = 0
+    importing_count: int = 0
+    failed_count: int = 0
+
+
+class BatchUploadOut(BaseModel):
+    """The result of one multi-file upload: the Batch, plus anything refused."""
+
+    batch: BatchOut
+    accepted: int
+    rejected: list[str] = []
 
 
 class ConnectedAccountOut(BaseModel):
