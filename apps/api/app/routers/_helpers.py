@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
-from app.models import Batch, ImageOverlay, Project, Render
+from app.models import Batch, ImageOverlay, Project, Render, Shot
 from app.schemas import BatchOut, BatchSummaryOut, JobOut, ProjectOut
 
 
@@ -51,7 +51,23 @@ def batch_clips(session: Session, batch_id: str) -> list[Project]:
     )
 
 
+def batch_shots(session: Session, batch_id: str) -> list[Shot]:
+    """A Batch's Sequence, in play order."""
+    return list(
+        session.scalars(
+            select(Shot).where(Shot.batch_id == batch_id).order_by(Shot.position)
+        ).all()
+    )
+
+
+def renumber_shots(shots: list[Shot]) -> None:
+    """Close any gaps so positions read 0..n-1 after an edit."""
+    for position, shot in enumerate(shots):
+        shot.position = position
+
+
 def serialize_batch(session: Session, batch: Batch) -> BatchOut:
+    # `shots` come straight off the relationship, which is ordered by position.
     output = BatchOut.model_validate(batch)
     output.clips = [serialize_project(clip) for clip in batch_clips(session, batch.id)]
     return output
@@ -62,6 +78,7 @@ def summarize_batch(batch: Batch, clips: list[Project]) -> BatchSummaryOut:
     output.clip_count = len(clips)
     output.importing_count = sum(1 for clip in clips if clip.status in ACTIVE_PROJECT_STATUSES)
     output.failed_count = sum(1 for clip in clips if clip.status == "failed")
+    output.shot_count = len(batch.shots)
     return output
 
 
