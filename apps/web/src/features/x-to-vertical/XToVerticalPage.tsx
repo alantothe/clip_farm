@@ -4,8 +4,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import {
   Captions,
   Check,
-  ChevronLeft,
-  Clapperboard,
   Copy,
   Crop,
   Download,
@@ -22,7 +20,6 @@ import {
   Move,
   PanelTop,
   Play,
-  Plus,
   RefreshCw,
   RotateCcw,
   Save,
@@ -32,24 +29,15 @@ import {
   X,
 } from 'lucide-react'
 import { api } from '../../api'
-import type { CaptionPosition, CaptionSegment, CaptionStyle, ImageOverlay, Job, Layout, Project, ProjectSettings } from '../../types'
-
-function formatTime(ms: number | null | undefined): string {
-  if (ms == null) return '00:00.0'
-  const minutes = Math.floor(ms / 60_000)
-  const seconds = Math.floor((ms % 60_000) / 1000)
-  const tenths = Math.floor((ms % 1000) / 100)
-  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${tenths}`
-}
-
-function formatBytes(bytes: number | null): string {
-  if (!bytes) return ''
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function artifact(project: Project, kind: string): string {
-  return api.mediaUrl(project.artifacts.find((item) => item.kind === kind)?.url ?? null)
-}
+import { DeleteDialog } from '../../components/DeleteDialog'
+import type { DeleteIntent } from '../../components/DeleteDialog'
+import { JobBanner } from '../../components/JobBanner'
+import { ProjectRail } from '../../components/ProjectRail'
+import { Segmented } from '../../components/Segmented'
+import { Status } from '../../components/Status'
+import { formatBytes, formatTime } from '../../lib/format'
+import { artifact } from '../../lib/project'
+import type { CaptionPosition, CaptionSegment, CaptionStyle, ImageOverlay, Layout, Project, ProjectSettings } from '../../types'
 
 function getSettings(project: Project): ProjectSettings {
   return {
@@ -81,24 +69,6 @@ function captionSample(captions: CaptionSegment[]): string {
   const words = text.split(/\s+/)
   return words.length > 7 ? `${words.slice(0, 7).join(' ')}…` : text
 }
-
-function Status({ value }: { value: string }) {
-  return (
-    <span className={`status status--${value}`}>
-      <i />
-      {value.replace('_', ' ')}
-    </span>
-  )
-}
-
-function projectIsBusy(project: Project): boolean {
-  return ['queued', 'processing'].includes(project.status)
-    || Boolean(project.latest_job && ['queued', 'running'].includes(project.latest_job.status))
-}
-
-type DeleteIntent =
-  | { kind: 'project'; project: Project }
-  | { kind: 'all'; count: number }
 
 function ImportBar({ compact = false, onImported }: { compact?: boolean; onImported: (project: Project) => void }) {
   const [url, setUrl] = useState('')
@@ -157,126 +127,6 @@ function EmptyWorkspace({ onImported }: { onImported: (project: Project) => void
         </div>
       </div>
     </main>
-  )
-}
-
-function ProjectRail({
-  projects,
-  activeId,
-  onSelect,
-  onNew,
-  collapsed,
-  onToggle,
-  onDelete,
-  onClearAll,
-  deleting,
-}: {
-  projects: Project[]
-  activeId: string | null
-  onSelect: (id: string) => void
-  onNew: () => void
-  collapsed: boolean
-  onToggle: () => void
-  onDelete: (project: Project) => void
-  onClearAll: () => void
-  deleting: boolean
-}) {
-  const hasBusyProjects = projects.some(projectIsBusy)
-
-  return (
-    <aside className={`project-rail ${collapsed ? 'project-rail--collapsed' : ''}`}>
-      <div className="project-rail__head">
-        {!collapsed && <span>Recent clips</span>}
-        <button className="icon-button" onClick={onToggle} title={collapsed ? 'Open project rail' : 'Close project rail'}>
-          <ChevronLeft size={18} />
-        </button>
-      </div>
-      <button className="new-project-button" onClick={onNew} title="Import another X post">
-        <Plus size={18} />
-        {!collapsed && 'New clip'}
-      </button>
-      <div className="project-list">
-        {projects.map((project) => {
-          const thumbnail = artifact(project, 'thumbnail')
-          const busy = projectIsBusy(project)
-          return (
-            <div className={`project-list__row ${activeId === project.id ? 'is-active' : ''}`} key={project.id}>
-              <button
-                className="project-list__item"
-                onClick={() => onSelect(project.id)}
-                title={project.title}
-              >
-                <span className="project-list__thumb">
-                  {thumbnail ? <img src={thumbnail} alt="" /> : <Clapperboard size={20} />}
-                </span>
-                {!collapsed && (
-                  <span className="project-list__meta">
-                    <strong>{project.title}</strong>
-                    <small>{formatTime(project.duration_ms)} · {project.layout === 'smart_crop' ? 'Crop' : 'Fit'}</small>
-                  </span>
-                )}
-              </button>
-              <button
-                className="project-list__delete"
-                onClick={() => onDelete(project)}
-                disabled={deleting || busy}
-                aria-label={`Delete ${project.title}`}
-                title={busy ? 'Wait for processing to finish before deleting' : `Delete ${project.title}`}
-              >
-                <Trash2 size={15} />
-              </button>
-            </div>
-          )
-        })}
-      </div>
-      <button
-        className="clear-projects-button"
-        onClick={onClearAll}
-        disabled={deleting || hasBusyProjects || projects.length === 0}
-        title={hasBusyProjects ? 'Wait for all processing to finish before clearing videos' : 'Delete all videos'}
-      >
-        <Trash2 size={15} />
-        {!collapsed && 'Clear all'}
-      </button>
-    </aside>
-  )
-}
-
-function DeleteDialog({
-  intent,
-  pending,
-  error,
-  onCancel,
-  onConfirm,
-}: {
-  intent: DeleteIntent
-  pending: boolean
-  error: Error | null
-  onCancel: () => void
-  onConfirm: () => void
-}) {
-  const all = intent.kind === 'all'
-  const label = all ? `${intent.count} video${intent.count === 1 ? '' : 's'}` : `“${intent.project.title}”`
-
-  return (
-    <div className="delete-dialog-backdrop" role="presentation">
-      <section className="delete-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
-        <span className="delete-dialog__mark"><Trash2 size={22} /></span>
-        <p className="eyebrow">Permanent action</p>
-        <h2 id="delete-dialog-title">{all ? 'Clear every video?' : 'Delete this video?'}</h2>
-        <p>
-          {label} and {all ? 'their' : 'its'} source files, captions, and rendered clips will be permanently removed.
-        </p>
-        {error && <p className="form-error" role="alert">{error.message}</p>}
-        <div className="delete-dialog__actions">
-          <button className="secondary-button" onClick={onCancel} disabled={pending} autoFocus>Keep {all ? 'videos' : 'video'}</button>
-          <button className="danger-button" onClick={onConfirm} disabled={pending}>
-            {pending ? <LoaderCircle className="spin" size={17} /> : <Trash2 size={17} />}
-            {all ? 'Clear all' : 'Delete video'}
-          </button>
-        </div>
-      </section>
-    </div>
   )
 }
 
@@ -679,18 +529,6 @@ function CaptionStylePicker({
   )
 }
 
-function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string; icon?: React.ReactNode }[]; onChange: (value: T) => void }) {
-  return (
-    <div className="segmented">
-      {options.map((option) => (
-        <button key={option.value} className={value === option.value ? 'is-active' : ''} onClick={() => onChange(option.value)}>
-          {option.icon}{option.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 function EditorPanel({
   project,
   settings,
@@ -1010,22 +848,6 @@ function EditorPanel({
         </button>
       </div>
     </section>
-  )
-}
-
-function JobBanner({ job }: { job: Job }) {
-  return (
-    <div className={`job-banner job-banner--${job.status}`}>
-      <div className="job-banner__icon">
-        {job.status === 'complete' ? <Check size={18} /> : job.status === 'failed' ? <X size={18} /> : <LoaderCircle className="spin" size={18} />}
-      </div>
-      <div>
-        <strong>{job.message}</strong>
-        {job.error_message && <span>{job.error_message}</span>}
-      </div>
-      <div className="job-progress"><i style={{ width: `${job.progress}%` }} /></div>
-      <output>{job.progress}%</output>
-    </div>
   )
 }
 
