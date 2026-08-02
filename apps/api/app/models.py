@@ -49,7 +49,9 @@ class Batch(Base):
     shots: Mapped[list["Shot"]] = relationship(
         back_populates="batch",
         cascade="all, delete-orphan",
-        order_by="Shot.position",
+        # created_at breaks ties: two Shots can momentarily share a position if
+        # concurrent adds interleave, and play order must still be defined.
+        order_by="Shot.position, Shot.created_at",
     )
     sequence_renders: Mapped[list["SequenceRender"]] = relationship(
         back_populates="batch",
