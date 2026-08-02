@@ -45,6 +45,7 @@ test('explains the X-to-vertical mode before opening the importer', async () => 
 test('shows detailed diagnostics for a failed import', async () => {
   const failedProject: Project = {
     id: 'project-1',
+    mode: 'x-to-vertical',
     source_url: 'https://x.com/i/status/123',
     source_post_id: '123',
     title: 'Failed clip',
@@ -102,6 +103,7 @@ test('shows detailed diagnostics for a failed import', async () => {
 test('previews caption presets and unsaved caption edits', async () => {
   const readyProject: Project = {
     id: 'project-ready',
+    mode: 'x-to-vertical',
     source_url: 'https://x.com/i/status/456',
     source_post_id: '456',
     title: 'Ready clip',
@@ -189,6 +191,7 @@ test('previews caption presets and unsaved caption edits', async () => {
 test('deletes one video or clears the full video library after confirmation', async () => {
   const makeProject = (id: string, title: string): Project => ({
     id,
+    mode: 'x-to-vertical',
     source_url: `https://x.com/i/status/${id}`,
     source_post_id: id,
     title,
@@ -313,6 +316,7 @@ test('shows and disconnects a connected Instagram account', async () => {
 test('posts a completed render to Instagram through the backend', async () => {
   const project: Project = {
     id: 'project-post',
+    mode: 'x-to-vertical',
     source_url: 'https://x.com/i/status/789',
     source_post_id: '789',
     title: 'Postable clip',

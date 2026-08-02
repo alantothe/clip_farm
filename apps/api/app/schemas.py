@@ -169,6 +169,7 @@ class ProjectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    mode: str
     source_url: str
     source_post_id: str
     title: str

@@ -53,6 +53,9 @@ def init_db() -> None:
         "caption_position": (
             "ALTER TABLE projects ADD COLUMN caption_position VARCHAR NOT NULL DEFAULT 'bottom'"
         ),
+        "mode": (
+            "ALTER TABLE projects ADD COLUMN mode VARCHAR NOT NULL DEFAULT 'x-to-vertical'"
+        ),
     }
     render_columns = {column["name"] for column in inspect(engine).get_columns("renders")}
     render_additions = {

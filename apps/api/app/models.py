@@ -15,10 +15,16 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Workflow a project belongs to. Every project predating the mode library was an
+# X-to-vertical clip, so that is both the default and the backfill value.
+MODE_X_TO_VERTICAL = "x-to-vertical"
+
+
 class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    mode: Mapped[str] = mapped_column(String, default=MODE_X_TO_VERTICAL, index=True)
     source_url: Mapped[str] = mapped_column(String, index=True)
     source_post_id: Mapped[str] = mapped_column(String, index=True)
     title: Mapped[str] = mapped_column(String, default="Untitled clip")

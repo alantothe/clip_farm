@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import get_settings
 from app.database import get_db, init_db
 from app.models import (
+    MODE_X_TO_VERTICAL,
     Artifact,
     CaptionSegment,
     ImageOverlay,
@@ -444,7 +445,11 @@ def import_project(payload: ImportRequest, session: Session = Depends(get_db)) -
         project.status = "queued"
         project.error_message = None
     else:
-        project = Project(source_url=normalized_url, source_post_id=post_id)
+        project = Project(
+            mode=MODE_X_TO_VERTICAL,
+            source_url=normalized_url,
+            source_post_id=post_id,
+        )
         session.add(project)
         session.flush()
     job = Job(project_id=project.id, kind="import", message="Queued for import")
