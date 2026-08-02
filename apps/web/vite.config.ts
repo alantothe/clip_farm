@@ -14,5 +14,10 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
+    // Tests assert on bare request paths, so the API base must stay empty even
+    // when a local .env.local points the dev build at a deployed API.
+    env: {
+      VITE_API_BASE_URL: '',
+    },
   },
 })
