@@ -51,6 +51,11 @@ class Batch(Base):
         cascade="all, delete-orphan",
         order_by="Shot.position",
     )
+    sequence_renders: Mapped[list["SequenceRender"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        order_by="SequenceRender.created_at",
+    )
 
 
 class Shot(Base):
@@ -80,6 +85,39 @@ class Shot(Base):
 
     batch: Mapped[Batch] = relationship(back_populates="shots")
     clip: Mapped["Project"] = relationship(back_populates="shot")
+
+
+class SequenceRender(Base):
+    """The finished video a Sequence produces: every Shot in order, joined.
+
+    Its own table rather than a Render, because `renders.project_id` is NOT
+    NULL and this belongs to a Batch, not one Clip. Relaxing that would mean
+    rebuilding `renders` under live foreign keys on startup, which ADR 0002
+    declined to do. It carries its own status and progress for the same reason:
+    a Job needs a Clip too.
+    """
+
+    __tablename__ = "sequence_renders"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String, default="queued", index=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(String, default="Queued")
+    path: Mapped[str | None] = mapped_column(String, nullable=True)
+    checksum: Mapped[str | None] = mapped_column(String, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # How many Shots this Sequence held when it was rendered. The Sequence can
+    # change afterwards; what produced this file cannot.
+    shot_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    batch: Mapped[Batch] = relationship(back_populates="sequence_renders")
 
 
 class Project(Base):

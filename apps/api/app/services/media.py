@@ -495,6 +495,129 @@ def render_vertical(
     run_command(command)
 
 
+"""Joining Shots into a Sequence.
+
+Every Shot is already 1080x1920 at 30 fps, so the video needs no re-encoding.
+The audio does need care: see ADR 0003. Stream-copying AAC accumulates about
+27 ms of excess per join, because encoded AAC comes in whole 1024-sample
+frames — measured at +250 ms of drift by the ninth join, with ffmpeg exiting 0
+throughout. Remuxing each Shot to PCM first removes the padding, so a Shot's
+audio is exactly as long as its video.
+"""
+
+JOIN_SAMPLE_RATE = "48000"
+JOIN_CHANNELS = "2"
+
+
+def normalize_for_join(source: Path, output: Path, *, has_audio: bool) -> None:
+    """Rewrite one finished Shot into the form the join expects.
+
+    Video is copied untouched. Audio becomes PCM at a fixed rate and channel
+    count: a Shot with no audio would otherwise truncate the Sequence's audio
+    track, and a mono Shot would be copied into a stream declared stereo.
+    """
+    command = ["ffmpeg", "-y", "-i", str(source)]
+    if has_audio:
+        audio_input = "0:a:0"
+    else:
+        command.extend(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                f"anullsrc=channel_layout=stereo:sample_rate={JOIN_SAMPLE_RATE}",
+            ]
+        )
+        audio_input = "1:a:0"
+    command.extend(
+        [
+            "-map",
+            "0:v:0",
+            "-map",
+            audio_input,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "pcm_s16le",
+            "-ar",
+            JOIN_SAMPLE_RATE,
+            "-ac",
+            JOIN_CHANNELS,
+        ]
+    )
+    if not has_audio:
+        # anullsrc never ends on its own.
+        command.append("-shortest")
+    command.append(str(output))
+    run_command(command)
+
+
+def _concat_list(sources: list[Path], output: Path) -> None:
+    lines = []
+    for source in sources:
+        # The concat demuxer reads single-quoted paths and has no escape of its
+        # own; a literal quote is closed, escaped, and reopened.
+        escaped = str(source.resolve()).replace("'", "'\\''")
+        lines.append(f"file '{escaped}'")
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def join_shots(
+    *,
+    shots: list[Path],
+    output: Path,
+    temp_dir: Path,
+    progress: Callable[[int], None] | None = None,
+) -> None:
+    """Join finished Shots, in order, into one video.
+
+    `shots` are per-Shot renders that already share the Sequence's format.
+    """
+    if not shots:
+        raise MediaProcessingError("A sequence needs at least one shot to render")
+
+    normalized = []
+    for index, shot in enumerate(shots):
+        if not shot.is_file():
+            raise MediaProcessingError(f"Shot {index + 1} is missing its rendered video")
+        target = temp_dir / f"join-{index:03d}.mkv"
+        normalize_for_join(shot, target, has_audio=inspect_media(shot)["has_audio"])
+        normalized.append(target)
+        if progress:
+            progress(round((index + 1) / len(shots) * 100))
+
+    list_file = temp_dir / "shots.txt"
+    _concat_list(normalized, list_file)
+    run_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(list_file),
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ar",
+            JOIN_SAMPLE_RATE,
+            "-ac",
+            JOIN_CHANNELS,
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
+    for target in normalized:
+        target.unlink(missing_ok=True)
+    list_file.unlink(missing_ok=True)
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as file:

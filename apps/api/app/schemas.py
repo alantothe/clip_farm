@@ -248,6 +248,23 @@ class ShotOut(BaseModel):
     position: int
 
 
+class SequenceRenderOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    batch_id: str
+    status: str
+    progress: int
+    message: str
+    size_bytes: int | None
+    duration_ms: int | None
+    shot_count: int
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+    download_url: str | None = None
+
+
 class BatchOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -258,6 +275,8 @@ class BatchOut(BaseModel):
     clips: list[ProjectOut] = []
     # The Sequence, in play order.
     shots: list[ShotOut] = []
+    # The most recent export, if this Batch has ever been rendered.
+    sequence_render: SequenceRenderOut | None = None
 
 
 class BatchSummaryOut(BaseModel):

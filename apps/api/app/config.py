@@ -68,6 +68,11 @@ class Settings(BaseSettings):
         return self.data_dir / "projects"
 
     @property
+    def batches_dir(self) -> Path:
+        """Sequence Renders live here, apart from the per-Clip media."""
+        return self.data_dir / "batches"
+
+    @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
@@ -96,6 +101,7 @@ class Settings(BaseSettings):
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self.batches_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

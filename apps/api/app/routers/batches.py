@@ -1,9 +1,13 @@
-"""Batch CRUD and the multi-file upload that fills a Batch with Clips."""
+"""Batch CRUD, the multi-file upload that fills a Batch with Clips, the
+Sequence that orders them, and the export that joins them into one video."""
 
 from datetime import datetime, timezone
+from pathlib import Path
 import logging
+import re
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,6 +20,7 @@ from app.models import (
     Batch,
     Job,
     Project,
+    SequenceRender,
     Shot,
     new_id,
 )
@@ -26,20 +31,23 @@ from app.schemas import (
     BatchUpdate,
     BatchUploadOut,
     DeletionOut,
+    SequenceRenderOut,
     ShotCreate,
     ShotMove,
 )
 from app.services.upload import UploadRejected, clip_title, source_suffix, store_source_video
-from app.tasks import import_upload_task
+from app.tasks import import_upload_task, render_sequence_task
 
 from app.routers._helpers import (
     batch_clips,
     batch_shots,
     ensure_project_can_be_deleted,
     get_batch_or_404,
+    latest_sequence_render,
     remove_project_files,
     renumber_shots,
     serialize_batch,
+    serialize_sequence_render,
     summarize_batch,
 )
 
@@ -52,6 +60,15 @@ router = APIRouter()
 # One request cannot start an unbounded number of imports. The cap is per
 # request, not per Batch: drop another set of files to keep going.
 MAX_UPLOADS_PER_REQUEST = 25
+
+# An export already running holds the Batch; a second would fight it for files.
+ACTIVE_SEQUENCE_STATUSES = {"queued", "running"}
+
+
+def _download_name(batch_name: str) -> str:
+    """A batch name turned into something safe to send as a filename."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", batch_name).strip("-.")
+    return cleaned[:80] or "clip-farm-sequence"
 
 
 @router.post(f"{settings.api_prefix}/batches", response_model=BatchOut, status_code=201)
@@ -176,6 +193,80 @@ def move_shot(
     shots.insert(target, shot)
     renumber_shots(shots)
     return _touch(session, batch)
+
+
+@router.post(
+    f"{settings.api_prefix}/batches/{{batch_id}}/render",
+    response_model=SequenceRenderOut,
+    status_code=202,
+)
+def render_sequence(batch_id: str, session: Session = Depends(get_db)) -> SequenceRenderOut:
+    """Join the Batch's Sequence into one video.
+
+    Every Shot's Clip has to be ready: a Clip still importing has no Source
+    Video to render from, and one that failed has nothing usable at all.
+    """
+    batch = get_batch_or_404(session, batch_id)
+    shots = batch_shots(session, batch.id)
+    if not shots:
+        raise HTTPException(
+            status_code=422, detail="Add at least one clip to the timeline first"
+        )
+    existing = latest_sequence_render(batch)
+    if existing and existing.status in ACTIVE_SEQUENCE_STATUSES:
+        raise HTTPException(status_code=409, detail="This batch is already exporting")
+    unready = [shot.clip for shot in shots if shot.clip.status != "ready"]
+    if unready:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Wait for “{unready[0].title}” to finish importing before exporting"
+                if unready[0].status in {"queued", "processing"}
+                else f"“{unready[0].title}” failed to import — remove it from the timeline"
+            ),
+        )
+
+    sequence_render = SequenceRender(
+        batch_id=batch.id,
+        shot_count=len(shots),
+        message="Queued for export",
+    )
+    session.add(sequence_render)
+    batch.updated_at = datetime.now(timezone.utc)
+    session.commit()
+
+    # Queued after the commit, so the worker can load what it was handed.
+    render_sequence_task(batch.id, sequence_render.id)
+    return serialize_sequence_render(sequence_render)
+
+
+@router.get(
+    f"{settings.api_prefix}/batches/{{batch_id}}/render",
+    response_model=SequenceRenderOut,
+)
+def get_sequence_render(batch_id: str, session: Session = Depends(get_db)) -> SequenceRenderOut:
+    """Poll the Batch's most recent export."""
+    batch = get_batch_or_404(session, batch_id)
+    sequence_render = latest_sequence_render(batch)
+    if not sequence_render:
+        raise HTTPException(status_code=404, detail="This batch has not been exported")
+    return serialize_sequence_render(sequence_render)
+
+
+@router.get(f"{settings.api_prefix}/batches/{{batch_id}}/render/download")
+def download_sequence_render(batch_id: str, session: Session = Depends(get_db)) -> FileResponse:
+    batch = get_batch_or_404(session, batch_id)
+    sequence_render = latest_sequence_render(batch)
+    if not sequence_render or sequence_render.status != "complete" or not sequence_render.path:
+        raise HTTPException(status_code=404, detail="Completed export not found")
+    path = Path(sequence_render.path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Exported file is missing")
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=f"{_download_name(batch.name)}.mp4",
+    )
 
 
 @router.post(

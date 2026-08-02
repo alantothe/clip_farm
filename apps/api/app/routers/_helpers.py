@@ -8,8 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
-from app.models import Batch, ImageOverlay, Project, Render, Shot
-from app.schemas import BatchOut, BatchSummaryOut, JobOut, ProjectOut
+from app.models import Batch, ImageOverlay, Project, Render, SequenceRender, Shot
+from app.schemas import (
+    BatchOut,
+    BatchSummaryOut,
+    JobOut,
+    ProjectOut,
+    SequenceRenderOut,
+)
 
 
 settings = get_settings()
@@ -66,10 +72,28 @@ def renumber_shots(shots: list[Shot]) -> None:
         shot.position = position
 
 
+def latest_sequence_render(batch: Batch) -> SequenceRender | None:
+    """The Batch's most recent export. Older ones stay on disk but unlisted."""
+    if not batch.sequence_renders:
+        return None
+    return max(batch.sequence_renders, key=lambda item: item.created_at)
+
+
+def serialize_sequence_render(sequence_render: SequenceRender) -> SequenceRenderOut:
+    output = SequenceRenderOut.model_validate(sequence_render)
+    if sequence_render.status == "complete":
+        output.download_url = (
+            f"{settings.api_prefix}/batches/{sequence_render.batch_id}/render/download"
+        )
+    return output
+
+
 def serialize_batch(session: Session, batch: Batch) -> BatchOut:
     # `shots` come straight off the relationship, which is ordered by position.
     output = BatchOut.model_validate(batch)
     output.clips = [serialize_project(clip) for clip in batch_clips(session, batch.id)]
+    newest = latest_sequence_render(batch)
+    output.sequence_render = serialize_sequence_render(newest) if newest else None
     return output
 
 

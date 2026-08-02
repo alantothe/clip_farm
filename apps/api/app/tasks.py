@@ -1,5 +1,6 @@
 import logging
 import mimetypes
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -8,13 +9,24 @@ from sqlalchemy import delete
 
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import Artifact, CaptionSegment, Job, PlatformAccount, Project, Publication, Render
+from app.models import (
+    Artifact,
+    Batch,
+    CaptionSegment,
+    Job,
+    PlatformAccount,
+    Project,
+    Publication,
+    Render,
+    SequenceRender,
+)
 from app.queue import huey
 from app.services.media import (
     create_preview,
     create_thumbnail,
     extract_audio,
     inspect_media,
+    join_shots,
     render_vertical,
     sha256_file,
 )
@@ -349,6 +361,124 @@ def render_project_task(project_id: str, render_id: str, job_id: str) -> None:
             job.completed_at = _now()
             _update_job(job, status="failed", message="Render failed")
             session.commit()
+            raise
+
+
+def _update_sequence(
+    sequence_render: SequenceRender,
+    *,
+    status: str | None = None,
+    progress: int | None = None,
+    message: str | None = None,
+) -> None:
+    if status is not None:
+        sequence_render.status = status
+    if progress is not None:
+        sequence_render.progress = max(0, min(100, progress))
+    if message is not None:
+        sequence_render.message = message
+
+
+@huey.task(retries=0)
+def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
+    """Render every Shot in a Batch's Sequence, then join them into one video.
+
+    Each Shot renders through the same `render_vertical` a lone Clip uses, with
+    that Clip's own trim, layout, Subtitles, and Overlays — a Batch holds no
+    edit settings of its own (ADR 0002). Joining is where the Sequence exists.
+    """
+    with SessionLocal() as session:
+        batch = session.get(Batch, batch_id)
+        sequence_render = session.get(SequenceRender, sequence_render_id)
+        if not batch or not sequence_render:
+            return
+
+        render_dir = settings.batches_dir / batch.id / "sequences" / sequence_render.id
+        try:
+            shots = sorted(batch.shots, key=lambda shot: shot.position)
+            if not shots:
+                raise RuntimeError("This batch has no clips in its sequence")
+
+            _update_sequence(
+                sequence_render, status="running", progress=2, message="Preparing sequence"
+            )
+            session.commit()
+
+            render_dir.mkdir(parents=True, exist_ok=True)
+            rendered: list[Path] = []
+            # Shots are the bulk of the work; the join is comparatively quick.
+            for index, shot in enumerate(shots):
+                clip = shot.clip
+                end_ms = clip.trim_end_ms or clip.duration_ms
+                if end_ms is None or end_ms <= clip.trim_start_ms:
+                    raise RuntimeError(f"“{clip.title}” has no usable trim range")
+                _update_sequence(
+                    sequence_render,
+                    progress=5 + round(index / len(shots) * 80),
+                    message=f"Rendering clip {index + 1} of {len(shots)}",
+                )
+                session.commit()
+
+                shot_output = render_dir / f"shot-{index:03d}.mp4"
+                render_vertical(
+                    source=Path(_source_artifact(clip).path),
+                    output=shot_output,
+                    temp_dir=render_dir,
+                    layout=clip.layout,
+                    start_ms=clip.trim_start_ms,
+                    end_ms=end_ms,
+                    crop_center_x=clip.crop_center_x,
+                    caption_segments=clip.captions,
+                    captions_enabled=clip.captions_enabled,
+                    caption_style=clip.caption_style,
+                    caption_position=clip.caption_position,
+                    image_overlays=clip.image_overlays,
+                )
+                rendered.append(shot_output)
+
+            _update_sequence(sequence_render, progress=88, message="Joining clips")
+            session.commit()
+            output = render_dir / "clip-farm-sequence.mp4"
+            join_shots(shots=rendered, output=output, temp_dir=render_dir)
+
+            _update_sequence(sequence_render, progress=95, message="Validating MP4")
+            session.commit()
+            metadata = inspect_media(output)
+            if metadata["width"] != 1080 or metadata["height"] != 1920:
+                raise RuntimeError("The sequence did not produce a 1080x1920 output")
+
+            # The per-Shot renders were only ever inputs to the join.
+            for shot_output in rendered:
+                shot_output.unlink(missing_ok=True)
+
+            sequence_render.path = str(output)
+            sequence_render.checksum = sha256_file(output)
+            sequence_render.size_bytes = output.stat().st_size
+            sequence_render.duration_ms = metadata["duration_ms"]
+            sequence_render.completed_at = _now()
+            _update_sequence(
+                sequence_render, status="complete", progress=100, message="Sequence ready"
+            )
+            session.commit()
+        except Exception as exc:
+            failed_stage = sequence_render.message
+            sequence_render.error_message = (
+                f"Stage: {failed_stage}\n"
+                f"Error type: {type(exc).__name__}\n"
+                f"Message: {exc or 'No error message was provided'}"
+            )
+            sequence_render.completed_at = _now()
+            _update_sequence(
+                sequence_render, status="failed", message=f"Export failed while {failed_stage.lower()}"
+            )
+            session.commit()
+            shutil.rmtree(render_dir, ignore_errors=True)
+            logger.exception(
+                "Sequence render failed during %s (batch=%s, sequence_render=%s)",
+                failed_stage,
+                batch_id,
+                sequence_render_id,
+            )
             raise
 
 
