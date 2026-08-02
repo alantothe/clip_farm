@@ -9,6 +9,7 @@ import re
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -151,9 +152,22 @@ def add_shot(
         raise HTTPException(
             status_code=409, detail="That clip is already in the sequence"
         )
+    # Close any gap first. Deleting a Clip elsewhere leaves its position behind,
+    # and appending at len() would then land on top of a Shot that is still
+    # there — positions 0 and 2 make the next Shot a second 2.
     shots = batch_shots(session, batch.id)
+    renumber_shots(shots)
     session.add(Shot(batch_id=batch.id, project_id=clip.id, position=len(shots)))
-    return _touch(session, batch)
+    try:
+        return _touch(session, batch)
+    except IntegrityError:
+        # The check above is not atomic with the insert, so a double-submitted
+        # add races past it. The unique constraint is the real guard; without
+        # this the loser of the race gets a 500.
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail="That clip is already in the sequence"
+        ) from None
 
 
 @router.delete(

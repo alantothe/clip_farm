@@ -61,7 +61,9 @@ def batch_shots(session: Session, batch_id: str) -> list[Shot]:
     """A Batch's Sequence, in play order."""
     return list(
         session.scalars(
-            select(Shot).where(Shot.batch_id == batch_id).order_by(Shot.position)
+            select(Shot)
+            .where(Shot.batch_id == batch_id)
+            .order_by(Shot.position, Shot.created_at)
         ).all()
     )
 
