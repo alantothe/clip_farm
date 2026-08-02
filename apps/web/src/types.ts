@@ -61,6 +61,7 @@ export interface Publication {
 
 export interface Project {
   id: string
+  mode: string
   source_url: string
   source_post_id: string
   title: string
