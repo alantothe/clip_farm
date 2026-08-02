@@ -2855,3 +2855,215 @@ input[type='range']::-webkit-slider-thumb {
   color: #a43120;
   font-size: 10px;
 }
+
+/* --- Timeline: the strip that presents a Sequence ---------------------- */
+
+.timeline-empty {
+  max-width: 52ch;
+  margin: 22px 0 0;
+  padding: 18px 20px;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.timeline {
+  display: flex;
+  gap: 10px;
+  margin: 22px 0 0;
+  padding: 0 0 6px;
+  list-style: none;
+  overflow-x: auto;
+}
+
+.timeline__shot {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  width: 244px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+.timeline__index {
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.timeline__thumb {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 58px;
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--muted);
+  overflow: hidden;
+}
+
+.timeline__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.timeline__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.timeline__body strong {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline__body small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.timeline__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* --- Asking for the finished video ------------------------------------ */
+
+.export-panel {
+  margin: 22px 0 0;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+.export-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.export-panel__head h2 {
+  margin: 2px 0 0;
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.export-panel__total {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.export-panel__progress {
+  position: relative;
+  margin: 14px 0 0;
+  padding: 0 0 18px;
+  border-radius: 3px;
+  background: var(--paper);
+}
+
+.export-panel__progress-bar {
+  display: block;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--blue);
+  transition: width 220ms ease;
+}
+
+.export-panel__progress small {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.export-panel__error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 12px 0 0;
+  color: var(--coral);
+  font-size: 13px;
+}
+
+.export-panel__done {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 14px 0 0;
+}
+
+.export-panel__done small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.export-panel__stale {
+  flex-basis: 100%;
+  color: var(--coral) !important;
+}
+
+/* Adding a Clip to the Sequence, from the grid. */
+
+.clip-card__add,
+.clip-card__placed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin: 6px 0 0;
+  padding: 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.clip-card__add {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  cursor: pointer;
+  transition: border-color 160ms ease;
+}
+
+.clip-card__add:hover:not(:disabled) {
+  border-color: #9aa39c;
+}
+
+.clip-card__add:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.clip-card__placed {
+  border: 1px solid transparent;
+  color: var(--muted);
+}

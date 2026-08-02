@@ -10,10 +10,17 @@ import { ClipEditor } from '../editor/ClipEditor'
 import { BatchRail } from './BatchRail'
 import { ClipDropZone } from './ClipDropZone'
 import { ClipGrid } from './ClipGrid'
+import { ExportPanel } from './ExportPanel'
+import { Timeline, sequenceDurationMs } from './Timeline'
 import type { Batch, BatchSummary, Project } from '../../types'
 
 const BATCHES_KEY = ['batches'] as const
 const batchKey = (id: string) => ['batch', id] as const
+
+type SequenceEdit =
+  | { kind: 'add'; clipId: string }
+  | { kind: 'remove'; shotId: string }
+  | { kind: 'move'; shotId: string; position: number }
 
 const batchRoute = (id: string) => `/modes/batch-process/batches/${id}`
 const clipRoute = (batchId: string, clipId: string) => `${batchRoute(batchId)}/clips/${clipId}`
@@ -114,13 +121,22 @@ export function BatchProcessPage() {
     enabled: Boolean(batchId),
     // Imports run in parallel behind their own Jobs, so poll while any Clip in
     // this Batch is still moving.
-    refetchInterval: (query) =>
-      query.state.data?.clips?.some((clip) => ['queued', 'processing'].includes(clip.status))
-        ? 1500
-        : false,
+    refetchInterval: (query) => {
+      const current = query.state.data
+      const importing = current?.clips?.some((clip) =>
+        ['queued', 'processing'].includes(clip.status),
+      )
+      // A Sequence Render reports its own progress, not a Job's, so the Batch
+      // is what gets polled while an export runs.
+      const exporting =
+        current?.sequence_render != null &&
+        ['queued', 'running'].includes(current.sequence_render.status)
+      return importing || exporting ? 1500 : false
+    },
   })
   const batch = batchQuery.data ?? null
   const clips = batch?.clips ?? []
+  const placedClipIds = new Set((batch?.shots ?? []).map((shot) => shot.clip_id))
   const activeClip = clipId ? clips.find((clip) => clip.id === clipId) ?? null : null
 
   const createMutation = useMutation({
@@ -139,6 +155,24 @@ export function BatchProcessPage() {
       void queryClient.invalidateQueries({ queryKey: BATCHES_KEY })
       setRejected(result.rejected)
     },
+  })
+
+  const sequenceMutation = useMutation({
+    mutationFn: (edit: SequenceEdit) => {
+      if (edit.kind === 'add') return api.addShot(batchId!, edit.clipId)
+      if (edit.kind === 'remove') return api.removeShot(batchId!, edit.shotId)
+      return api.moveShot(batchId!, edit.shotId, edit.position)
+    },
+    // Every Sequence edit returns the whole Batch, so one response is enough.
+    onSuccess: (updated) => {
+      queryClient.setQueryData(batchKey(updated.id), updated)
+      void queryClient.invalidateQueries({ queryKey: BATCHES_KEY })
+    },
+  })
+
+  const exportMutation = useMutation({
+    mutationFn: () => api.renderSequence(batchId!),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) }),
   })
 
   const renameMutation = useMutation({
@@ -273,7 +307,35 @@ export function BatchProcessPage() {
           {renameMutation.error && <div className="toast-error">{renameMutation.error.message}</div>}
 
           {clips.length > 0 ? (
-            <ClipGrid clips={clips} onOpen={(clip) => navigate(clipRoute(batch.id, clip.id))} />
+            <>
+              <Timeline
+                shots={batch.shots}
+                clips={clips}
+                onMove={(shot, position) =>
+                  sequenceMutation.mutate({ kind: 'move', shotId: shot.id, position })
+                }
+                onRemove={(shot) => sequenceMutation.mutate({ kind: 'remove', shotId: shot.id })}
+                busy={sequenceMutation.isPending}
+              />
+              <ExportPanel
+                sequenceRender={batch.sequence_render}
+                shotCount={batch.shots.length}
+                totalMs={sequenceDurationMs(batch.shots, clips)}
+                onExport={() => exportMutation.mutate()}
+                starting={exportMutation.isPending}
+                error={exportMutation.error}
+              />
+              {sequenceMutation.error && (
+                <div className="toast-error" role="alert">{sequenceMutation.error.message}</div>
+              )}
+              <ClipGrid
+                clips={clips}
+                onOpen={(clip) => navigate(clipRoute(batch.id, clip.id))}
+                onAdd={(clip) => sequenceMutation.mutate({ kind: 'add', clipId: clip.id })}
+                placedClipIds={placedClipIds}
+                adding={sequenceMutation.isPending}
+              />
+            </>
           ) : (
             <p className="batch-empty">
               No clips yet. Add videos above and each one imports on its own — you can start
