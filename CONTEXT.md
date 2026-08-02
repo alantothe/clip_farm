@@ -11,8 +11,20 @@ One source video together with the edit decisions applied to it. The unit you op
 _Avoid_: project, video, item
 
 **Batch**:
-A named set of Clips imported and worked on together. A Clip belongs to at most one Batch. A Batch holds no edit settings of its own — each Clip in it is edited and rendered like any other. Several Batches run at once; that is the point of them.
+A named set of Clips imported and worked on together, which renders as one video through its Sequence. A Clip belongs to at most one Batch. A Batch holds no edit settings of its own — each Clip in it is trimmed, cropped, and subtitled on its own. Several Batches run at once; that is the point of them.
 _Avoid_: project, group, folder, run
+
+**Sequence**:
+The ordered arrangement of Clips in a Batch that renders as one video. One per Batch. A Clip can sit in a Batch without being in its Sequence.
+_Avoid_: timeline, edit, montage
+
+**Shot**:
+One Clip's placement in a Sequence, at a position. The span that plays is the Clip's own Trim.
+_Avoid_: item, entry, segment, clip instance
+
+**Timeline**:
+The strip that presents a Sequence for reordering. UI, not a model — as Mode Library is to Mode.
+_Avoid_: track, storyboard, editor
 
 **Origin**:
 Where a Clip came from — an X post, or a file uploaded from disk. Some Origins have a URL; uploads do not.
@@ -65,6 +77,10 @@ _Avoid_: crop mode, fit, framing
 **Render**:
 A finished video file, frozen together with the exact edit settings that produced it. A Clip's settings can change afterwards; a Render's cannot.
 _Avoid_: rendition, export, output, version
+
+**Sequence Render**:
+The finished video a Sequence produces — every Shot in order, joined into one file. Frozen like a Render, but belonging to a Batch rather than a Clip.
+_Avoid_: batch render, master, final cut
 
 **Artifact**:
 A supporting file belonging to a Clip — its Source Video, preview, thumbnail, extracted audio, or an Overlay image. A Render is not an Artifact.

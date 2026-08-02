@@ -11,11 +11,13 @@ Clip Farm converts authorized landscape video into 1080x1920 MP4s for manual upl
 
 ## Batch Process
 
-1. Start a batch — a named set of clips worked on together.
+1. Start a batch — a named set of clips that become one video together.
 2. Drop in several videos, or pick them from a file dialog. Each becomes its own clip and imports on its own, so the grid shows several imports running at once.
-3. Open any clip in the same editor the X mode uses, then render and publish it.
+3. Open any clip in the same editor the X mode uses to trim, crop, and subtitle it.
+4. Add the clips you want to the timeline and put them in order.
+5. Export the batch as one vertical MP4, joined in that order.
 
-Batches are independent, so several can be in flight at the same time. See `docs/adr/0002-batches-group-clips-for-parallel-work.md` for why a batch holds no shared edit settings.
+Batches are independent, so several can be in flight at the same time. See `docs/adr/0002-batches-group-clips-for-parallel-work.md` for why a batch holds no shared edit settings, and `docs/adr/0003-a-sequence-renders-a-batch-into-one-video.md` for how the clips are joined without drifting out of sync.
 
 Only process videos you own or have permission to repurpose.
 
