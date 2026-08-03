@@ -60,7 +60,32 @@ type SequenceEdit =
   | { kind: 'cover'; clipId: string; baseShotId: string; offsetMs: number }
   | { kind: 'uncover'; cutawayId: string }
   | { kind: 'anchor'; cutawayId: string; baseShotId: string; offsetMs: number }
-  | { kind: 'trim-cutaway'; cutawayId: string; trim: ShotTrim }
+  | { kind: 'trim-cutaway'; cutawayId: string; trim: ShotTrim; offsetMs?: number }
+
+/**
+ * Trimming a Cutaway, with the offset that keeps its back where it was.
+ *
+ * A Shot is drawn from where it starts, so cutting its front simply makes
+ * everything after it play earlier. A Cutaway has no such queue behind it: it
+ * sits at an offset into the Shot it covers, and if that offset stays put while
+ * its front is cut, what disappears is its back instead — the head trim would
+ * take the tail, which is not the edit anyone dragged for. So the offset moves
+ * along by exactly what was cut. Trimming the back moves nothing, and a reset
+ * back to the Clip's Trim (`null`) moves nothing either.
+ */
+export function trimCutawayEdit(cutaway: Cutaway, clip: Project, trim: ShotTrim): SequenceEdit {
+  const start = trim.trim_start_ms
+  if (start === undefined || start === null) {
+    return { kind: 'trim-cutaway', cutawayId: cutaway.id, trim }
+  }
+  const shiftMs = start - shotTrim(cutaway, clip).start
+  return {
+    kind: 'trim-cutaway',
+    cutawayId: cutaway.id,
+    trim,
+    offsetMs: Math.max(0, cutaway.offset_ms + shiftMs),
+  }
+}
 
 /**
  * A Sequence edit applied to the cached Batch, so a drag lands instantly.
@@ -79,7 +104,7 @@ export function applySequenceEdit(batch: Batch, edit: SequenceEdit): Batch {
     const patch =
       edit.kind === 'anchor'
         ? { base_shot_id: edit.baseShotId, offset_ms: edit.offsetMs }
-        : edit.trim
+        : { ...edit.trim, ...(edit.offsetMs === undefined ? {} : { offset_ms: edit.offsetMs }) }
     return {
       ...batch,
       cutaways: batch.cutaways.map((item) =>
@@ -374,7 +399,10 @@ export function BatchProcessPage() {
         })
       }
       if (edit.kind === 'trim-cutaway') {
-        return api.updateCutaway(batchId!, edit.cutawayId, edit.trim)
+        return api.updateCutaway(batchId!, edit.cutawayId, {
+          ...edit.trim,
+          ...(edit.offsetMs === undefined ? {} : { offset_ms: edit.offsetMs }),
+        })
       }
       return api.moveShot(batchId!, edit.shotId, edit.position)
     },
@@ -731,7 +759,7 @@ export function BatchProcessPage() {
                 onTrim={(shot, trim) =>
                   sequenceMutation.mutate(
                     selectedCutaway
-                      ? { kind: 'trim-cutaway', cutawayId: shot.id, trim }
+                      ? trimCutawayEdit(selectedCutaway, selectedClip, trim)
                       : { kind: 'trim', shotId: shot.id, trim },
                   )
                 }
@@ -820,9 +848,10 @@ export function BatchProcessPage() {
                   offsetMs,
                 })
               }
-              onTrimCutaway={(cutaway, trim) =>
-                sequenceMutation.mutate({ kind: 'trim-cutaway', cutawayId: cutaway.id, trim })
-              }
+              onTrimCutaway={(cutaway, trim) => {
+                const clip = clips.find((item) => item.id === cutaway.clip_id)
+                if (clip) sequenceMutation.mutate(trimCutawayEdit(cutaway, clip, trim))
+              }}
               onPlaceCutaway={(clipId, baseShotId, offsetMs) =>
                 sequenceMutation.mutate({ kind: 'cover', clipId, baseShotId, offsetMs })
               }

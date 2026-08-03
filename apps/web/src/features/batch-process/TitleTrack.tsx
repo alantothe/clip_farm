@@ -26,13 +26,19 @@ type Gesture =
 /**
  * Where a Title dragged to `ms` lands, kept on the Sequence.
  *
- * A Title before zero would be text the finished video never shows, so the
- * whole span slides rather than the leading edge being clipped — which is what
- * dragging something means.
+ * A Title outside the Sequence would be text the finished video never shows, so
+ * both ends hold it: the whole span slides rather than an edge being clipped,
+ * which is what dragging something means. `latest` is the last start that keeps
+ * the Title's own length on the strip, and is ignored when there is no room for
+ * it — a Title longer than the Sequence still starts at zero.
  */
-export function slideTo(ms: number): number {
-  return Math.max(0, snap(ms))
+export function slideTo(ms: number, latest = Infinity): number {
+  const at = snap(ms)
+  return Math.max(0, Number.isFinite(latest) ? Math.min(at, snap(latest)) : at)
 }
+
+/** A Title lying entirely past the end still needs somewhere to be grabbed. */
+const ORPHAN_PX = 14
 
 /**
  * The Title Track: a Batch's Titles, laid out in Sequence time.
@@ -106,12 +112,9 @@ export function TitleTrack({
     if (!title) return
 
     if (current.kind === 'move') {
-      const start = slideTo(msAtX(event.clientX) - current.grabMs)
-      setDraft({
-        titleId: title.id,
-        start,
-        end: start + (title.end_ms - title.start_ms),
-      })
+      const span = title.end_ms - title.start_ms
+      const start = slideTo(msAtX(event.clientX) - current.grabMs, totalMs - span)
+      setDraft({ titleId: title.id, start, end: start + span })
       return
     }
 
@@ -127,8 +130,13 @@ export function TitleTrack({
             end: current.from.end,
           }
         : {
+            end: Math.min(
+              Math.max(current.from.start + MIN_TITLE_MS, current.from.end + deltaMs),
+              // The end of the Sequence is the end of the video: text dragged
+              // past it would render as nothing.
+              Math.max(current.from.start + MIN_TITLE_MS, totalMs),
+            ),
             start: current.from.start,
-            end: Math.max(current.from.start + MIN_TITLE_MS, current.from.end + deltaMs),
           }),
     })
   }
@@ -165,17 +173,24 @@ export function TitleTrack({
     <ol className="sequence__titles" aria-label="Titles" ref={laneRef}>
       {drafted.map((title) => {
         const selected = title.id === selectedTitleId
-        const width = pxOf(title.end_ms - title.start_ms)
-        // A Title can be written past the end of the Sequence — the Shots under
-        // it may not have been placed yet — and is marked rather than hidden.
+        // The lane is exactly the Sequence long, so a Title is drawn clipped to
+        // it: what runs past the end renders as nothing, and saying so is the
+        // job of the marking rather than of extra track. Shortening the
+        // Sequence is what usually strands one, so it keeps a grabbable sliver
+        // at the end instead of vanishing.
+        const clipped = title.end_ms > totalMs
         const orphaned = title.start_ms >= totalMs
+        const start = Math.min(title.start_ms, totalMs)
+        const width = orphaned
+          ? ORPHAN_PX
+          : pxOf(Math.min(title.end_ms, totalMs) - start)
         return (
           <li
             className={`sequence__title ${selected ? 'is-selected' : ''} ${
               orphaned ? 'is-orphaned' : ''
-            }`}
+            } ${clipped ? 'is-clipped' : ''}`}
             key={title.id}
-            style={{ left: pxOf(title.start_ms), width }}
+            style={{ left: Math.max(0, orphaned ? pxOf(totalMs) - ORPHAN_PX : pxOf(start)), width }}
           >
             <button
               className="sequence__title-body"
@@ -194,7 +209,11 @@ export function TitleTrack({
               aria-label={`${title.text || 'Empty title'}, ${formatTime(
                 title.start_ms,
               )} to ${formatTime(title.end_ms)}${
-                orphaned ? ', past the end of the sequence' : ''
+                orphaned
+                  ? ', past the end of the sequence'
+                  : clipped
+                    ? ', clipped to the end of the sequence'
+                    : ''
               }`}
             >
               {width > 26 && <Type size={11} aria-hidden="true" />}

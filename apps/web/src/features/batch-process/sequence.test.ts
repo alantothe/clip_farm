@@ -7,10 +7,11 @@
  * plays, where a dragged Shot lands, and what the cache looks like the instant
  * a gesture ends.
  */
-import { applySequenceEdit } from './BatchProcessPage'
+import { applySequenceEdit, trimCutawayEdit } from './BatchProcessPage'
 import { shotIsOver } from './useSequencePlayer'
 import { fitInside, keptLeftPercent, keptWidthFraction } from './Player'
 import {
+  MIN_SPAN_MS,
   anchorAt,
   insertionIndex,
   layout,
@@ -20,6 +21,7 @@ import {
   shotSpanMs,
   shotTrim,
   sourceTimeMs,
+  trimTo,
 } from './Timeline'
 import type { Batch, Cutaway, Project, Shot } from '../../types'
 
@@ -99,6 +101,87 @@ describe('where a dragged shot lands', () => {
 
   test('dropping past the end lands last', () => {
     expect(insertionIndex(placed, 99_000)).toBe(3)
+  })
+})
+
+describe('dragging a trim handle', () => {
+  const from = { start: 2_000, end: 8_000 }
+  const room = { floor: 0, ceiling: 10_000 }
+
+  test('the front handle moves the front and leaves the back alone', () => {
+    expect(trimTo(from, 'start', 1_500, room)).toEqual({
+      start: 3_500,
+      end: 8_000,
+      shiftMs: 1_500,
+    })
+  })
+
+  test('the back handle moves the back and leaves the front alone', () => {
+    expect(trimTo(from, 'end', -3_000, room)).toEqual({ start: 2_000, end: 5_000, shiftMs: 0 })
+  })
+
+  test('a front pulled back out reports a negative shift', () => {
+    expect(trimTo(from, 'start', -1_200, room)).toEqual({
+      start: 800,
+      end: 8_000,
+      shiftMs: -1_200,
+    })
+  })
+
+  test('neither edge leaves the source video', () => {
+    expect(trimTo(from, 'start', -9_000, room).start).toBe(0)
+    expect(trimTo(from, 'end', 9_000, room).end).toBe(10_000)
+    // A cutaway's front stops where its base shot does, so its offset stays positive.
+    expect(trimTo(from, 'start', -9_000, { ...room, floor: 1_400 }).start).toBe(1_400)
+  })
+
+  test('neither edge can cross the other', () => {
+    expect(trimTo(from, 'start', 9_000, room).start).toBe(8_000 - MIN_SPAN_MS)
+    expect(trimTo(from, 'end', -9_000, room).end).toBe(2_000 + MIN_SPAN_MS)
+  })
+})
+
+describe('trimming a cutaway, which has no queue behind it', () => {
+  const cover = clip({ id: 'cover', trim_start_ms: 0, trim_end_ms: 4_000 })
+  const cutaway = {
+    id: 'k1',
+    clip_id: 'cover',
+    base_shot_id: 's1',
+    offset_ms: 5_000,
+    trim_start_ms: null,
+    trim_end_ms: null,
+  } as Cutaway
+
+  test('cutting its front walks it along its base shot, so its back holds still', () => {
+    const edit = trimCutawayEdit(cutaway, cover, { trim_start_ms: 1_000 })
+
+    // It lost a second off the front, so it starts a second later and ends where it did.
+    expect(edit).toEqual({
+      kind: 'trim-cutaway',
+      cutawayId: 'k1',
+      trim: { trim_start_ms: 1_000 },
+      offsetMs: 6_000,
+    })
+  })
+
+  test('pulling its front back out walks it the other way', () => {
+    const trimmed = { ...cutaway, trim_start_ms: 1_000, offset_ms: 6_000 }
+
+    expect(trimCutawayEdit(trimmed, cover, { trim_start_ms: 0 })).toMatchObject({ offsetMs: 5_000 })
+  })
+
+  test('trimming its back moves nothing', () => {
+    expect(trimCutawayEdit(cutaway, cover, { trim_end_ms: 3_000 })).toEqual({
+      kind: 'trim-cutaway',
+      cutawayId: 'k1',
+      trim: { trim_end_ms: 3_000 },
+    })
+  })
+
+  test('a reset back to the clip’s trim moves nothing', () => {
+    expect(
+      trimCutawayEdit(cutaway, cover, { trim_start_ms: null, trim_end_ms: null }),
+    ).not.toHaveProperty('offsetMs')
   })
 })
 

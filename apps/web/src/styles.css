@@ -14,6 +14,11 @@
   --acid: #dff34f;
   --coral: #ff6b52;
   --blue: #5577ef;
+  /* The Timeline's family: a Shot carries the solid fill, a Cutaway sits over
+     one so it is lighter, and a Title is lighter still. Both ends of the Shot
+     gradient clear 4.5:1 against the white text on them. */
+  --blue-deep: #2f4bbd;
+  --blue-soft: #dde4fc;
   --dark: #0b0e0c;
   --radius: 6px;
 }
@@ -3064,9 +3069,10 @@ input[type='range']::-webkit-slider-thumb {
   overflow-y: hidden;
 }
 
+/* Exactly as wide as the Sequence is long — no `min-width`, because a strip
+   stretched to fill the panel would say the video runs longer than it does. */
 .sequence__inner {
   position: relative;
-  min-width: 100%;
   padding: 0 0 10px;
 }
 
@@ -3146,9 +3152,10 @@ input[type='range']::-webkit-slider-thumb {
   top: 0;
   bottom: 0;
   border-radius: 3px;
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px #b9c1e0;
+  background: #eff2fd;
+  box-shadow: inset 0 0 0 1px #c4cdec;
   border-left: 3px solid #6f7fd6;
+  color: #303a63;
   overflow: hidden;
 }
 
@@ -3162,6 +3169,12 @@ input[type='range']::-webkit-slider-thumb {
 .sequence__title.is-orphaned {
   border-left-color: var(--coral);
   opacity: 0.6;
+}
+
+/* Running past the end of the Sequence: the tail renders as nothing, so the
+   Title is cut off where the video is, marked as a clipped Cutaway is. */
+.sequence__title.is-clipped {
+  border-right: 3px dashed var(--coral);
 }
 
 .sequence__title-body {
@@ -3198,10 +3211,10 @@ input[type='range']::-webkit-slider-thumb {
   list-style: none;
   background: repeating-linear-gradient(
     -45deg,
-    #f1f4f1,
-    #f1f4f1 5px,
-    #e9ede9 5px,
-    #e9ede9 10px
+    #eff1f8,
+    #eff1f8 5px,
+    #e7eaf3 5px,
+    #e7eaf3 10px
   );
 }
 
@@ -3210,7 +3223,7 @@ input[type='range']::-webkit-slider-thumb {
   left: 8px;
   top: 7px;
   font-size: 10px;
-  color: #8a938d;
+  color: #7c85a3;
   white-space: nowrap;
   pointer-events: none;
 }
@@ -3220,9 +3233,10 @@ input[type='range']::-webkit-slider-thumb {
   top: 0;
   bottom: 0;
   border-radius: 3px;
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line);
-  border-left: 3px solid var(--blue);
+  background: var(--blue-soft);
+  box-shadow: inset 0 0 0 1px #a9b8f0;
+  border-left: 3px solid var(--blue-deep);
+  color: #26326b;
   overflow: hidden;
 }
 
@@ -3267,7 +3281,7 @@ input[type='range']::-webkit-slider-thumb {
   margin: 8px 0 0;
   padding: 0;
   list-style: none;
-  background: #eef1ee;
+  background: #e7eaf3;
 }
 
 .sequence__shot {
@@ -3275,8 +3289,9 @@ input[type='range']::-webkit-slider-thumb {
   top: 0;
   bottom: 0;
   border-radius: 3px;
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line);
+  background: linear-gradient(180deg, #4a6ae2, #3f5ed6);
+  box-shadow: inset 0 0 0 1px var(--blue-deep);
+  color: #fff;
   overflow: hidden;
 }
 
@@ -3309,8 +3324,8 @@ input[type='range']::-webkit-slider-thumb {
   width: 30px;
   height: 40px;
   border-radius: 3px;
-  background: var(--paper);
-  color: var(--muted);
+  background: var(--blue-deep);
+  color: rgba(255, 255, 255, 0.8);
   overflow: hidden;
   pointer-events: none;
 }
@@ -3339,7 +3354,7 @@ input[type='range']::-webkit-slider-thumb {
 
 .sequence__shot-text small {
   font-size: 10px;
-  color: var(--muted);
+  color: rgba(255, 255, 255, 0.9);
   white-space: nowrap;
 }
 
@@ -3364,8 +3379,20 @@ input[type='range']::-webkit-slider-thumb {
   background: rgba(11, 14, 12, 0.32);
 }
 
+/* A Shot is dark enough that its own grips have to be the light ones. */
+.sequence__shot .sequence__handle::after {
+  background: rgba(255, 255, 255, 0.55);
+}
+
 .sequence__shot:hover .sequence__handle::after,
 .sequence__shot.is-selected .sequence__handle::after {
+  background: #fff;
+}
+
+.sequence__cutaway:hover .sequence__handle::after,
+.sequence__cutaway.is-selected .sequence__handle::after,
+.sequence__title:hover .sequence__handle::after,
+.sequence__title.is-selected .sequence__handle::after {
   background: rgba(11, 14, 12, 0.62);
 }
 

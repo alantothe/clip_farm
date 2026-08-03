@@ -136,10 +136,16 @@ test('a title is on screen only inside its own span', () => {
   expect(titleIsVisible(title, 2000)).toBe(false)
 })
 
-test('dragging a title never pushes it off the front of the sequence', () => {
+test('dragging a title never pushes it off either end of the sequence', () => {
   expect(slideTo(-500)).toBe(0)
   // Snapped to a tenth of a second, as a Shot's trim is.
   expect(slideTo(1234)).toBe(1200)
+
+  // A four-second title on a ten-second sequence stops with its tail on the
+  // end, because the tail past it would render as nothing.
+  expect(slideTo(9000, 10_000 - 4_000)).toBe(6_000)
+  // A title longer than the sequence has nowhere to stop but the front.
+  expect(slideTo(3000, 10_000 - 12_000)).toBe(0)
 })
 
 test('dragging on the stage keeps a title inside the frame', () => {

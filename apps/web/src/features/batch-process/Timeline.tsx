@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Clapperboard, ZoomIn, ZoomOut } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import { artifact } from '../../lib/project'
@@ -74,6 +74,37 @@ const DRAG_THRESHOLD_PX = 3
 const ZOOM_LIMITS = { min: 4, max: 200 }
 
 const snap = (ms: number) => Math.round(ms / SNAP_MS) * SNAP_MS
+
+/**
+ * Where a Trim edge dragged by `deltaMs` lands, and what it took off the head.
+ *
+ * Each edge moves alone: dragging the front changes where the span starts and
+ * leaves its end exactly where it was, and dragging the back does the mirror of
+ * that. Neither may cross the other closer than `MIN_SPAN_MS`, and neither may
+ * leave the Source Video — `floor` is the earliest the front may go and
+ * `ceiling` the latest the back may.
+ *
+ * `shiftMs` is how much of the head the gesture took: positive when the front
+ * was cut away, negative when it was pulled back out, zero for a back edge. It
+ * is what tells the head trim apart from the tail one — the Timeline draws the
+ * gesture with it, and a Cutaway's offset moves by it so its tail holds still.
+ */
+export function trimTo(
+  from: { start: number; end: number },
+  edge: 'start' | 'end',
+  deltaMs: number,
+  bounds: { floor: number; ceiling: number },
+): { start: number; end: number; shiftMs: number } {
+  if (edge === 'end') {
+    return {
+      start: from.start,
+      end: Math.max(from.start + MIN_SPAN_MS, Math.min(bounds.ceiling, from.end + deltaMs)),
+      shiftMs: 0,
+    }
+  }
+  const start = Math.min(from.end - MIN_SPAN_MS, Math.max(bounds.floor, from.start + deltaMs))
+  return { start, end: from.end, shiftMs: start - from.start }
+}
 
 /** A Cutaway drawn on the lane: where it starts on the Sequence, and how long. */
 export type PlacedCutaway = {
@@ -215,18 +246,20 @@ export function Timeline({
 }) {
   const [pxPerSec, setPxPerSec] = useState(24)
   const [draftOrder, setDraftOrder] = useState<string[] | null>(null)
-  const [draftTrim, setDraftTrim] = useState<{ shotId: string; start: number; end: number } | null>(
-    null,
-  )
+  const [draftTrim, setDraftTrim] = useState<
+    { shotId: string; start: number; end: number; shiftMs: number } | null
+  >(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
   const [draftAnchor, setDraftAnchor] = useState<
     { cutawayId: string; baseShotId: string; offsetMs: number } | null
   >(null)
   const [coverDrop, setCoverDrop] = useState<number | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const trackRef = useRef<HTMLOListElement>(null)
   const coverRef = useRef<HTMLOListElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const dragged = useRef(false)
+  const fitted = useRef(false)
 
   // A draft reorders locally while dragging; a draft trim resizes one Shot.
   const ordered = draftOrder
@@ -257,11 +290,57 @@ export function Timeline({
   const totalMs = placed.reduce((sum, item) => sum + item.spanMs, 0)
   const pxOf = (ms: number) => (ms / 1000) * pxPerSec
 
+  /**
+   * How far a head trim in flight pushes what comes after it.
+   *
+   * Shots are gapless (ADR 0004), so cutting one's front makes everything after
+   * it play earlier. Rippling that while the finger is still down would slide
+   * the Sequence out from under the pointer and — because a Shot is drawn from
+   * where it starts, not from what it contains — would look exactly like cutting
+   * its back: the same edge would move either way, which is why trimming from
+   * the front appeared not to work at all. So during the gesture the cut is
+   * drawn where it is being made. The head follows the pointer, the back of the
+   * Shot and everything after it hold still, and the ripple lands on release.
+   *
+   * Only cutting is drawn this way. Pulling a head back out needs room that the
+   * Shot before it is occupying, and a Shot drawn over its neighbour reads as a
+   * bug — so that direction grows to the right, as it did before.
+   */
+  const shiftMs = draftTrim?.shiftMs ?? 0
+  const shiftedFrom = draftTrim
+    ? placed.findIndex((item) => item.shot.id === draftTrim.shotId)
+    : -1
+  const rippleShiftPx = shiftedFrom >= 0 ? Math.max(0, pxOf(shiftMs)) : 0
+  /** A Cutaway rides on its Base Shot, and shifts with it — or on its own. */
+  const shiftOf = (baseShotId: string, cutawayId: string) => {
+    if (draftTrim?.shotId === cutawayId) return pxOf(shiftMs)
+    const index = placed.findIndex((item) => item.shot.id === baseShotId)
+    return index >= 0 && index >= shiftedFrom ? rippleShiftPx : 0
+  }
+
   function msAtX(clientX: number) {
     const rect = trackRef.current?.getBoundingClientRect()
     if (!rect) return 0
     return Math.max(0, ((clientX - rect.left) / pxPerSec) * 1000)
   }
+
+  /**
+   * The strip is exactly as long as the Sequence, so a short one would open as
+   * a stub in a wide panel. The scale is fitted to the panel once, when the
+   * Sequence first has a length — after that the zoom control is the operator's
+   * and nothing moves it under them.
+   */
+  useLayoutEffect(() => {
+    if (fitted.current || totalMs <= 0) return
+    const width = scrollRef.current?.clientWidth
+    if (!width) return
+    fitted.current = true
+    // Short of the full width, so the end of the strip is visibly an end rather
+    // than something the panel cut off — and so the playhead has somewhere to
+    // sit when it gets there.
+    const perSec = (Math.max(120, width - 12) / totalMs) * 1000
+    setPxPerSec(Math.min(ZOOM_LIMITS.max, Math.max(ZOOM_LIMITS.min, perSec)))
+  }, [totalMs])
 
   // Placement is a drag that starts in the grid, so the pointer events arrive
   // at the card, not here — the window is the only place both can be seen.
@@ -357,22 +436,16 @@ export function Timeline({
       return
     }
 
-    const item =
-      placed.find((entry) => entry.shot.id === current.shotId) ??
-      placedCutaways.find((entry) => entry.cutaway.id === current.shotId)
+    const covering = placedCutaways.find((entry) => entry.cutaway.id === current.shotId)
+    const item = placed.find((entry) => entry.shot.id === current.shotId) ?? covering
     if (!item) return
     const deltaMs = snap(((event.clientX - current.originX) / pxPerSec) * 1000)
-    const limit = item.clip.duration_ms ?? current.from.end
-    const next =
-      current.edge === 'start'
-        ? {
-            start: Math.min(current.from.end - MIN_SPAN_MS, Math.max(0, current.from.start + deltaMs)),
-            end: current.from.end,
-          }
-        : {
-            start: current.from.start,
-            end: Math.max(current.from.start + MIN_SPAN_MS, Math.min(limit, current.from.end + deltaMs)),
-          }
+    const next = trimTo(current.from, current.edge, deltaMs, {
+      // A Cutaway holds its tail by moving its offset, and an offset cannot go
+      // negative — so its head reaches back only as far as its Base Shot starts.
+      floor: covering ? Math.max(0, current.from.start - covering.cutaway.offset_ms) : 0,
+      ceiling: item.clip.duration_ms ?? current.from.end,
+    })
     setDraftTrim({ shotId: current.shotId, ...next })
   }
 
@@ -410,6 +483,8 @@ export function Timeline({
       if (to >= 0 && to !== from) onMove(shot, to)
     }
     if (current.kind === 'trim' && draftTrim && cutaway) {
+      // Where the offset that keeps a Cutaway's tail still is moved is the
+      // caller's business — it is the same rule whichever control asked.
       onTrimCutaway(
         cutaway,
         current.edge === 'start'
@@ -441,12 +516,10 @@ export function Timeline({
     )
   }
 
-  const contentMs = titles.reduce((longest, title) => Math.max(longest, title.end_ms), totalMs)
-
   // Ticks land on a round interval wide enough to read at this zoom.
   const stepSec = [1, 2, 5, 10, 15, 30, 60, 120].find((step) => step * pxPerSec >= 64) ?? 120
   const ticks: number[] = []
-  for (let second = 0; second * 1000 <= contentMs; second += stepSec) ticks.push(second)
+  for (let second = 0; second * 1000 <= totalMs; second += stepSec) ticks.push(second)
 
   return (
     <div className="sequence">
@@ -478,11 +551,15 @@ export function Timeline({
         </span>
       </div>
 
-      <div className="sequence__scroll">
-        {/* A Title can be written past the last Shot — the Shots it was meant
-            for may not be placed yet — so the strip is as wide as the longer of
-            the two rather than cutting one off. */}
-        <div className="sequence__inner" style={{ width: Math.max(pxOf(contentMs), 240) }}>
+      <div className="sequence__scroll" ref={scrollRef}>
+        {/* Horizontal space is time, and the strip is no exception: it is as
+            long as the Sequence and not a pixel longer, so where it ends is
+            where the finished video ends (ADR 0004). A Title written past that
+            end is drawn clipped to it, because that is what it renders as. */}
+        <div
+          className="sequence__inner"
+          style={{ width: Math.max(pxOf(totalMs) + rippleShiftPx, 1) }}
+        >
           <div
             className="sequence__ruler"
             onPointerDown={(event) => {
@@ -525,7 +602,11 @@ export function Timeline({
                     item.overflows ? 'is-clipped' : ''
                   }`}
                   key={item.cutaway.id}
-                  style={{ left: pxOf(item.startMs), width }}
+                  style={{
+                    left:
+                      pxOf(item.startMs) + shiftOf(item.cutaway.base_shot_id, item.cutaway.id),
+                    width,
+                  }}
                 >
                   <button
                     className="sequence__cutaway-body"
@@ -603,7 +684,10 @@ export function Timeline({
                 <li
                   className={`sequence__shot ${selected ? 'is-selected' : ''}`}
                   key={item.shot.id}
-                  style={{ left: pxOf(item.startMs), width }}
+                  style={{
+                    left: pxOf(item.startMs) + (index >= shiftedFrom ? rippleShiftPx : 0),
+                    width,
+                  }}
                 >
                   <button
                     className="sequence__shot-body"
