@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { formatTime } from '../../lib/format'
 import type { Placed, PlacedCutaway } from './Timeline'
+import type { ReviewRange } from './useSequencePlayer'
 
 /**
  * The whole Sequence, always, under the Player.
@@ -17,12 +18,14 @@ import type { Placed, PlacedCutaway } from './Timeline'
 export function ScrubBar({
   placed,
   cutaways,
+  range,
   totalMs,
   playheadMs,
   onScrub,
 }: {
   placed: Placed[]
   cutaways: PlacedCutaway[]
+  range: ReviewRange | null
   totalMs: number
   playheadMs: number
   onScrub: (ms: number) => void
@@ -108,6 +111,16 @@ export function ScrubBar({
               style={{ left: `${(item.startMs / totalMs) * 100}%` }}
             />
           ))}
+        {/* The Review Range, when one is marked: what loops, and what does not. */}
+        {totalMs > 0 && range && (
+          <span
+            className="scrub__range"
+            style={{
+              left: `${(range.inMs / totalMs) * 100}%`,
+              width: `${((range.outMs - range.inMs) / totalMs) * 100}%`,
+            }}
+          />
+        )}
         <span className="scrub__head" style={{ left: `${percent}%` }} />
       </div>
     </div>

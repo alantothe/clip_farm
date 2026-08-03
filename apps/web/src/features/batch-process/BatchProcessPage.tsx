@@ -15,7 +15,7 @@ import { ExportPanel } from './ExportPanel'
 import { NewBatchDialog } from './NewBatchDialog'
 import { Player } from './Player'
 import { ShotInspector } from './ShotInspector'
-import { Timeline, sequenceDurationMs } from './Timeline'
+import { MIN_SPAN_MS, Timeline, sequenceDurationMs, shotTrim, sourceTimeMs } from './Timeline'
 import { useSequencePlayer } from './useSequencePlayer'
 import type { Batch, BatchSummary, Cutaway, Format, Project, Shot, ShotTrim } from '../../types'
 
@@ -206,6 +206,7 @@ export function BatchProcessPage() {
     clips,
     playheadMs,
     onScrub: setPlayheadMs,
+    selectedShotId,
   })
   // A Clip can be placed more than once, so this counts rather than flags.
   const placedCounts = shots.reduce(
@@ -237,6 +238,32 @@ export function BatchProcessPage() {
       navigate(batchRoute(created.id))
     },
   })
+
+  /**
+   * Whether the playhead is inside the Shot that is actually selected.
+   *
+   * Trimming to the playhead only means anything when the two agree — moving
+   * the in-point of a Shot the playhead is nowhere near would silently make a
+   * cut the operator never saw.
+   */
+  const trimTarget =
+    player.current && player.current.item.shot.id === selectedShotId ? player.current : null
+
+  /** Set the selected Shot's Trim to wherever the playhead is sitting. */
+  function trimToPlayhead(edge: 'in' | 'out') {
+    if (!trimTarget) return
+    const atMs = Math.round(sourceTimeMs(trimTarget.item, trimTarget.intoShotMs))
+    const { start, end } = shotTrim(trimTarget.item.shot, trimTarget.item.clip)
+    // The same floor the Timeline's drag-to-trim enforces, so neither route
+    // can leave a Shot too short to see.
+    if (edge === 'in' && atMs > end - MIN_SPAN_MS) return
+    if (edge === 'out' && atMs < start + MIN_SPAN_MS) return
+    sequenceMutation.mutate({
+      kind: 'trim',
+      shotId: trimTarget.item.shot.id,
+      trim: edge === 'in' ? { trim_start_ms: atMs } : { trim_end_ms: atMs },
+    })
+  }
 
   /** Open the dialog on a clean slate: a stale error must not greet the next try. */
   function askNewBatch() {
@@ -453,7 +480,12 @@ export function BatchProcessPage() {
           {clips.length > 0 ? (
             <div className="batch-editor">
               <div className="batch-editor__player">
-                <Player player={player} format={batch.format} />
+                <Player
+                  player={player}
+                  format={batch.format}
+                  onTrimToPlayhead={trimToPlayhead}
+                  canTrim={trimTarget !== null}
+                />
               </div>
               <div className="batch-editor__timeline">
               <Timeline

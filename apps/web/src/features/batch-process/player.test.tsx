@@ -419,3 +419,234 @@ test('scrubbing moves the playhead and the shot it lands on', async () => {
   fireEvent.keyDown(scrub, { key: 'End' })
   await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeVisible())
 })
+
+test('the speed survives a cut, on whichever element becomes visible', async () => {
+  const player = await openPlayer(makeBatch())
+
+  fireEvent.click(within(player).getByRole('button', { name: '2×' }))
+
+  // Both elements, not just the visible one: the idle one becomes visible at
+  // the next join, and a rate set on only one would reset itself there.
+  const [active, idle] = stageVideos()
+  await waitFor(() => expect(active.playbackRate).toBe(2))
+  expect(idle.playbackRate).toBe(2)
+
+  fireEvent.click(within(player).getByRole('button', { name: 'Play the rough cut' }))
+  fireEvent.ended(active)
+
+  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeVisible())
+  expect(stageVideos()[1].playbackRate).toBe(2)
+})
+
+test('muting silences the element carrying the sound, not the structure', async () => {
+  const player = await openPlayer(makeBatch())
+
+  const [active, idle] = stageVideos()
+  // The idle element is muted because it is not the sound source. That is
+  // structural and has nothing to do with the operator's mute.
+  expect(active.muted).toBe(false)
+  expect(idle.muted).toBe(true)
+
+  fireEvent.click(within(player).getByRole('button', { name: 'Mute' }))
+
+  await waitFor(() => expect(stageVideos()[0].muted).toBe(true))
+  expect(stageVideos()[1].muted).toBe(true)
+
+  fireEvent.click(within(player).getByRole('button', { name: 'Unmute' }))
+  await waitFor(() => expect(stageVideos()[0].muted).toBe(false))
+  // Still muted: it is still not the sound source.
+  expect(stageVideos()[1].muted).toBe(true)
+})
+
+test('the volume reaches every element', async () => {
+  const player = await openPlayer(makeBatch())
+
+  fireEvent.change(within(player).getByLabelText('Volume'), { target: { value: '0.4' } })
+
+  await waitFor(() => expect(stageVideos()[0].volume).toBeCloseTo(0.4))
+  expect(stageVideos()[1].volume).toBeCloseTo(0.4)
+})
+
+test('stepping a frame moves by the clip’s own frame rate, and stops playback', async () => {
+  const player = await openPlayer(makeBatch())
+  fireEvent.click(within(player).getByRole('button', { name: 'Play the rough cut' }))
+
+  fireEvent.click(within(player).getByRole('button', { name: 'Forward one frame' }))
+
+  // 30 fps, so one frame is 33ms. Stepping while playing is meaningless, so
+  // it stops first.
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '33'))
+  expect(within(player).getByRole('button', { name: 'Play the rough cut' })).toBeVisible()
+})
+
+test('jumping to a cut parks the playhead exactly on the join', async () => {
+  const player = await openPlayer(makeBatch())
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+
+  fireEvent.click(within(player).getByRole('button', { name: 'Next cut' }))
+
+  // The join is five seconds in, not a frame either side of it.
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '5000'))
+  expect(within(player).getByText('shot 2 of 2')).toBeVisible()
+
+  fireEvent.click(within(player).getByRole('button', { name: 'Previous cut' }))
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '0'))
+})
+
+test('looping a shot is the review range with its edges set, not a second loop', async () => {
+  const player = await openPlayer(makeBatch())
+
+  // Selecting the second shot on the timeline, then looping it.
+  // The timeline selects a shot on focus, which is how a keyboard reaches it.
+  fireEvent.focus(await screen.findByRole('button', { name: /second, shot 2 of 2/ }))
+  fireEvent.click(within(player).getByRole('button', { name: /This shot/ }))
+
+  // One mechanism: the range now holds the shot's edges and looping is on.
+  await waitFor(() => expect(within(player).getByText('00:05.0–00:08.0')).toBeVisible())
+  expect(within(player).getByRole('button', { name: /Loop/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  expect(scrub).toHaveAttribute('aria-valuenow', '5000')
+})
+
+test('a marked range loops back rather than running to the end', async () => {
+  const player = await openPlayer(makeBatch())
+
+  // Mark a range over the first two seconds.
+  fireEvent.keyDown(window, { key: '[' })
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '1600'))
+  fireEvent.keyDown(window, { key: ']' })
+  fireEvent.keyDown(window, { key: 'r' })
+
+  await waitFor(() =>
+    expect(within(player).getByRole('button', { name: /Loop/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    ),
+  )
+
+  fireEvent.click(within(player).getByRole('button', { name: 'Play the rough cut' }))
+  const [active] = stageVideos()
+  // Past the range's out-point, but nowhere near the shot's end.
+  tick(active, 2)
+
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '0'))
+  // Still playing: looping is not stopping.
+  expect(within(player).getByRole('button', { name: 'Pause the rough cut' })).toBeVisible()
+})
+
+test('the keyboard drives the player from anywhere on the page', async () => {
+  const player = await openPlayer(makeBatch())
+
+  fireEvent.keyDown(window, { key: ' ' })
+  await waitFor(() =>
+    expect(within(player).getByRole('button', { name: 'Pause the rough cut' })).toBeVisible(),
+  )
+
+  fireEvent.keyDown(window, { key: '3' })
+  await waitFor(() => expect(stageVideos()[0].playbackRate).toBe(1.5))
+
+  fireEvent.keyDown(window, { key: 'm' })
+  await waitFor(() => expect(within(player).getByRole('button', { name: 'Unmute' })).toBeVisible())
+
+  fireEvent.keyDown(window, { key: 'ArrowRight', shiftKey: true })
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '5000'))
+})
+
+test('typing a batch name is not a stream of shortcuts', async () => {
+  const player = await openPlayer(makeBatch())
+
+  fireEvent.click(await screen.findByRole('button', { name: /Rename/ }))
+  const field = await screen.findByLabelText('Batch name')
+
+  // Every one of these is a shortcut. None may fire while typing.
+  fireEvent.keyDown(field, { key: ' ' })
+  fireEvent.keyDown(field, { key: 'm' })
+  fireEvent.keyDown(field, { key: 'r' })
+  fireEvent.keyDown(field, { key: '2' })
+
+  expect(within(player).getByRole('button', { name: 'Play the rough cut' })).toBeVisible()
+  expect(within(player).getByRole('button', { name: 'Mute' })).toBeVisible()
+  expect(within(player).getByRole('button', { name: /Loop/ })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+  expect(stageVideos()[0].playbackRate).toBe(1)
+})
+
+test('the scrub bar owns the arrows while it has focus', async () => {
+  // Both the bar and the page keymap want the arrow keys. Pressing one must
+  // not scrub AND step a frame.
+  const player = await openPlayer(makeBatch())
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '800'))
+})
+
+test('trimming to the playhead is offered only for the shot it is inside', async () => {
+  const player = await openPlayer(makeBatch())
+
+  // Nothing selected: there is no shot to trim.
+  expect(within(player).getByRole('button', { name: 'In to playhead' })).toBeDisabled()
+  expect(within(player).getByText(/Select the shot the playhead is inside/)).toBeVisible()
+
+  // Selecting the SECOND shot while the playhead sits in the first is exactly
+  // the case that must stay refused — trimming it would make a cut nobody saw.
+  fireEvent.focus(await screen.findByRole('button', { name: /second, shot 2 of 2/ }))
+  await waitFor(() =>
+    expect(within(player).getByRole('button', { name: 'In to playhead' })).toBeDisabled(),
+  )
+
+  fireEvent.focus(await screen.findByRole('button', { name: /first, shot 1 of 2/ }))
+  await waitFor(() =>
+    expect(within(player).getByRole('button', { name: 'In to playhead' })).toBeEnabled(),
+  )
+})
+
+test('trimming to the playhead sends only the edge that moved', async () => {
+  const fetchMock = stubApi(makeBatch())
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  const player = await screen.findByRole('region', { name: 'Player' })
+
+  fireEvent.focus(await screen.findByRole('button', { name: /first, shot 1 of 2/ }))
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '800'))
+
+  fireEvent.click(within(player).getByRole('button', { name: 'In to playhead' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots/shot-1',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ trim_start_ms: 800 }),
+      }),
+    ),
+  )
+})
+
+test('trimming to the playhead will not leave a shot too short to see', async () => {
+  const fetchMock = stubApi(makeBatch())
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  const player = await screen.findByRole('region', { name: 'Player' })
+
+  fireEvent.focus(await screen.findByRole('button', { name: /first, shot 1 of 2/ }))
+  // At the very start of the shot, an out-point here would leave nothing.
+  fireEvent.click(within(player).getByRole('button', { name: 'Out to playhead' }))
+
+  await waitFor(() => expect(within(player).getByText('shot 1 of 2')).toBeVisible())
+  expect(fetchMock).not.toHaveBeenCalledWith(
+    '/api/batches/batch-1/shots/shot-1',
+    expect.objectContaining({ method: 'PATCH' }),
+  )
+})
