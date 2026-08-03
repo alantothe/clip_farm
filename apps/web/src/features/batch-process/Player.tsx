@@ -6,6 +6,8 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Crop,
+  Frame,
+  Layers,
   Maximize,
   Pause,
   Play,
@@ -16,6 +18,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react'
+import { api } from '../../api'
 import { formatDefinition } from '../../formats/registry'
 import { formatTime } from '../../lib/format'
 import { artifact } from '../../lib/project'
@@ -96,6 +99,7 @@ export function Player({
   canTrim?: boolean
 }) {
   const [view, setView] = useState<View>('format')
+  const [guides, setGuides] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
   const { placed, totalMs, current, next, covering, playing, slot, videos } = player
   const dead = !placed.length
@@ -131,6 +135,14 @@ export function Player({
   // it, so there is no slice to outline.
   const cropped = currentClip?.layout === 'smart_crop'
   const thumbnail = currentClip ? artifact(currentClip, 'thumbnail') : ''
+
+  // Whichever Clip is supplying the picture, and where in its own Source Video
+  // the playhead is sitting. During a Cutaway that is the Cutaway's Clip.
+  const pictureClip = covering?.clip ?? currentClip
+  const pictureMs = covering ? player.coverSourceMs ?? 0 : player.sourceMs
+  const subtitle = currentClip?.captions.find(
+    (segment) => player.sourceMs >= segment.start_ms && player.sourceMs <= segment.end_ms,
+  )
 
   return (
     <section className="player" aria-label="Player">
@@ -200,6 +212,61 @@ export function Player({
               width: `${keptWidthFraction(currentClip, format) * 100}%`,
             }}
           />
+        )}
+
+        {/*
+         * Overlays belong to whichever Clip is supplying the picture, which
+         * during a Cutaway is the Cutaway's — the export burns that Clip's
+         * Overlays in, with no guard against a covered span.
+         */}
+        {framed &&
+          pictureClip?.image_overlays
+            .filter((overlay) => pictureMs >= overlay.start_ms && pictureMs < overlay.end_ms)
+            .map((overlay) => (
+              <div
+                key={overlay.id}
+                className="player__overlay"
+                aria-hidden="true"
+                style={{
+                  left: `${overlay.center_x}%`,
+                  top: `${overlay.center_y}%`,
+                  width: `${overlay.width_percent}%`,
+                  transform: `translate(-50%, -50%) rotate(${overlay.rotation_deg}deg)`,
+                }}
+              >
+                <img src={api.mediaUrl(overlay.url)} alt="" style={{ opacity: overlay.opacity }} />
+              </div>
+            ))}
+
+        {/*
+         * Subtitles, and only where the export burns them.
+         *
+         * A covered span renders the Cutaway's picture with captions off, so
+         * nothing is burned in there at all — not the Cutaway's own, which
+         * transcribe audio nobody is hearing, and not the Base Shot's either
+         * (ADR 0005, `tasks.py`). Showing either would promise a subtitle the
+         * finished video does not have.
+         */}
+        {framed && !covering && currentClip?.captions_enabled && subtitle && (
+          <div
+            className={`caption-preview caption-preview--${currentClip.caption_style} caption-preview--position-${currentClip.caption_position}`}
+          >
+            {subtitle.text}
+          </div>
+        )}
+
+        {/* Where Instagram's own chrome will sit over the picture. */}
+        {framed && guides && <div className="safe-area" aria-hidden="true" />}
+
+        {covering && (
+          <div className="player__badge">
+            <span className="player__badge-mark">
+              <Layers size={11} /> Cutaway
+            </span>
+            <span className="player__badge-sound">
+              <Volume2 size={11} /> {current ? current.item.clip.title : 'the shot beneath'}
+            </span>
+          </div>
         )}
       </div>
 
@@ -330,6 +397,18 @@ export function Player({
           Loop
         </button>
 
+        <button
+          className={`chip ${guides ? 'is-active' : ''}`}
+          type="button"
+          onClick={() => setGuides(!guides)}
+          aria-pressed={guides}
+          disabled={!framed}
+          title="Where the app's own buttons will cover the picture"
+        >
+          <Frame size={13} />
+          Safe area
+        </button>
+
         <div className="player__views" role="group" aria-label="What the stage shows">
           <button
             type="button"
@@ -443,11 +522,29 @@ export function Player({
         )}
       </p>
 
-      <p className="player__caveat">
-        {framed
-          ? 'Rough cut — this plays the source videos, so framing and subtitles apply on export, not here.'
-          : 'The whole source frame. The outline is what the vertical crop keeps.'}
-      </p>
+      {/*
+       * The caveat appears only where it applies.
+       *
+       * Framing and Subtitles are now shown, so the blanket warning became
+       * untrue. What is still approximate is a smart crop: on export the crop
+       * follows faces frame by frame, and CSS can only hold the fallback
+       * centre. So it is said while such a Shot is on screen, and not
+       * otherwise — a warning shown always is a warning nobody reads.
+       */}
+      {framed && cropped && (
+        <p className="player__caveat">
+          Approximate — this shot's crop follows faces on export, so its framing
+          will shift.
+        </p>
+      )}
+      {!framed && (
+        <p className="player__caveat">
+          The whole source frame.{' '}
+          {cropped
+            ? 'The outline is what the vertical crop keeps.'
+            : 'This shot is fitted whole, so nothing is cropped away.'}
+        </p>
+      )}
     </section>
   )
 }

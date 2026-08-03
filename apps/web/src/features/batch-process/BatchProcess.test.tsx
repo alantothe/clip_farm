@@ -555,9 +555,10 @@ test('plays the sequence as a rough cut, and says that is what it is', async () 
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
 
   const preview = await screen.findByRole('region', { name: 'Player' })
-  // The previews are the landscape sources, so the panel must not imply
-  // otherwise — this is the whole reason the cheap preview was acceptable.
-  expect(within(preview).getByText(/framing and subtitles apply on export/)).toBeVisible()
+  // These clips are fitted whole, so the framing on the stage is what the
+  // export produces and there is nothing to warn about. The caveat is not
+  // wallpaper — it appears only where it is true (ADR 0007).
+  expect(within(preview).queryByText(/Approximate/)).not.toBeInTheDocument()
   expect(within(preview).getByText('first')).toBeVisible()
   expect(within(preview).getByText('shot 1 of 2')).toBeVisible()
   expect(within(preview).getByText('00:00.0 / 00:08.0')).toBeVisible()
