@@ -3435,6 +3435,16 @@ input[type='range']::-webkit-slider-thumb {
   background: var(--surface);
 }
 
+/* The marked Review Range: what loops, and what is outside it. */
+.scrub__range {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  border: 1px solid var(--dark);
+  border-radius: 2px;
+  background: rgba(223, 243, 79, 0.35);
+}
+
 .scrub__head {
   position: absolute;
   top: 50%;
@@ -3444,6 +3454,7 @@ input[type='range']::-webkit-slider-thumb {
   transform: translateY(-50%);
   border-radius: 1px;
   background: var(--coral);
+  z-index: 2;
 }
 
 /* --- The Player's controls --------------------------------------------- */
@@ -3459,6 +3470,75 @@ input[type='range']::-webkit-slider-thumb {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
+
+.icon-button--play { color: var(--dark); }
+.icon-button.is-off { color: var(--coral); }
+
+.player__volume {
+  width: 62px;
+  accent-color: var(--dark);
+}
+
+/* One row per group of tools, so the transport stays legible at this width. */
+.player__tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.player__tools-label {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.player__rates {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.player__rates button {
+  padding: 3px 7px;
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.player__rates button + button { border-left: 1px solid var(--line); }
+.player__rates button.is-active { background: var(--dark); color: var(--acid); }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chip:hover:not(:disabled) { border-color: #9aa39c; color: #353c38; }
+.chip.is-active { background: var(--dark); border-color: var(--dark); color: var(--acid); }
+.chip:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.player__range-readout {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.player__hint { color: var(--muted); font-size: 10.5px; }
 
 .player__views {
   display: flex;

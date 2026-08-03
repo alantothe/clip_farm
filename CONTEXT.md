@@ -38,6 +38,10 @@ _Avoid_: track, storyboard, editor
 The screen that plays a Sequence as one video, with its transport and guides. It shares the Timeline's playhead rather than keeping one of its own. UI, not a model — as Timeline is.
 _Avoid_: preview, monitor, viewer, rough cut
 
+**Review Range**:
+A marked span of a Sequence to play or loop while editing. It changes nothing and renders as nothing — it is not a Trim. There is one per Player; looping a single Shot sets its edges to that Shot's.
+_Avoid_: in/out, selection, trim, loop points
+
 **Origin**:
 Where a Clip came from — an X post, or a file uploaded from disk. Some Origins have a URL; uploads do not.
 _Avoid_: source, source post, provenance

@@ -70,7 +70,52 @@ export interface SequencePlayer {
   onTimeUpdate: () => void
   advance: () => void
   restart: () => void
+
+  // --- Tools -------------------------------------------------------------
+
+  rate: number
+  setRate: (rate: number) => void
+  volume: number
+  setVolume: (volume: number) => void
+  /** The operator's own mute, kept apart from the structural `muted` below. */
+  muted: boolean
+  setMuted: (muted: boolean) => void
+  /** The marked Review Range, or null when the whole Sequence is in play. */
+  range: ReviewRange | null
+  looping: boolean
+  setLooping: (looping: boolean) => void
+  /** Mark one edge of the Review Range at the playhead. */
+  markIn: () => void
+  markOut: () => void
+  clearRange: () => void
+  /** Set the Review Range to the selected Shot's span — "loop this Shot". */
+  rangeToSelection: () => void
+  /** True when there is a selected Shot to make a Review Range out of. */
+  canRangeToSelection: boolean
+  /** Move the playhead, clamped to the Sequence. */
+  seek: (ms: number) => void
+  /** Move by a number of milliseconds, forwards or back. */
+  jumpBy: (ms: number) => void
+  /** One frame of the Shot under the playhead, which knows its own fps. */
+  stepFrame: (direction: 1 | -1) => void
+  /** To the next or previous join, so the playhead parks exactly on a cut. */
+  jumpCut: (direction: 1 | -1) => void
 }
+
+/**
+ * A marked span of a Sequence, to play or loop while editing.
+ *
+ * It changes nothing and renders as nothing — it is not a Trim. There is one
+ * of these and one loop toggle rather than separate Sequence, Shot and range
+ * loops: "loop this Shot" is the same mechanism with its edges set to a Shot's.
+ */
+export interface ReviewRange {
+  inMs: number
+  outMs: number
+}
+
+/** Nothing reports fps for every Clip, and 30 is what the renderer assumes. */
+const FALLBACK_FPS = 30
 
 /**
  * Playing a Sequence as one video.
@@ -94,15 +139,23 @@ export function useSequencePlayer({
   clips,
   playheadMs,
   onScrub,
+  selectedShotId = null,
 }: {
   shots: Shot[]
   cutaways: Cutaway[]
   clips: Project[]
   playheadMs: number
   onScrub: (ms: number) => void
+  /** Which Shot "loop this Shot" should take its edges from. */
+  selectedShotId?: string | null
 }): SequencePlayer {
   const [playing, setPlaying] = useState(false)
   const [slot, setSlot] = useState(0)
+  const [rate, setRate] = useState(1)
+  const [volume, setVolume] = useState(1)
+  const [muted, setMuted] = useState(false)
+  const [range, setRange] = useState<ReviewRange | null>(null)
+  const [looping, setLooping] = useState(false)
   const videos: [RefObject<HTMLVideoElement>, RefObject<HTMLVideoElement>] = [
     useRef<HTMLVideoElement>(null),
     useRef<HTMLVideoElement>(null),
@@ -181,10 +234,33 @@ export function useSequencePlayer({
   // playhead chasing Shots that have moved.
   useEffect(() => setPlaying(false), [shots.length])
 
-  /** Move to the next Shot, or stop if this was the last. */
+  // Rate and volume belong to every element, not just the visible one: the
+  // idle element becomes the visible one at the next join, and a rate set on
+  // only one of them would reset itself at every cut.
+  useEffect(() => {
+    for (const ref of [videos[0], videos[1], coverRef]) {
+      const video = ref.current
+      if (!video) continue
+      video.playbackRate = rate
+      video.volume = volume
+    }
+  }, [rate, volume, slot, current?.item.shot.id, covering?.cutaway.id])
+
+  // A Review Range that outlives the Shots it was marked against would loop
+  // over a Sequence that no longer has those frames in it.
+  useEffect(() => setRange(null), [shots.length])
+
+  const seek = (ms: number) => onScrub(Math.min(Math.max(0, Math.round(ms)), totalMs))
+
+  /** Move to the next Shot, or stop — or go round again, if looping. */
   function advance() {
     if (!current) return
     if (!next) {
+      // Looping without a Review Range means the whole Sequence loops.
+      if (looping && !range) {
+        onScrub(0)
+        return
+      }
       setPlaying(false)
       onScrub(totalMs)
       return
@@ -199,18 +275,57 @@ export function useSequencePlayer({
     if (!video || !current) return
     const { start, end } = shotTrim(current.item.shot, current.item.clip)
     const atMs = video.currentTime * 1000
+    const onSequenceMs = current.item.startMs + Math.max(0, atMs - start)
+
+    // A Review Range is checked first: its out-point can fall mid-Shot, and
+    // running off the end of it must not wait for that Shot to finish.
+    if (looping && range && onSequenceMs >= range.outMs) {
+      onScrub(range.inMs)
+      return
+    }
 
     if (shotIsOver(atMs, end, Number.isFinite(video.duration) ? video.duration * 1000 : null)) {
       advance()
       return
     }
-    onScrub(current.item.startMs + Math.max(0, atMs - start))
+    onScrub(onSequenceMs)
   }
 
   function restart() {
     setPlaying(false)
     onScrub(0)
   }
+
+  /**
+   * One frame of whichever Clip is under the playhead.
+   *
+   * Stepping while playing is meaningless — the media's own clock would undo
+   * it on the next tick — so this stops first.
+   */
+  function stepFrame(direction: 1 | -1) {
+    setPlaying(false)
+    const fps = current?.item.clip.fps || FALLBACK_FPS
+    seek(playheadMs + (direction * 1000) / fps)
+  }
+
+  /** To the join before or after the playhead, so it parks exactly on a cut. */
+  function jumpCut(direction: 1 | -1) {
+    if (!placed.length) return
+    if (direction === 1) {
+      const ahead = placed.find((item) => item.startMs > playheadMs + 1)
+      seek(ahead ? ahead.startMs : totalMs)
+      return
+    }
+    // Back to this Shot's own start unless already sitting on it, which is how
+    // every editor behaves: the first press rewinds the Shot, the next leaves.
+    const starts = placed.map((item) => item.startMs)
+    const behind = starts.filter((start) => start < playheadMs - 1).pop()
+    seek(behind ?? 0)
+  }
+
+  const selected = selectedShotId
+    ? placed.find((item) => item.shot.id === selectedShotId) ?? null
+    : null
 
   return {
     playheadMs,
@@ -231,5 +346,40 @@ export function useSequencePlayer({
     onTimeUpdate,
     advance,
     restart,
+
+    rate,
+    setRate,
+    volume,
+    setVolume,
+    muted,
+    setMuted,
+    range,
+    looping,
+    setLooping,
+    seek,
+    jumpBy: (ms: number) => seek(playheadMs + ms),
+    stepFrame,
+    jumpCut,
+    // Marking one edge keeps the other, and never lets them cross.
+    markIn: () =>
+      setRange((value) => ({
+        inMs: Math.round(playheadMs),
+        outMs: Math.max(Math.round(playheadMs) + 1, value?.outMs ?? totalMs),
+      })),
+    markOut: () =>
+      setRange((value) => ({
+        inMs: Math.min(value?.inMs ?? 0, Math.round(playheadMs) - 1),
+        outMs: Math.round(playheadMs),
+      })),
+    clearRange: () => setRange(null),
+    // "Loop this Shot" is not a second kind of loop: it sets the one Review
+    // Range to the Shot's edges and turns looping on.
+    rangeToSelection: () => {
+      if (!selected) return
+      setRange({ inMs: selected.startMs, outMs: selected.startMs + selected.spanMs })
+      setLooping(true)
+      seek(selected.startMs)
+    },
+    canRangeToSelection: selected !== null,
   }
 }

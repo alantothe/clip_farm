@@ -66,7 +66,7 @@ export function sourceTimeMs(item: Placed, intoShotMs: number): number {
   return shotTrim(item.shot, item.clip).start + intoShotMs
 }
 
-const MIN_SPAN_MS = 400
+export const MIN_SPAN_MS = 400
 const SNAP_MS = 100
 const DRAG_THRESHOLD_PX = 3
 const ZOOM_LIMITS = { min: 4, max: 200 }
