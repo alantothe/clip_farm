@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.routers import _helpers, batches as batches_router, projects as projects_router
 from app.database import Base
 from app.models import Batch, Project, Shot
-from app.schemas import BatchCreate, ShotCreate, ShotMove
+from app.schemas import BatchCreate, ShotCreate, ShotUpdate
 
 
 def make_session(tmp_path) -> Session:
@@ -82,20 +82,6 @@ def test_uploading_a_clip_does_not_put_it_in_the_sequence(tmp_path, monkeypatch)
     session.close()
 
 
-def test_a_clip_cannot_be_placed_twice(tmp_path, monkeypatch) -> None:
-    session = make_session(tmp_path)
-    use_projects_dir(monkeypatch, tmp_path)
-    batch_id, clips = make_batch_with_clips(session, 1)
-    batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
-
-    with pytest.raises(HTTPException) as exc_info:
-        batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
-
-    assert exc_info.value.status_code == 409
-    assert len(session.scalars(select(Shot)).all()) == 1
-    session.close()
-
-
 def test_a_clip_from_another_batch_cannot_be_placed(tmp_path, monkeypatch) -> None:
     session = make_session(tmp_path)
     use_projects_dir(monkeypatch, tmp_path)
@@ -119,7 +105,7 @@ def test_moving_a_shot_slides_the_others_and_closes_gaps(tmp_path, monkeypatch) 
         batches_router.add_shot(batch_id, ShotCreate(clip_id=clip_id), session)
     last = session.scalar(select(Shot).where(Shot.project_id == clips[3]))
 
-    batch = batches_router.move_shot(batch_id, last.id, ShotMove(position=0), session)
+    batch = batches_router.update_shot(batch_id, last.id, ShotUpdate(position=0), session)
 
     assert order(batch) == [clips[3], clips[0], clips[1], clips[2]]
     assert [shot.position for shot in batch.shots] == [0, 1, 2, 3]
@@ -135,7 +121,7 @@ def test_moving_past_the_end_lands_at_the_end(tmp_path, monkeypatch) -> None:
         batches_router.add_shot(batch_id, ShotCreate(clip_id=clip_id), session)
     first = session.scalar(select(Shot).where(Shot.project_id == clips[0]))
 
-    batch = batches_router.move_shot(batch_id, first.id, ShotMove(position=99), session)
+    batch = batches_router.update_shot(batch_id, first.id, ShotUpdate(position=99), session)
 
     assert order(batch) == [clips[1], clips[2], clips[0]]
     session.close()
@@ -210,26 +196,21 @@ def test_adding_after_a_deleted_clip_does_not_reuse_a_position(tmp_path, monkeyp
     session.close()
 
 
-def test_a_racing_duplicate_add_is_refused_not_a_crash(tmp_path, monkeypatch) -> None:
-    """The `clip.shot` check is not atomic with the insert.
+def test_a_clip_can_be_placed_more_than_once(tmp_path, monkeypatch) -> None:
+    """`uq_shots_project` used to make this a 409. Per-Shot trim is the point.
 
-    A double-submitted add races past it, and the unique constraint is what
-    actually stops the second one. Without translating that, the loser of the
-    race gets a 500 instead of the 409 the check would have given.
+    The same source at two different in/out points is an ordinary edit, so a
+    second placement is a second Shot rather than a conflict (ADR 0004).
     """
     session = make_session(tmp_path)
     use_projects_dir(monkeypatch, tmp_path)
     batch_id, clips = make_batch_with_clips(session, 1)
+
     batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
-    # Stand in for the racing request: the guard sees no Shot, the insert does.
-    monkeypatch.setattr(Project, "shot", property(lambda self: None))
+    batch = batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
 
-    with pytest.raises(HTTPException) as exc_info:
-        batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
-
-    assert exc_info.value.status_code == 409
-    session.rollback()
-    assert len(session.scalars(select(Shot)).all()) == 1
+    assert order(batch) == [clips[0], clips[0]]
+    assert [shot.position for shot in batch.shots] == [0, 1]
     session.close()
 
 
@@ -264,4 +245,143 @@ def test_the_batch_list_counts_placed_shots(tmp_path, monkeypatch) -> None:
 
     assert listed[0].clip_count == 3
     assert listed[0].shot_count == 1
+    session.close()
+
+
+def test_a_shot_follows_its_clips_trim_until_it_is_trimmed(tmp_path, monkeypatch) -> None:
+    """Null is the Shot following its Clip, not an absent value."""
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+    batch_id, clips = make_batch_with_clips(session, 1)
+    clip = session.get(Project, clips[0])
+    clip.trim_start_ms = 1_000
+    clip.trim_end_ms = 5_000
+    session.commit()
+    batch = batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
+    shot = session.get(Shot, batch.shots[0].id)
+
+    assert shot.span() == (1_000, 5_000)
+
+    # The Clip moves, and an un-overridden Shot moves with it.
+    clip.trim_start_ms = 2_000
+    session.commit()
+    assert shot.span() == (2_000, 5_000)
+
+
+def test_trimming_a_shot_leaves_its_clip_alone(tmp_path, monkeypatch) -> None:
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+    batch_id, clips = make_batch_with_clips(session, 1)
+    clip = session.get(Project, clips[0])
+    clip.trim_start_ms = 0
+    clip.trim_end_ms = 9_000
+    session.commit()
+    added = batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
+
+    batches_router.update_shot(
+        batch_id, added.shots[0].id, ShotUpdate(trim_start_ms=2_000, trim_end_ms=4_000), session
+    )
+
+    shot = session.get(Shot, added.shots[0].id)
+    assert shot.span() == (2_000, 4_000)
+    assert (clip.trim_start_ms, clip.trim_end_ms) == (0, 9_000)
+    # The Clip moving no longer drags an overridden Shot with it.
+    clip.trim_start_ms = 3_000
+    session.commit()
+    assert shot.span() == (2_000, 4_000)
+    session.close()
+
+
+def test_half_a_trim_override_falls_back_for_the_other_half(tmp_path, monkeypatch) -> None:
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+    batch_id, clips = make_batch_with_clips(session, 1)
+    clip = session.get(Project, clips[0])
+    clip.trim_start_ms = 500
+    clip.trim_end_ms = 8_000
+    session.commit()
+    added = batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
+
+    batches_router.update_shot(batch_id, added.shots[0].id, ShotUpdate(trim_end_ms=6_000), session)
+
+    assert session.get(Shot, added.shots[0].id).span() == (500, 6_000)
+    session.close()
+
+
+def test_a_null_trim_resets_the_shot_to_its_clip(tmp_path, monkeypatch) -> None:
+    """Absent and null mean different things, and only null resets."""
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+    batch_id, clips = make_batch_with_clips(session, 1)
+    clip = session.get(Project, clips[0])
+    clip.trim_start_ms = 100
+    clip.trim_end_ms = 7_000
+    session.commit()
+    added = batches_router.add_shot(
+        batch_id, ShotCreate(clip_id=clips[0], trim_start_ms=1_000, trim_end_ms=2_000), session
+    )
+    shot_id = added.shots[0].id
+
+    # Moving it says nothing about its trim, so the override survives.
+    batches_router.update_shot(batch_id, shot_id, ShotUpdate(position=0), session)
+    assert session.get(Shot, shot_id).span() == (1_000, 2_000)
+
+    batches_router.update_shot(
+        batch_id, shot_id, ShotUpdate(trim_start_ms=None, trim_end_ms=None), session
+    )
+
+    shot = session.get(Shot, shot_id)
+    assert (shot.trim_start_ms, shot.trim_end_ms) == (None, None)
+    assert shot.span() == (100, 7_000)
+    session.close()
+
+
+def test_a_shot_that_ends_before_it_starts_is_refused(tmp_path, monkeypatch) -> None:
+    """Caught here, not at export after every other Shot has rendered."""
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+    batch_id, clips = make_batch_with_clips(session, 1)
+    added = batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        batches_router.update_shot(
+            batch_id, added.shots[0].id, ShotUpdate(trim_start_ms=5_000, trim_end_ms=1_000), session
+        )
+
+    assert exc_info.value.status_code == 422
+    session.close()
+
+
+def test_a_shot_can_be_placed_at_a_position(tmp_path, monkeypatch) -> None:
+    """Undoing a removal puts the Shot back where it was, with its trim."""
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+    batch_id, clips = make_batch_with_clips(session, 3)
+    for clip_id in clips[:2]:
+        batches_router.add_shot(batch_id, ShotCreate(clip_id=clip_id), session)
+
+    batch = batches_router.add_shot(
+        batch_id,
+        ShotCreate(clip_id=clips[2], position=0, trim_start_ms=250, trim_end_ms=1_250),
+        session,
+    )
+
+    assert order(batch) == [clips[2], clips[0], clips[1]]
+    assert [shot.position for shot in batch.shots] == [0, 1, 2]
+    restored = next(shot for shot in batch.shots if shot.clip_id == clips[2])
+    assert (restored.trim_start_ms, restored.trim_end_ms) == (250, 1_250)
+    session.close()
+
+
+def test_placing_past_the_end_lands_at_the_end(tmp_path, monkeypatch) -> None:
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+    batch_id, clips = make_batch_with_clips(session, 2)
+    batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
+
+    batch = batches_router.add_shot(
+        batch_id, ShotCreate(clip_id=clips[1], position=99), session
+    )
+
+    assert order(batch) == [clips[0], clips[1]]
     session.close()

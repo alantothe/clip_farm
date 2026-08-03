@@ -326,3 +326,80 @@ def test_a_batch_name_becomes_a_safe_download_filename() -> None:
     assert batches_router._download_name("Monday pulls") == "Monday-pulls"
     assert batches_router._download_name("../../etc/passwd") == "etc-passwd"
     assert batches_router._download_name("///") == "clip-farm-sequence"
+
+
+def test_the_worker_renders_each_shots_own_span(tmp_path, monkeypatch) -> None:
+    """A Shot's Trim is what reaches render_vertical, not always its Clip's.
+
+    This is the seam ADR 0004 moves: the same Clip appears twice, once
+    following its Clip's Trim and once trimmed on the Timeline.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app import tasks
+    from app.models import Artifact, Shot
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'worker.db'}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"not really a video")
+    with factory() as session:
+        batch = Batch(name="Monday")
+        session.add(batch)
+        session.flush()
+        clip = Project(
+            batch_id=batch.id,
+            origin_kind="upload",
+            title="Clip",
+            status="ready",
+            trim_start_ms=1_000,
+            trim_end_ms=9_000,
+        )
+        session.add(clip)
+        session.flush()
+        session.add(
+            Artifact(
+                project_id=clip.id, kind="source", path=str(source), mime_type="video/mp4"
+            )
+        )
+        # Same Clip twice: the second one trimmed on the Timeline.
+        session.add(Shot(batch_id=batch.id, project_id=clip.id, position=0))
+        session.add(
+            Shot(
+                batch_id=batch.id,
+                project_id=clip.id,
+                position=1,
+                trim_start_ms=3_000,
+                trim_end_ms=4_500,
+            )
+        )
+        sequence_render = SequenceRender(batch_id=batch.id, shot_count=2)
+        session.add(sequence_render)
+        session.commit()
+        batch_id, render_id = batch.id, sequence_render.id
+
+    spans: list[tuple[int, int]] = []
+
+    def fake_render_vertical(**kwargs):
+        spans.append((kwargs["start_ms"], kwargs["end_ms"]))
+        Path(kwargs["output"]).write_bytes(b"rendered")
+
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+    monkeypatch.setattr(tasks, "settings", SimpleNamespace(batches_dir=tmp_path / "batches"))
+    monkeypatch.setattr(tasks, "render_vertical", fake_render_vertical)
+    monkeypatch.setattr(
+        tasks, "join_shots", lambda **kwargs: Path(kwargs["output"]).write_bytes(b"joined")
+    )
+    monkeypatch.setattr(
+        tasks, "inspect_media", lambda _path: {"width": 1080, "height": 1920, "duration_ms": 9_500}
+    )
+    monkeypatch.setattr(tasks, "sha256_file", lambda _path: "checksum")
+
+    # `render_sequence_task` is a huey task, so calling it would only enqueue.
+    tasks.render_sequence_task.call_local(batch_id, render_id)
+
+    assert spans == [(1_000, 9_000), (3_000, 4_500)]
+    with factory() as session:
+        assert session.get(SequenceRender, render_id).status == "complete"

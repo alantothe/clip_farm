@@ -34,10 +34,69 @@ def get_db() -> Generator[Session, None, None]:
         yield session
 
 
+def _rebuild_shots_without_unique_clip() -> None:
+    """Drop `uq_shots_project` so one Clip can have several Shots (ADR 0004).
+
+    Removing a UNIQUE constraint in SQLite means rebuilding the table, and
+    nothing runs Alembic here — `init_db`'s additive ALTER list is the only
+    upgrade path a real database sees. ADR 0002 declined this operation on
+    `projects` and ADR 0003 on `renders`, both times because inbound foreign
+    keys would have been left dangling mid-rebuild on startup. Nothing declares
+    a foreign key to `shots.id`, so that risk is absent here.
+
+    A database created after this change never has the old shape, so the DDL
+    check below is what stops this running twice.
+    """
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        ddl = connection.exec_driver_sql(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='shots'"
+        ).scalar()
+        if not ddl or "uq_shots_project" not in ddl:
+            return
+
+        # SQLite's documented table-rebuild recipe. `foreign_keys` cannot be
+        # changed inside a transaction, which is why this connection is not in
+        # one until BEGIN.
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        connection.exec_driver_sql("BEGIN")
+        try:
+            connection.exec_driver_sql(
+                """
+                CREATE TABLE shots__new (
+                    id VARCHAR NOT NULL,
+                    batch_id VARCHAR NOT NULL,
+                    project_id VARCHAR NOT NULL,
+                    position INTEGER NOT NULL,
+                    trim_start_ms INTEGER,
+                    trim_end_ms INTEGER,
+                    created_at DATETIME NOT NULL,
+                    PRIMARY KEY (id),
+                    FOREIGN KEY(batch_id) REFERENCES batches (id) ON DELETE CASCADE,
+                    FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE
+                )
+                """
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO shots__new (id, batch_id, project_id, position, created_at) "
+                "SELECT id, batch_id, project_id, position, created_at FROM shots"
+            )
+            connection.exec_driver_sql("DROP TABLE shots")
+            connection.exec_driver_sql("ALTER TABLE shots__new RENAME TO shots")
+            connection.exec_driver_sql("CREATE INDEX ix_shots_batch_id ON shots (batch_id)")
+            connection.exec_driver_sql("CREATE INDEX ix_shots_project_id ON shots (project_id)")
+            connection.exec_driver_sql("COMMIT")
+        except Exception:
+            connection.exec_driver_sql("ROLLBACK")
+            raise
+        finally:
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+
 def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _rebuild_shots_without_unique_clip()
     # This project historically bootstraps SQLite with create_all rather than
     # running Alembic on startup. Keep existing local/volume databases usable
     # when additive fields are introduced.
@@ -66,6 +125,13 @@ def init_db() -> None:
             "REFERENCES batches(id) ON DELETE SET NULL"
         ),
     }
+    # A database whose `shots` was rebuilt above already has these; one created
+    # between the Sequence shipping and ADR 0004 landing does not.
+    shot_columns = {column["name"] for column in inspect(engine).get_columns("shots")}
+    shot_additions = {
+        "trim_start_ms": "ALTER TABLE shots ADD COLUMN trim_start_ms INTEGER",
+        "trim_end_ms": "ALTER TABLE shots ADD COLUMN trim_end_ms INTEGER",
+    }
     render_columns = {column["name"] for column in inspect(engine).get_columns("renders")}
     render_additions = {
         "caption_position": (
@@ -78,6 +144,9 @@ def init_db() -> None:
                 connection.exec_driver_sql(statement)
         for name, statement in project_additions.items():
             if name not in project_columns:
+                connection.exec_driver_sql(statement)
+        for name, statement in shot_additions.items():
+            if name not in shot_columns:
                 connection.exec_driver_sql(statement)
         for name, statement in render_additions.items():
             if name not in render_columns:

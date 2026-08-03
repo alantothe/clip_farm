@@ -384,8 +384,10 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
     """Render every Shot in a Batch's Sequence, then join them into one video.
 
     Each Shot renders through the same `render_vertical` a lone Clip uses, with
-    that Clip's own trim, layout, Subtitles, and Overlays — a Batch holds no
-    edit settings of its own (ADR 0002). Joining is where the Sequence exists.
+    that Clip's layout, Subtitles, and Overlays — a Batch holds no edit settings
+    of its own (ADR 0002). The trim is the exception: a Shot can carry its own,
+    which is what lets one Clip appear twice at different in/out points (ADR
+    0004). Joining is where the Sequence exists.
     """
     with SessionLocal() as session:
         batch = session.get(Batch, batch_id)
@@ -409,8 +411,10 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
             # Shots are the bulk of the work; the join is comparatively quick.
             for index, shot in enumerate(shots):
                 clip = shot.clip
-                end_ms = clip.trim_end_ms or clip.duration_ms
-                if end_ms is None or end_ms <= clip.trim_start_ms:
+                # The Shot's own Trim when it has one, else its Clip's — one
+                # Clip can appear twice at different in/out points (ADR 0004).
+                start_ms, end_ms = shot.span()
+                if end_ms is None or end_ms <= start_ms:
                     raise RuntimeError(f"“{clip.title}” has no usable trim range")
                 _update_sequence(
                     sequence_render,
@@ -425,7 +429,7 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
                     output=shot_output,
                     temp_dir=render_dir,
                     layout=clip.layout,
-                    start_ms=clip.trim_start_ms,
+                    start_ms=start_ms,
                     end_ms=end_ms,
                     crop_center_x=clip.crop_center_x,
                     caption_segments=clip.captions,

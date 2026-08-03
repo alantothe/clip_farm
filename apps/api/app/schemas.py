@@ -229,11 +229,29 @@ class ProjectOut(BaseModel):
 
 
 class ShotCreate(BaseModel):
+    """Place a Clip in the Sequence.
+
+    `position` and the trim override are here so undoing a removal can put a
+    Shot back exactly as it was, rather than appending a fresh one.
+    """
+
     clip_id: str
+    position: int | None = Field(default=None, ge=0)
+    trim_start_ms: int | None = Field(default=None, ge=0)
+    trim_end_ms: int | None = Field(default=None, ge=0)
 
 
-class ShotMove(BaseModel):
-    position: int = Field(ge=0)
+class ShotUpdate(BaseModel):
+    """Move a Shot, trim it, or both.
+
+    Every field is optional, and a null trim is meaningful — it resets the Shot
+    to following its Clip. Absent and null are told apart by `model_fields_set`,
+    so callers must omit what they do not mean to change.
+    """
+
+    position: int | None = Field(default=None, ge=0)
+    trim_start_ms: int | None = Field(default=None, ge=0)
+    trim_end_ms: int | None = Field(default=None, ge=0)
 
 
 class ShotOut(BaseModel):
@@ -246,6 +264,10 @@ class ShotOut(BaseModel):
     # the API boundary speaks the glossary.
     clip_id: str = Field(validation_alias="project_id")
     position: int
+    # Null means this Shot follows its Clip's Trim; the web draws the
+    # difference, so it needs the override rather than only the result.
+    trim_start_ms: int | None = None
+    trim_end_ms: int | None = None
 
 
 class SequenceRenderOut(BaseModel):
