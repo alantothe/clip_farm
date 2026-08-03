@@ -13,9 +13,10 @@ import { ClipDropZone } from './ClipDropZone'
 import { ClipGrid } from './ClipGrid'
 import { ExportPanel } from './ExportPanel'
 import { NewBatchDialog } from './NewBatchDialog'
-import { SequencePreview } from './SequencePreview'
+import { Player } from './Player'
 import { ShotInspector } from './ShotInspector'
 import { Timeline, sequenceDurationMs } from './Timeline'
+import { useSequencePlayer } from './useSequencePlayer'
 import type { Batch, BatchSummary, Cutaway, Format, Project, Shot, ShotTrim } from '../../types'
 
 const BATCHES_KEY = ['batches'] as const
@@ -197,6 +198,15 @@ export function BatchProcessPage() {
   const clips = batch?.clips ?? []
   const shots = batch?.shots ?? []
   const cutaways = batch?.cutaways ?? []
+  // The playhead is shared: the Player and the Timeline both drive it, so the
+  // hook lives here rather than inside either of them.
+  const player = useSequencePlayer({
+    shots,
+    cutaways,
+    clips,
+    playheadMs,
+    onScrub: setPlayheadMs,
+  })
   // A Clip can be placed more than once, so this counts rather than flags.
   const placedCounts = shots.reduce(
     (counts, shot) => counts.set(shot.clip_id, (counts.get(shot.clip_id) ?? 0) + 1),
@@ -442,13 +452,7 @@ export function BatchProcessPage() {
 
           {clips.length > 0 ? (
             <>
-              <SequencePreview
-                shots={shots}
-                cutaways={cutaways}
-                clips={clips}
-                playheadMs={playheadMs}
-                onScrub={setPlayheadMs}
-              />
+              <Player player={player} />
               <Timeline
                 shots={shots}
                 cutaways={cutaways}

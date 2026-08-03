@@ -554,7 +554,7 @@ test('plays the sequence as a rough cut, and says that is what it is', async () 
 
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
 
-  const preview = await screen.findByRole('region', { name: 'Rough cut' })
+  const preview = await screen.findByRole('region', { name: 'Player' })
   // The previews are the landscape sources, so the panel must not imply
   // otherwise — this is the whole reason the cheap preview was acceptable.
   expect(within(preview).getByText(/framing and subtitles apply on export/)).toBeVisible()
@@ -569,7 +569,7 @@ test('the transport is dead until something is placed', async () => {
 
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
 
-  const preview = await screen.findByRole('region', { name: 'Rough cut' })
+  const preview = await screen.findByRole('region', { name: 'Player' })
   expect(within(preview).getByRole('button', { name: 'Play the rough cut' })).toBeDisabled()
   expect(within(preview).getByText('Nothing placed yet.')).toBeVisible()
 })
@@ -656,7 +656,7 @@ test('the rough cut says a cutaway is playing over the sound beneath it', async 
 
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
 
-  const preview = await screen.findByRole('region', { name: 'Rough cut' })
+  const preview = await screen.findByRole('region', { name: 'Player' })
   // The cover supplies the picture; the shot underneath keeps the sound, which
   // is the one thing a cutaway changes and the preview must not misreport.
   expect(within(preview).getByText('second')).toBeVisible()

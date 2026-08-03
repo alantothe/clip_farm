@@ -8,7 +8,7 @@
  * a gesture ends.
  */
 import { applySequenceEdit } from './BatchProcessPage'
-import { shotIsOver } from './SequencePreview'
+import { shotIsOver } from './useSequencePlayer'
 import {
   anchorAt,
   insertionIndex,
@@ -276,9 +276,16 @@ describe('when a shot is over', () => {
 
   test('a preview shorter than the clip still ends the shot', () => {
     // The regression: trim_end_ms is the source's duration, but the preview is
-    // a re-encode two frames shorter, so currentTime never reaches 5000 and the
+    // a re-encode shorter than it, so currentTime never reaches 5000 and the
     // sequence stalled after one shot.
-    expect(shotIsOver(4_966, 5_000, 4_966)).toBe(true)
+    //
+    // 4_966 would pass on the trim alone — it is inside the 60ms tolerance of
+    // 5_000 — so it proves nothing about the media duration. These stop far
+    // enough short that only the media's own end can finish the shot.
+    expect(shotIsOver(4_800, 5_000, 4_800)).toBe(true)
+    expect(shotIsOver(4_745, 5_000, 4_800)).toBe(true)
+    // Still short of both: the shot is not over.
+    expect(shotIsOver(4_700, 5_000, 4_800)).toBe(false)
   })
 
   test('a trimmed shot ends at its trim, not at the media', () => {
