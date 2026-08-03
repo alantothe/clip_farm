@@ -1,6 +1,11 @@
 export type Layout = 'smart_crop' | 'fit_background'
 export type CaptionStyle = 'bold' | 'classic' | 'minimal'
 export type CaptionPosition = 'top' | 'middle' | 'bottom'
+/**
+ * The shape of the finished video. The stored value is the shape alone —
+ * Instagram is a Platform, not part of a Format (ADR 0006).
+ */
+export type Format = 'vertical'
 
 export interface Artifact {
   id: string
@@ -162,6 +167,8 @@ export interface SequenceRender {
 export interface Batch {
   id: string
   name: string
+  /** Fixed when the Batch is created and never edited afterwards (ADR 0006). */
+  format: Format
   created_at: string
   updated_at: string
   clips: Project[]
@@ -176,6 +183,7 @@ export interface Batch {
 export interface BatchSummary {
   id: string
   name: string
+  format: Format
   created_at: string
   updated_at: string
   clip_count: number

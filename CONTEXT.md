@@ -11,7 +11,7 @@ One source video together with the edit decisions applied to it. The unit you op
 _Avoid_: project, video, item
 
 **Batch**:
-A named set of Clips imported and worked on together, which renders as one video through its Sequence. A Clip belongs to at most one Batch. A Batch holds no edit settings of its own — each Clip in it is trimmed, cropped, and subtitled on its own. Several Batches run at once; that is the point of them.
+A named set of Clips imported and worked on together, which renders as one video through its Sequence. A Clip belongs to at most one Batch. A Batch holds no edit settings of its own — each Clip in it is trimmed, cropped, and subtitled on its own — but it does hold the Format its Sequence renders to, chosen when the Batch is made and fixed thereafter. Several Batches run at once; that is the point of them.
 _Avoid_: project, group, folder, run
 
 **Sequence**:
@@ -47,8 +47,8 @@ The unmodified video file a Clip is built from, exactly as downloaded or uploade
 _Avoid_: source, original, raw, master
 
 **Format**:
-The shape of the finished video. Vertical today.
-_Avoid_: mode, aspect, output type
+The shape of the finished video. Vertical today. It belongs to a Batch, is picked when the Batch is created, and never changes — a Sequence joins its Shots into one file, so the shape has to hold for all of them. It names a shape and nothing else: Instagram is a Platform, not part of a Format.
+_Avoid_: mode, aspect, output type, instagram vertical
 
 **Mode**:
 A signposted way in on the home page, pairing an Origin Kind with a Format. A Mode is a door, not a property of a Clip — a Clip has an Origin Kind and a Format.

@@ -25,20 +25,36 @@ MODE_BATCH_PROCESS = "batch-process"
 ORIGIN_KIND_X = "x"
 ORIGIN_KIND_UPLOAD = "upload"
 
+# Format: the shape of the finished video. Vertical is 1080x1920, the only shape
+# Clip Farm renders today. It is stored as the shape alone and not as a
+# platform-and-shape pair: Instagram is a Platform, and lives in
+# `platform_accounts` and `publications` where a Platform belongs. Naming a
+# Format `instagram_vertical` would need a second name for an identical
+# 1080x1920 render the day a second Platform wants one, which is the compound
+# `mode` string ADR 0001 removed (ADR 0006).
+FORMAT_VERTICAL = "vertical"
+FORMATS = (FORMAT_VERTICAL,)
+
 
 class Batch(Base):
     """A named set of Clips imported and worked on together.
 
     Batches exist so several imports can run in parallel without their Clips
-    crowding each other in one flat list. A Batch owns no edit settings of its
-    own — each Clip inside it is trimmed, cropped, and subtitled on its own —
-    but it does own a Sequence, and renders through it into one video.
+    crowding each other in one flat list. A Batch owns no *edit* settings —
+    each Clip inside it is trimmed, cropped, and subtitled on its own — but it
+    does own a Sequence, and renders through it into one video.
+
+    It also owns that video's Format, which is an output target rather than an
+    edit: a Sequence joins its Shots into one file, so the shape has to be
+    settled for the Batch as a whole. It is chosen when the Batch is created and
+    does not change afterwards (ADR 0006).
     """
 
     __tablename__ = "batches"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String, default="Untitled batch")
+    format: Mapped[str] = mapped_column(String, default=FORMAT_VERTICAL)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 

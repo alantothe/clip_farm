@@ -7,6 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 Layout = Literal["smart_crop", "fit_background"]
 CaptionStyle = Literal["bold", "classic", "minimal"]
 CaptionPosition = Literal["top", "middle", "bottom"]
+# The shape of a Batch's finished video. The stored value is the shape alone,
+# never a platform-and-shape pair — Instagram is a Platform (ADR 0006).
+Format = Literal["vertical"]
 
 
 class ImportRequest(BaseModel):
@@ -19,6 +22,9 @@ class DeletionOut(BaseModel):
 
 class BatchCreate(BaseModel):
     name: str = Field(default="Untitled batch", max_length=120)
+    # The Format is fixed at creation and never edited, so it is accepted here
+    # and nowhere else. BatchUpdate deliberately has no format (ADR 0006).
+    format: Format = "vertical"
 
     @field_validator("name")
     @classmethod
@@ -328,6 +334,7 @@ class BatchOut(BaseModel):
 
     id: str
     name: str
+    format: Format
     created_at: datetime
     updated_at: datetime
     clips: list[ProjectOut] = []
@@ -346,6 +353,7 @@ class BatchSummaryOut(BaseModel):
 
     id: str
     name: str
+    format: Format
     created_at: datetime
     updated_at: datetime
     clip_count: int = 0

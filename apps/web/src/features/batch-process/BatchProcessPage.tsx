@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Check, Layers, LoaderCircle, Pencil } from 'lucide-react'
 import { api } from '../../api'
 import { DeleteDialog } from '../../components/DeleteDialog'
+import { formatDefinition } from '../../formats/registry'
 import type { DeleteIntent } from '../../components/DeleteDialog'
 import { ProjectRail } from '../../components/ProjectRail'
 import { ClipEditor } from '../editor/ClipEditor'
@@ -11,10 +12,11 @@ import { BatchRail } from './BatchRail'
 import { ClipDropZone } from './ClipDropZone'
 import { ClipGrid } from './ClipGrid'
 import { ExportPanel } from './ExportPanel'
+import { NewBatchDialog } from './NewBatchDialog'
 import { SequencePreview } from './SequencePreview'
 import { ShotInspector } from './ShotInspector'
 import { Timeline, sequenceDurationMs } from './Timeline'
-import type { Batch, BatchSummary, Cutaway, Project, Shot, ShotTrim } from '../../types'
+import type { Batch, BatchSummary, Cutaway, Format, Project, Shot, ShotTrim } from '../../types'
 
 const BATCHES_KEY = ['batches'] as const
 const batchKey = (id: string) => ['batch', id] as const
@@ -166,6 +168,8 @@ export function BatchProcessPage() {
   // the Shot's own trim goes with it. So it, alone, offers an undo.
   const [undoRemoval, setUndoRemoval] = useState<{ shot: Shot; title: string } | null>(null)
   const [playheadMs, setPlayheadMs] = useState(0)
+  // A Batch's Format is chosen once, in a dialog, and never edited (ADR 0006).
+  const [newBatchOpen, setNewBatchOpen] = useState(false)
 
   const batchesQuery = useQuery({ queryKey: BATCHES_KEY, queryFn: api.listBatches })
   const batches = batchesQuery.data ?? []
@@ -215,13 +219,20 @@ export function BatchProcessPage() {
     : null
 
   const createMutation = useMutation({
-    mutationFn: () => api.createBatch(),
+    mutationFn: (batch: { name: string; format: Format }) => api.createBatch(batch),
     onSuccess: (created) => {
+      setNewBatchOpen(false)
       queryClient.setQueryData(batchKey(created.id), created)
       void queryClient.invalidateQueries({ queryKey: BATCHES_KEY })
       navigate(batchRoute(created.id))
     },
   })
+
+  /** Open the dialog on a clean slate: a stale error must not greet the next try. */
+  function askNewBatch() {
+    createMutation.reset()
+    setNewBatchOpen(true)
+  }
 
   const uploadMutation = useMutation({
     mutationFn: (files: File[]) => api.uploadClips(batchId!, files),
@@ -348,7 +359,7 @@ export function BatchProcessPage() {
       batches={batches}
       activeId={batchId ?? null}
       onSelect={(id) => navigate(batchRoute(id))}
-      onNew={() => createMutation.mutate()}
+      onNew={askNewBatch}
       collapsed={railCollapsed}
       onToggle={() => setRailCollapsed((value) => !value)}
       onDelete={askDeleteBatch}
@@ -361,7 +372,7 @@ export function BatchProcessPage() {
   if (batchesQuery.isLoading) {
     content = <div className="app-loading"><LoaderCircle className="spin" size={30} /></div>
   } else if (!batches.length) {
-    content = <EmptyBatches onCreate={() => createMutation.mutate()} creating={createMutation.isPending} />
+    content = <EmptyBatches onCreate={askNewBatch} creating={createMutation.isPending} />
   } else if (!batch) {
     content = <div className="app-loading"><LoaderCircle className="spin" size={30} /></div>
   } else if (activeClip) {
@@ -401,6 +412,12 @@ export function BatchProcessPage() {
             <div>
               <div className="workspace-title__meta">
                 <span>{clips.length} {clips.length === 1 ? 'clip' : 'clips'}</span>
+                {/* Plain text, not a control: the Format was settled when this
+                    Batch was created and does not change (ADR 0006). */}
+                <span>
+                  {formatDefinition(batch.format).platform} ·{' '}
+                  {formatDefinition(batch.format).name} {formatDefinition(batch.format).ratio}
+                </span>
               </div>
               <BatchTitle batch={batch} onRename={(name) => renameMutation.mutate(name)} />
             </div>
@@ -572,6 +589,17 @@ export function BatchProcessPage() {
             setDeleteIntent(null)
           }}
           onConfirm={() => deleteMutation.mutate(deleteIntent)}
+        />
+      )}
+      {newBatchOpen && (
+        <NewBatchDialog
+          pending={createMutation.isPending}
+          error={createMutation.error}
+          onCancel={() => {
+            createMutation.reset()
+            setNewBatchOpen(false)
+          }}
+          onCreate={(created) => createMutation.mutate(created)}
         />
       )}
     </>

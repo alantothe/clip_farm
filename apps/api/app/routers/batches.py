@@ -76,7 +76,7 @@ def _download_name(batch_name: str) -> str:
 
 @router.post(f"{settings.api_prefix}/batches", response_model=BatchOut, status_code=201)
 def create_batch(payload: BatchCreate, session: Session = Depends(get_db)) -> BatchOut:
-    batch = Batch(name=payload.name)
+    batch = Batch(name=payload.name, format=payload.format)
     session.add(batch)
     session.commit()
     return serialize_batch(session, batch)
