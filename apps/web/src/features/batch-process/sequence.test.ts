@@ -9,7 +9,7 @@
  */
 import { applySequenceEdit } from './BatchProcessPage'
 import { shotIsOver } from './useSequencePlayer'
-import { keptLeftPercent, keptWidthFraction } from './Player'
+import { fitInside, keptLeftPercent, keptWidthFraction } from './Player'
 import {
   anchorAt,
   insertionIndex,
@@ -337,5 +337,39 @@ describe('what the vertical crop keeps of a landscape frame', () => {
       100 - 31.64,
       1,
     )
+  })
+})
+
+describe('fitting the stage into the room the editor leaves it', () => {
+  const vertical = 9 / 16
+
+  test('a tall stage in a wide frame is held by the height', () => {
+    expect(fitInside({ width: 900, height: 500 }, vertical)).toEqual({
+      width: 281.25,
+      height: 500,
+    })
+  })
+
+  test('a tall stage in a narrow frame is held by the width', () => {
+    // The case a `height: 100%` rule gets wrong: it would keep the 500 and
+    // squeeze the width to 200, showing 9:16 material as 2:5.
+    expect(fitInside({ width: 200, height: 500 }, vertical)).toEqual({
+      width: 200,
+      height: 200 / vertical,
+    })
+  })
+
+  test('the Source view is fitted by the same rule, at its own ratio', () => {
+    // The same room, a landscape stage: now the width is what runs out first,
+    // and the height comes back down to keep 16:9.
+    expect(fitInside({ width: 600, height: 500 }, 16 / 9)).toEqual({
+      width: 600,
+      height: 337.5,
+    })
+    // And in a frame wider than 16:9 it is the height that runs out.
+    expect(fitInside({ width: 900, height: 400 }, 16 / 9)).toEqual({
+      width: 400 * (16 / 9),
+      height: 400,
+    })
   })
 })

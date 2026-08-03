@@ -2625,18 +2625,10 @@ input[type='range']::-webkit-slider-thumb {
 @media (max-width: 1100px) {
   .editing-grid { grid-template-columns: minmax(300px, 1fr) 340px; }
   .workspace { padding-right: 14px; padding-left: 14px; }
-  /*
-   * One column, and the Timeline directly under the Player: when vertical
-   * space is short, those two are the pairing that has to stay together. The
-   * stage gives up height so the Timeline is still reachable without
-   * scrolling past the thing you are scrubbing.
-   */
-  .batch-editor {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: 'player' 'timeline' 'panels';
-  }
-  .player__stage { max-height: 40vh; }
-  .player__stage--format { height: min(40vh, 460px); }
+  /* The bin gives up width first: it is a list of names, and the Player is
+     the thing being judged. */
+  .clip-bin { flex-basis: 208px; }
+  .editor-view { padding: 8px 10px; }
   .empty-workspace h1 { font-size: 64px; }
   .mode-grid { grid-template-columns: 1fr; }
   .mode-placeholder { min-height: 120px; }
@@ -2664,6 +2656,21 @@ input[type='range']::-webkit-slider-thumb {
   .editing-grid { grid-template-columns: 1fr; }
   .video-stage { max-height: none; width: min(100%, 340px); }
   .editor-panel { min-height: 570px; }
+  /*
+   * Too little height to hold four things at once, so the editor stops being
+   * one screen and becomes a page again: bin, then Player, then Timeline, in
+   * the order they are used.
+   */
+  .workspace-shell--editor { height: auto; overflow: visible; }
+  .workspace--editor { display: block; }
+  .editor-body { display: block; }
+  .clip-bin {
+    max-height: 232px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .editor-view { padding: 10px; }
+  .player__frame { min-height: 46vh; }
   .empty-workspace { grid-template-columns: 1fr; }
   .empty-workspace__mark { display: none; }
   .empty-workspace__content { min-height: calc(100vh - 58px); }
@@ -2698,9 +2705,14 @@ input[type='range']::-webkit-slider-thumb {
   .project-list__item { width: 46px; min-width: 46px; min-height: 42px; padding: 2px; }
   .project-list__thumb { width: 42px; height: 38px; flex-basis: 42px; }
   .workspace { padding: 12px 10px 90px; }
+  .workspace--editor { padding: 0; }
   .workspace-title { min-height: 54px; }
   .workspace-title h1 { font-size: 23px; }
   .workspace-title__meta span:last-child { display: none; }
+  .editor-bar { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .export-bar { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+  .export-bar__go { margin-left: auto; }
+  .editor-bar__meta { font-size: 9px; }
   .download-button span { display: none; }
   .video-stage { width: min(100%, 310px); }
   .editor-panel { min-height: 520px; }
@@ -2832,19 +2844,18 @@ input[type='range']::-webkit-slider-thumb {
   line-height: 1.6;
 }
 
+/* A line at the head of the bin, and a drop target the width of the column. */
 .clip-drop {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 28px 24px;
-  border: 2px dashed var(--line);
+  gap: 8px;
+  margin: 8px;
+  padding: 7px 9px;
+  border: 1px dashed var(--line);
   border-radius: 5px;
   background: var(--surface);
   transition: border-color 160ms ease, background 160ms ease;
-}
-
-.clip-drop--compact {
-  padding: 14px 18px;
 }
 
 .clip-drop.is-dragging {
@@ -2855,18 +2866,18 @@ input[type='range']::-webkit-slider-thumb {
 .clip-drop__mark {
   display: grid;
   place-items: center;
-  width: 58px;
-  height: 58px;
-  flex: 0 0 58px;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
   border-radius: 50%;
   background: #eef1ec;
   color: #58635b;
 }
 
-.clip-drop--compact .clip-drop__mark {
-  width: 40px;
-  height: 40px;
-  flex-basis: 40px;
+.clip-drop .text-button {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 10.5px;
 }
 
 .clip-drop__copy {
@@ -2879,54 +2890,55 @@ input[type='range']::-webkit-slider-thumb {
 
 .clip-drop__copy strong {
   font-family: 'Barlow Condensed', sans-serif;
-  font-size: 19px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
-.clip-drop__copy small {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.clip-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 12px;
-  margin: 20px 0 0;
-  padding: 0;
+/*
+ * The bin's rows. Compact and uniform: what matters here is finding a Clip and
+ * placing it, which a 250px row does as well as a card four times its size.
+ */
+.clip-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px 8px 14px;
   list-style: none;
 }
 
-.clip-card {
+.clip-row {
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.clip-row__open {
   width: 100%;
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--surface);
+  gap: 9px;
+  padding: 6px 34px 6px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
   text-align: left;
   cursor: pointer;
-  transition: border-color 160ms ease, transform 160ms ease;
+  transition: border-color 140ms ease, background 140ms ease;
 }
 
-.clip-card:hover:not(:disabled) {
-  border-color: #9aa39c;
-  transform: translateY(-1px);
+.clip-row__open:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--paper);
 }
 
-.clip-card:disabled {
-  cursor: default;
-}
+.clip-row__open:disabled { cursor: default; }
 
-.clip-card--failed {
-  border-color: #c25d4b;
-}
+.clip-row__open--failed { border-color: #e2b4ab; }
 
-.clip-card__thumb {
-  width: 62px;
-  height: 54px;
-  flex: 0 0 62px;
+.clip-row__thumb {
+  width: 46px;
+  height: 34px;
+  flex: 0 0 46px;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -2935,21 +2947,21 @@ input[type='range']::-webkit-slider-thumb {
   color: #8f9992;
 }
 
-.clip-card__thumb img {
+.clip-row__thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.clip-card__body {
+.clip-row__body {
   min-width: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
 }
 
-.clip-card__body strong {
+.clip-row__body strong {
   overflow: hidden;
   color: #252a27;
   font-size: 12px;
@@ -2958,25 +2970,26 @@ input[type='range']::-webkit-slider-thumb {
   white-space: nowrap;
 }
 
-.clip-card__meta {
+.clip-row__meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   color: #758079;
-  font-size: 10px;
+  font-size: 9.5px;
 }
 
-.clip-card__progress {
+.clip-row__progress {
   position: relative;
   display: block;
   height: 3px;
   /* Room for the absolutely positioned step message sitting under the bar. */
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   border-radius: 2px;
   background: #e4e8e4;
 }
 
-.clip-card__progress-bar {
+.clip-row__progress-bar {
   display: block;
   height: 100%;
   border-radius: 2px;
@@ -2984,15 +2997,19 @@ input[type='range']::-webkit-slider-thumb {
   transition: width 400ms ease;
 }
 
-.clip-card__progress small {
+.clip-row__progress small {
   position: absolute;
-  top: 7px;
+  top: 6px;
   left: 0;
+  right: 0;
+  overflow: hidden;
   color: #758079;
-  font-size: 10px;
+  font-size: 9.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.clip-card__error {
+.clip-row__error {
   color: #a43120;
   font-size: 10px;
 }
@@ -3000,20 +3017,16 @@ input[type='range']::-webkit-slider-thumb {
 /* --- Timeline: the strip that presents a Sequence ---------------------- */
 
 .timeline-empty {
-  max-width: 52ch;
-  margin: 22px 0 0;
-  padding: 18px 20px;
-  border: 1px dashed var(--line);
-  border-radius: 5px;
+  margin: 0;
+  padding: 20px 16px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.6;
 }
 
 .sequence {
-  margin: 22px 0 0;
-  border: 1px solid var(--line);
-  border-radius: 5px;
+  margin: 0;
+  border: 0;
   background: var(--surface);
   /* Pointer gestures, so a drag must not select text or pan the page. */
   user-select: none;
@@ -3025,8 +3038,14 @@ input[type='range']::-webkit-slider-thumb {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 10px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--line);
+}
+
+.sequence__bar .icon-button {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
 }
 
 .sequence__total {
@@ -3286,64 +3305,208 @@ input[type='range']::-webkit-slider-thumb {
 /* --- The editing layout ------------------------------------------------ */
 
 /*
- * A vertical Player and a proportional Timeline want opposite axes: one is
- * narrow and tall, the other wide and short. So the Player takes a column of
- * its own beside the panels, and the Timeline runs the full width beneath
- * both — which is where an editor expects to find it.
+ * The editor is the shape of the work: the picture, and the strip of time
+ * underneath it that the picture is a window onto. Both are read at once, so
+ * the shell is exactly one screen tall and nothing may push either off it.
+ *
+ *   ┌──────────────────────────────────────────────┐
+ *   │ name · format                        export  │  editor-bar
+ *   ├───────────┬──────────────────────────────────┤
+ *   │ clip bin  │            Player                │  editor-body
+ *   │ (scrolls) │                                  │
+ *   ├───────────┴──────────────────────────────────┤
+ *   │ selected shot · Timeline                     │  editor-dock
+ *   └──────────────────────────────────────────────┘
+ *
+ * What grows — the bin, the Timeline — scrolls inside its own box. The Player
+ * takes every pixel the other three leave, which is why its stage is measured
+ * rather than given a height (see `useFittedStage`).
  */
-.batch-editor {
-  display: grid;
-  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
-  grid-template-areas:
-    'player panels'
-    'timeline timeline';
-  gap: 18px 20px;
-  align-items: start;
-  margin-top: 20px;
+.workspace-shell--editor {
+  height: calc(100vh - 58px);
+  min-height: 0;
+  overflow: hidden;
 }
 
-.batch-editor__player { grid-area: player; min-width: 0; }
-.batch-editor__timeline { grid-area: timeline; min-width: 0; }
+.workspace-shell--editor .project-rail { min-height: 0; }
 
-.batch-editor__panels {
-  grid-area: panels;
+.workspace--editor {
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  /* Only ever used on a window too short to hold the four rows at their
+     smallest — the Player is allowed to shrink, but not to vanish. */
+  overflow-y: auto;
+  padding: 0;
+  background: var(--paper);
+}
+
+.editor-bar {
+  flex: 0 0 auto;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.editor-bar__id {
   min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.editor-bar__id .batch-title {
+  min-width: 0;
+  overflow: hidden;
+  gap: 4px;
+  font-size: 21px;
+  white-space: nowrap;
+}
+
+.editor-bar__id .batch-title .icon-button {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+}
+
+.editor-bar__id .batch-title-input {
+  width: min(320px, 60vw);
+  font-size: 21px;
+}
+
+.editor-bar__meta {
+  flex: 0 0 auto;
+  color: #737c76;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.editor-body {
+  flex: 1;
+  min-height: 300px;
+  display: flex;
+}
+
+.editor-view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  padding: 12px 14px;
+}
+
+.editor-dock {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+/* --- The clip bin ------------------------------------------------------- */
+
+/*
+ * Every Clip in the Batch, down one side. A Batch of twenty is the case this
+ * Mode exists for, so the bin is a fixed column that scrolls rather than a
+ * grid that grows — twenty cards laid out wide pushed the Player and the
+ * Timeline off the screen between them.
+ */
+.clip-bin {
+  flex: 0 0 244px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.clip-bin .toast-error {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.clip-bin .toast-error p { margin: 0 0 3px; }
+
+.clip-bin .batch-empty {
+  margin: 10px 12px;
+  font-size: 12px;
+}
+
+.clip-bin .batch-empty small {
+  display: block;
+  margin-top: 8px;
+  font-size: 10.5px;
 }
 
 /* --- The Player -------------------------------------------------------- */
 
 .player {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 7px;
+  padding: 10px;
   border: 1px solid var(--line);
   border-radius: 5px;
   background: var(--surface);
 }
 
+/* The room the stage is fitted into: everything the controls do not take.
+   Toned down from the card around it, so the picture is what the eye lands
+   on rather than the white space beside it. */
+.player__frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: #e7eae7;
+}
+
 /*
  * The stage is the Batch's Format, so its aspect ratio is set inline from the
  * Format rather than here. In the Source view it takes the source frame's own
- * ratio instead, which is why neither is hard-coded.
+ * ratio instead, which is why neither is hard-coded. Its width and height are
+ * set inline too, from the measured frame; the rules here are what stands
+ * before the first measurement lands.
  */
 .player__stage {
   position: relative;
   display: grid;
   place-items: center;
-  width: 100%;
-  max-height: 52vh;
+  max-width: 100%;
+  max-height: 100%;
   margin: 0 auto;
   border-radius: 4px;
   background: var(--dark);
   overflow: hidden;
 }
 
-/* A 9:16 stage is tall, so cap it by height and let width follow. */
-.player__stage--format { height: min(52vh, 620px); width: auto; }
+/* A 9:16 stage is tall, so let height drive and width follow. */
+.player__stage--format { height: 100%; }
+.player__stage--source { width: 100%; }
+
+/*
+ * Full screen, the stage keeps its shape rather than taking the screen's.
+ * `!important` is what it takes to beat the measured size set inline — and
+ * without it a smart crop would be cropped to the monitor's ratio, which is a
+ * lie about the Format this Player is here to show (ADR 0007).
+ */
+.player__stage:fullscreen {
+  width: auto !important;
+  height: 100% !important;
+  max-width: 100%;
+  margin: auto;
+  border-radius: 0;
+}
 
 .player__placeholder { color: #4a5350; }
 
@@ -3512,10 +3675,17 @@ input[type='range']::-webkit-slider-thumb {
 .player__transport {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.player__transport .icon-button {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
 }
 
 .player__clock {
+  flex: 0 0 auto;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
@@ -3613,16 +3783,23 @@ input[type='range']::-webkit-slider-thumb {
 .player__views button + button { border-left: 1px solid var(--line); }
 .player__views button.is-active { background: var(--dark); color: var(--acid); }
 
+/* What is playing, in the middle of the transport: it takes the slack, and
+   gives it back by ellipsis when the controls need the width. */
 .player__now {
+  min-width: 0;
+  flex: 1;
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  justify-content: center;
+  gap: 7px;
   margin: 0;
-  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .player__now strong {
-  font-size: 13px;
+  min-width: 0;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -3635,23 +3812,35 @@ input[type='range']::-webkit-slider-thumb {
   color: var(--muted);
 }
 
+.player__now small {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Kept in the layout even when it says nothing, so the stage above it does
+   not resize as playback crosses into a smart-cropped Shot. */
 .player__caveat {
+  min-height: 15px;
   margin: 0;
-  line-height: 1.5;
+  overflow: hidden;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* --- The selected Shot's controls -------------------------------------- */
 
+/* A strip across the head of the dock, over the Timeline it edits. */
 .shot-inspector {
   display: flex;
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  margin: 10px 0 0;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--surface);
+  margin: 0;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
 }
 
 .shot-inspector__title {
@@ -3702,9 +3891,8 @@ input[type='range']::-webkit-slider-thumb {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 10px 0 0;
-  padding: 9px 12px;
-  border-radius: 5px;
+  margin: 0;
+  padding: 7px 12px;
   background: var(--ink);
   color: var(--paper);
   font-size: 12px;
@@ -3722,127 +3910,150 @@ input[type='range']::-webkit-slider-thumb {
 
 /* --- Asking for the finished video ------------------------------------ */
 
-.export-panel {
-  margin: 22px 0 0;
-  padding: 16px 18px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--surface);
-}
-
-.export-panel__head {
+/*
+ * One strip in the top bar. Exporting is a button pressed once, at the end;
+ * it used to hold a panel's worth of the screen for the whole session.
+ */
+.export-bar {
+  min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
 }
 
-.export-panel__head h2 {
-  margin: 2px 0 0;
-  font-size: 17px;
-  font-weight: 500;
+.export-bar__summary {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
-.export-panel__total {
+.export-bar__total {
   color: var(--muted);
   font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
 
-.export-panel__progress {
-  position: relative;
-  margin: 14px 0 0;
-  padding: 0 0 18px;
-  border-radius: 3px;
-  background: var(--paper);
+.export-bar__progress {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.export-panel__progress-bar {
-  display: block;
+.export-bar__track {
+  width: 110px;
+  flex: 0 0 110px;
   height: 4px;
+  border-radius: 3px;
+  background: #e4e8e5;
+  overflow: hidden;
+}
+
+.export-bar__progress-bar {
+  display: block;
+  height: 100%;
   border-radius: 3px;
   background: var(--blue);
   transition: width 220ms ease;
 }
 
-.export-panel__progress small {
-  position: absolute;
-  left: 0;
-  bottom: 0;
+.export-bar__progress small {
+  min-width: 0;
+  overflow: hidden;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.export-panel__error {
+.export-bar__error {
+  min-width: 0;
   display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--coral);
+  font-size: 11.5px;
+}
+
+.export-bar__done {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.export-bar__done small {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.export-bar__stale {
+  max-width: 26ch;
+  color: var(--coral) !important;
+  white-space: normal !important;
+  line-height: 1.35;
+}
+
+.export-bar__go {
+  min-height: 34px;
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
   gap: 7px;
-  margin: 12px 0 0;
-  color: var(--coral);
-  font-size: 13px;
-}
-
-.export-panel__done {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin: 14px 0 0;
-}
-
-.export-panel__done small {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.export-panel__stale {
-  flex-basis: 100%;
-  color: var(--coral) !important;
-}
-
-/* Adding a Clip to the Sequence, from the grid. */
-
-.clip-card__place {
-  display: block;
-  margin: 6px 0 0;
-}
-
-.clip-card__add {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 6px;
+  padding: 0 14px;
+  border: 1px solid #9fad37;
   border-radius: 4px;
+  background: var(--acid);
+  color: var(--ink);
   font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 160ms ease;
+}
+
+.export-bar__go:hover:not(:disabled) { transform: translateY(-1px); }
+
+/* Adding a Clip to the Sequence, from the bin. */
+
+.clip-row__add {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  color: #444d47;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
   /* Also the drag handle onto the timeline. */
   touch-action: none;
 }
 
-.clip-card__add {
-  border: 1px solid var(--line);
-  background: var(--paper);
-  cursor: pointer;
-  transition: border-color 160ms ease;
+.clip-row__add:hover:not(:disabled) {
+  border-color: var(--ink);
+  background: var(--acid);
 }
 
-.clip-card__add:hover:not(:disabled) {
-  border-color: #9aa39c;
-}
-
-.clip-card__add:disabled {
+.clip-row__add:disabled {
   color: var(--muted);
   cursor: default;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
-.clip-card__placed {
-  display: block;
-  margin: 4px 0 0;
-  text-align: center;
-  color: var(--muted);
-  font-size: 10px;
+.clip-row__placed {
+  color: #4e6b25 !important;
+  font-weight: 600;
 }
 
 /* A button that reads as a label: used where an icon alone would not say

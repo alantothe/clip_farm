@@ -421,8 +421,8 @@ export function Timeline({
   if (!shots.length) {
     return (
       <p className="timeline-empty">
-        Nothing on the timeline yet. Add clips from below and they play in the order
-        you put them here.
+        Nothing on the timeline yet. Add clips from the bin on the left and they play in
+        the order you put them here.
       </p>
     )
   }

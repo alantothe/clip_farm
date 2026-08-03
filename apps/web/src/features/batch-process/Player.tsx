@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Clapperboard,
   ChevronLeft,
@@ -68,6 +68,51 @@ const sourceRatio = (clip: Project | null): string =>
   clip?.width && clip?.height ? `${clip.width} / ${clip.height}` : '16 / 9'
 
 /**
+ * The largest box of ratio `ratio` that fits inside `room`.
+ *
+ * Exported because it is the whole of the fitting, and cheaper to test here
+ * than through a layout jsdom does not have.
+ */
+export function fitInside(
+  room: { width: number; height: number },
+  ratio: number,
+): { width: number; height: number } {
+  return room.width / room.height > ratio
+    ? { width: room.height * ratio, height: room.height }
+    : { width: room.width, height: room.width / ratio }
+}
+
+/**
+ * The stage, sized to whatever room the editing shell leaves around it.
+ *
+ * Two ratios have to be compared — the Format's and the frame's — and CSS
+ * cannot compare them: `height: 100%` overflows a narrow frame, `width: 100%`
+ * overflows a short one, and a `max-width`/`max-height` clamp fixes the axis it
+ * touches while the other keeps the size it was given. That is a stretched
+ * preview of the one shape this Player exists to be exact about (ADR 0007), so
+ * the frame is measured instead and the stage takes the box that fits.
+ */
+function useFittedStage(ratio: number) {
+  const frameRef = useRef<HTMLDivElement>(null)
+  const [room, setRoom] = useState<{ width: number; height: number } | null>(null)
+
+  useEffect(() => {
+    const frame = frameRef.current
+    // jsdom has neither ResizeObserver nor layout; there the CSS fallback stands.
+    if (!frame || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      setRoom({ width, height })
+    })
+    observer.observe(frame)
+    return () => observer.disconnect()
+  }, [])
+
+  const fitted = room && room.width > 0 && room.height > 0 ? fitInside(room, ratio) : null
+  return { frameRef, fitted }
+}
+
+/**
  * The Player: the screen that plays a Sequence as one video.
  *
  * There is otherwise no way to watch a Batch without exporting it, and a
@@ -125,6 +170,11 @@ export function Player({
 
   const shape = formatDefinition(format)
   const currentClip = current?.item.clip ?? null
+  const stageRatio =
+    view === 'format'
+      ? shape.width / shape.height
+      : (currentClip?.width ?? 16) / (currentClip?.height ?? 9)
+  const { frameRef, fitted } = useFittedStage(stageRatio)
   // The cover element holds a Cutaway's Clip; the two swapping elements hold
   // the current Shot's and the next one's, so each is framed by its own Layout.
   const clipInSlot = (value: number): Project | null =>
@@ -146,128 +196,131 @@ export function Player({
 
   return (
     <section className="player" aria-label="Player">
-      <div
-        ref={stageRef}
-        className={`player__stage player__stage--${view}`}
-        style={{
-          aspectRatio: framed
-            ? `${shape.width} / ${shape.height}`
-            : sourceRatio(currentClip),
-          ...(thumbnail ? ({ '--stage-thumb': `url("${thumbnail}")` } as object) : {}),
-        }}
-      >
-        {placed.length === 0 || player.missingPreview ? (
-          <span className="player__placeholder">
-            <Clapperboard size={30} />
-          </span>
-        ) : null}
+      <div className="player__frame" ref={frameRef}>
+        <div
+          ref={stageRef}
+          className={`player__stage player__stage--${view}`}
+          style={{
+            aspectRatio: framed
+              ? `${shape.width} / ${shape.height}`
+              : sourceRatio(currentClip),
+            ...(fitted ? { width: fitted.width, height: fitted.height } : null),
+            ...(thumbnail ? ({ '--stage-thumb': `url("${thumbnail}")` } as object) : {}),
+          }}
+        >
+          {placed.length === 0 || player.missingPreview ? (
+            <span className="player__placeholder">
+              <Clapperboard size={30} />
+            </span>
+          ) : null}
 
-        {/* The blurred fill a fit renders against, as the export builds it. */}
-        {framed && currentClip?.layout === 'fit_background' && thumbnail && (
-          <div className="player__backdrop" aria-hidden="true" />
-        )}
+          {/* The blurred fill a fit renders against, as the export builds it. */}
+          {framed && currentClip?.layout === 'fit_background' && thumbnail && (
+            <div className="player__backdrop" aria-hidden="true" />
+          )}
 
-        {[0, 1].map((value) => {
-          const clip = clipInSlot(value)
-          return (
-            <video
-              key={value}
-              ref={videos[value]}
-              className={`player__video player__video--${
-                framed ? clip?.layout ?? 'fit_background' : 'whole'
-              } ${value === slot ? 'is-active' : ''}`}
-              style={{ '--crop-x': `${clip?.crop_center_x ?? 50}%` } as object}
-              playsInline
-              preload="auto"
-              // Two different reasons to be silent: this element is not the
-              // sound source, or the operator turned the sound off.
-              muted={value !== slot || player.muted}
-              onTimeUpdate={value === slot ? player.onTimeUpdate : undefined}
-              // `timeupdate` stops firing once the media ends, so the last word
-              // on whether a Shot is over belongs to the element itself.
-              onEnded={value === slot ? player.advance : undefined}
-            />
-          )
-        })}
+          {[0, 1].map((value) => {
+            const clip = clipInSlot(value)
+            return (
+              <video
+                key={value}
+                ref={videos[value]}
+                className={`player__video player__video--${
+                  framed ? clip?.layout ?? 'fit_background' : 'whole'
+                } ${value === slot ? 'is-active' : ''}`}
+                style={{ '--crop-x': `${clip?.crop_center_x ?? 50}%` } as object}
+                playsInline
+                preload="auto"
+                // Two different reasons to be silent: this element is not the
+                // sound source, or the operator turned the sound off.
+                muted={value !== slot || player.muted}
+                onTimeUpdate={value === slot ? player.onTimeUpdate : undefined}
+                // `timeupdate` stops firing once the media ends, so the last word
+                // on whether a Shot is over belongs to the element itself.
+                onEnded={value === slot ? player.advance : undefined}
+              />
+            )
+          })}
 
-        {/* Muted, and over the top: the base element below still has the sound. */}
-        <video
-          ref={player.coverRef}
-          className={`player__video player__video--cover player__video--${
-            framed ? covering?.clip.layout ?? 'fit_background' : 'whole'
-          } ${covering ? 'is-active' : ''}`}
-          style={{ '--crop-x': `${covering?.clip.crop_center_x ?? 50}%` } as object}
-          playsInline
-          preload="auto"
-          muted
-        />
-
-        {/* In the Source view, what the crop keeps and what it drops. */}
-        {!framed && cropped && currentClip && (
-          <div
-            className="player__kept"
-            aria-hidden="true"
-            style={{
-              left: `${keptLeftPercent(currentClip, format)}%`,
-              width: `${keptWidthFraction(currentClip, format) * 100}%`,
-            }}
+          {/* Muted, and over the top: the base element below still has the sound. */}
+          <video
+            ref={player.coverRef}
+            className={`player__video player__video--cover player__video--${
+              framed ? covering?.clip.layout ?? 'fit_background' : 'whole'
+            } ${covering ? 'is-active' : ''}`}
+            style={{ '--crop-x': `${covering?.clip.crop_center_x ?? 50}%` } as object}
+            playsInline
+            preload="auto"
+            muted
           />
-        )}
 
-        {/*
-         * Overlays belong to whichever Clip is supplying the picture, which
-         * during a Cutaway is the Cutaway's — the export burns that Clip's
-         * Overlays in, with no guard against a covered span.
-         */}
-        {framed &&
-          pictureClip?.image_overlays
-            .filter((overlay) => pictureMs >= overlay.start_ms && pictureMs < overlay.end_ms)
-            .map((overlay) => (
-              <div
-                key={overlay.id}
-                className="player__overlay"
-                aria-hidden="true"
-                style={{
-                  left: `${overlay.center_x}%`,
-                  top: `${overlay.center_y}%`,
-                  width: `${overlay.width_percent}%`,
-                  transform: `translate(-50%, -50%) rotate(${overlay.rotation_deg}deg)`,
-                }}
-              >
-                <img src={api.mediaUrl(overlay.url)} alt="" style={{ opacity: overlay.opacity }} />
-              </div>
-            ))}
+          {/* In the Source view, what the crop keeps and what it drops. */}
+          {!framed && cropped && currentClip && (
+            <div
+              className="player__kept"
+              aria-hidden="true"
+              style={{
+                left: `${keptLeftPercent(currentClip, format)}%`,
+                width: `${keptWidthFraction(currentClip, format) * 100}%`,
+              }}
+            />
+          )}
 
-        {/*
-         * Subtitles, and only where the export burns them.
-         *
-         * A covered span renders the Cutaway's picture with captions off, so
-         * nothing is burned in there at all — not the Cutaway's own, which
-         * transcribe audio nobody is hearing, and not the Base Shot's either
-         * (ADR 0005, `tasks.py`). Showing either would promise a subtitle the
-         * finished video does not have.
-         */}
-        {framed && !covering && currentClip?.captions_enabled && subtitle && (
-          <div
-            className={`caption-preview caption-preview--${currentClip.caption_style} caption-preview--position-${currentClip.caption_position}`}
-          >
-            {subtitle.text}
-          </div>
-        )}
+          {/*
+           * Overlays belong to whichever Clip is supplying the picture, which
+           * during a Cutaway is the Cutaway's — the export burns that Clip's
+           * Overlays in, with no guard against a covered span.
+           */}
+          {framed &&
+            pictureClip?.image_overlays
+              .filter((overlay) => pictureMs >= overlay.start_ms && pictureMs < overlay.end_ms)
+              .map((overlay) => (
+                <div
+                  key={overlay.id}
+                  className="player__overlay"
+                  aria-hidden="true"
+                  style={{
+                    left: `${overlay.center_x}%`,
+                    top: `${overlay.center_y}%`,
+                    width: `${overlay.width_percent}%`,
+                    transform: `translate(-50%, -50%) rotate(${overlay.rotation_deg}deg)`,
+                  }}
+                >
+                  <img src={api.mediaUrl(overlay.url)} alt="" style={{ opacity: overlay.opacity }} />
+                </div>
+              ))}
 
-        {/* Where Instagram's own chrome will sit over the picture. */}
-        {framed && guides && <div className="safe-area" aria-hidden="true" />}
+          {/*
+           * Subtitles, and only where the export burns them.
+           *
+           * A covered span renders the Cutaway's picture with captions off, so
+           * nothing is burned in there at all — not the Cutaway's own, which
+           * transcribe audio nobody is hearing, and not the Base Shot's either
+           * (ADR 0005, `tasks.py`). Showing either would promise a subtitle the
+           * finished video does not have.
+           */}
+          {framed && !covering && currentClip?.captions_enabled && subtitle && (
+            <div
+              className={`caption-preview caption-preview--${currentClip.caption_style} caption-preview--position-${currentClip.caption_position}`}
+            >
+              {subtitle.text}
+            </div>
+          )}
 
-        {covering && (
-          <div className="player__badge">
-            <span className="player__badge-mark">
-              <Layers size={11} /> Cutaway
-            </span>
-            <span className="player__badge-sound">
-              <Volume2 size={11} /> {current ? current.item.clip.title : 'the shot beneath'}
-            </span>
-          </div>
-        )}
+          {/* Where Instagram's own chrome will sit over the picture. */}
+          {framed && guides && <div className="safe-area" aria-hidden="true" />}
+
+          {covering && (
+            <div className="player__badge">
+              <span className="player__badge-mark">
+                <Layers size={11} /> Cutaway
+              </span>
+              <span className="player__badge-sound">
+                <Volume2 size={11} /> {current ? current.item.clip.title : 'the shot beneath'}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       <ScrubBar
@@ -334,6 +387,24 @@ export function Player({
         <span className="player__clock">
           {formatTime(Math.min(player.playheadMs, totalMs))} / {formatTime(totalMs)}
         </span>
+
+        {/* What is playing rides in the transport rather than on a line of its
+            own: every row this Player keeps is a row the stage does not get. */}
+        <p className="player__now">
+          {covering ? (
+            <>
+              <strong>{covering.clip.title}</strong>
+              <small>covering {current ? current.item.clip.title : 'a shot'}, its sound playing</small>
+            </>
+          ) : current ? (
+            <>
+              <strong>{current.item.clip.title}</strong>
+              <small>shot {player.index + 1} of {placed.length}</small>
+            </>
+          ) : (
+            <small>Nothing placed yet.</small>
+          )}
+        </p>
 
         <button
           className={`icon-button ${player.muted ? 'is-off' : ''}`}
@@ -475,76 +546,65 @@ export function Player({
             </button>
           </>
         )}
+
+        {/* Trimming shares the row rather than taking one: both groups act on
+            the playhead, and they wrap apart when there is no room for both. */}
+        {onTrimToPlayhead && (
+          <>
+            <span className="player__tools-label">Trim shot</span>
+            <button
+              className="chip"
+              type="button"
+              onClick={() => onTrimToPlayhead('in')}
+              disabled={!canTrim}
+              title="Set the selected shot's in-point to the playhead (I)"
+            >
+              In to playhead
+            </button>
+            <button
+              className="chip"
+              type="button"
+              onClick={() => onTrimToPlayhead('out')}
+              disabled={!canTrim}
+              title="Set the selected shot's out-point to the playhead (O)"
+            >
+              Out to playhead
+            </button>
+            {!canTrim && (
+              <small className="player__hint">
+                Select the shot the playhead is inside.
+              </small>
+            )}
+          </>
+        )}
       </div>
 
-      {onTrimToPlayhead && (
-        <div className="player__tools">
-          <span className="player__tools-label">Trim shot</span>
-          <button
-            className="chip"
-            type="button"
-            onClick={() => onTrimToPlayhead('in')}
-            disabled={!canTrim}
-            title="Set the selected shot's in-point to the playhead (I)"
-          >
-            In to playhead
-          </button>
-          <button
-            className="chip"
-            type="button"
-            onClick={() => onTrimToPlayhead('out')}
-            disabled={!canTrim}
-            title="Set the selected shot's out-point to the playhead (O)"
-          >
-            Out to playhead
-          </button>
-          {!canTrim && (
-            <small className="player__hint">
-              Select the shot the playhead is inside.
-            </small>
-          )}
-        </div>
-      )}
-
-      <p className="player__now">
-        {covering ? (
-          <>
-            <strong>{covering.clip.title}</strong>
-            <small>covering {current ? current.item.clip.title : 'a shot'}, its sound playing</small>
-          </>
-        ) : current ? (
-          <>
-            <strong>{current.item.clip.title}</strong>
-            <small>shot {player.index + 1} of {placed.length}</small>
-          </>
-        ) : (
-          <small>Nothing placed yet.</small>
-        )}
-      </p>
-
       {/*
-       * The caveat appears only where it applies.
+       * The caveat says something only where it applies.
        *
        * Framing and Subtitles are now shown, so the blanket warning became
        * untrue. What is still approximate is a smart crop: on export the crop
        * follows faces frame by frame, and CSS can only hold the fallback
        * centre. So it is said while such a Shot is on screen, and not
        * otherwise — a warning shown always is a warning nobody reads.
+       *
+       * The line itself is always here, empty when there is nothing to say:
+       * the stage is sized from what the controls leave over, and a sentence
+       * that came and went as playback crossed a cut would resize the picture
+       * under the operator mid-scrub.
        */}
-      {framed && cropped && (
-        <p className="player__caveat">
-          Approximate — this shot's crop follows faces on export, so its framing
-          will shift.
-        </p>
-      )}
-      {!framed && (
-        <p className="player__caveat">
-          The whole source frame.{' '}
-          {cropped
-            ? 'The outline is what the vertical crop keeps.'
-            : 'This shot is fitted whole, so nothing is cropped away.'}
-        </p>
-      )}
+      <p className="player__caveat">
+        {framed && cropped
+          ? "Approximate — this shot's crop follows faces on export, so its framing will shift."
+          : !framed && (
+              <>
+                The whole source frame.{' '}
+                {cropped
+                  ? 'The outline is what the vertical crop keeps.'
+                  : 'This shot is fitted whole, so nothing is cropped away.'}
+              </>
+            )}
+      </p>
     </section>
   )
 }

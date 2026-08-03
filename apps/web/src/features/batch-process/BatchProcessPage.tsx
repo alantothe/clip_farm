@@ -442,177 +442,189 @@ export function BatchProcessPage() {
     )
   } else {
     content = (
-      <div className="workspace-shell">
+      /*
+       * The editor is a fixed-height shell, not a page that scrolls: the
+       * Player and the Timeline are read together — you scrub one while
+       * watching the other — so neither may be pushed off the bottom by the
+       * things around them. Everything that grows scrolls inside its own box.
+       */
+      <div className="workspace-shell workspace-shell--editor">
         {batchList}
-        <main className="workspace">
-          <div className="workspace-title">
-            <div>
-              <div className="workspace-title__meta">
-                <span>{clips.length} {clips.length === 1 ? 'clip' : 'clips'}</span>
-                {/* Plain text, not a control: the Format was settled when this
-                    Batch was created and does not change (ADR 0006). */}
-                <span>
-                  {formatDefinition(batch.format).platform} ·{' '}
-                  {formatDefinition(batch.format).name} {formatDefinition(batch.format).ratio}
-                </span>
-              </div>
+        <main className="workspace workspace--editor">
+          <header className="editor-bar">
+            <div className="editor-bar__id">
               <BatchTitle batch={batch} onRename={(name) => renameMutation.mutate(name)} />
+              {/* Plain text, not a control: the Format was settled when this
+                  Batch was created and does not change (ADR 0006). */}
+              <span className="editor-bar__meta">
+                {clips.length} {clips.length === 1 ? 'clip' : 'clips'} ·{' '}
+                {formatDefinition(batch.format).platform} ·{' '}
+                {formatDefinition(batch.format).name} {formatDefinition(batch.format).ratio}
+              </span>
+            </div>
+            <ExportPanel
+              sequenceRender={batch.sequence_render}
+              shotCount={shots.length}
+              totalMs={sequenceDurationMs(shots, clips)}
+              onExport={() => exportMutation.mutate()}
+              starting={exportMutation.isPending}
+              error={exportMutation.error}
+            />
+          </header>
+
+          <div className="editor-body">
+            <aside className="clip-bin">
+              <ClipDropZone
+                onAdd={(files) => {
+                  setRejected([])
+                  uploadMutation.mutate(files)
+                }}
+                uploading={uploadMutation.isPending}
+              />
+
+              {rejected.length > 0 && (
+                <div className="toast-error" role="alert">
+                  {rejected.map((message) => <p key={message}>{message}</p>)}
+                </div>
+              )}
+              {uploadMutation.error && (
+                <div className="toast-error">{uploadMutation.error.message}</div>
+              )}
+              {renameMutation.error && (
+                <div className="toast-error">{renameMutation.error.message}</div>
+              )}
+
+              {clips.length > 0 ? (
+                <ClipGrid
+                  clips={clips}
+                  onOpen={(clip) => navigate(clipRoute(batch.id, clip.id))}
+                  onAdd={(clip) => sequenceMutation.mutate({ kind: 'add', clipId: clip.id })}
+                  onDragToTimeline={(clip) => setPlacingClipId(clip.id)}
+                  placedCounts={placedCounts}
+                  adding={sequenceMutation.isPending}
+                />
+              ) : (
+                <p className="batch-empty">
+                  No clips yet. Add videos above and each one imports on its own — you can
+                  start another batch while these run.
+                  <small>MP4, MOV, M4V, WebM, MKV, or AVI · up to 25 at a time</small>
+                </p>
+              )}
+            </aside>
+
+            <div className="editor-view">
+              <Player
+                player={player}
+                format={batch.format}
+                onTrimToPlayhead={trimToPlayhead}
+                canTrim={trimTarget !== null}
+              />
             </div>
           </div>
 
-          <ClipDropZone
-            onAdd={(files) => {
-              setRejected([])
-              uploadMutation.mutate(files)
-            }}
-            uploading={uploadMutation.isPending}
-            compact={clips.length > 0}
-          />
-
-          {rejected.length > 0 && (
-            <div className="toast-error" role="alert">
-              {rejected.map((message) => <p key={message}>{message}</p>)}
-            </div>
-          )}
-          {uploadMutation.error && <div className="toast-error">{uploadMutation.error.message}</div>}
-          {renameMutation.error && <div className="toast-error">{renameMutation.error.message}</div>}
-
-          {clips.length > 0 ? (
-            <div className="batch-editor">
-              <div className="batch-editor__player">
-                <Player
-                  player={player}
-                  format={batch.format}
-                  onTrimToPlayhead={trimToPlayhead}
-                  canTrim={trimTarget !== null}
-                />
-              </div>
-              <div className="batch-editor__timeline">
-              <Timeline
-                shots={shots}
-                cutaways={cutaways}
-                clips={clips}
-                selectedShotId={selectedShotId}
-                placingClipId={placingClipId}
-                playheadMs={playheadMs}
-                onScrub={setPlayheadMs}
-                onSelect={setSelectedShotId}
+          <div className="editor-dock">
+            {selectedClip && (selectedShot || selectedCutaway) && (
+              <ShotInspector
+                shot={selectedShot ?? selectedCutaway!}
+                clip={selectedClip}
+                index={selectedIndex}
+                count={shots.length}
+                covering={coveredTitle}
                 onMove={(shot, position) =>
                   sequenceMutation.mutate({ kind: 'move', shotId: shot.id, position })
                 }
                 onTrim={(shot, trim) =>
-                  sequenceMutation.mutate({ kind: 'trim', shotId: shot.id, trim })
+                  sequenceMutation.mutate(
+                    selectedCutaway
+                      ? { kind: 'trim-cutaway', cutawayId: shot.id, trim }
+                      : { kind: 'trim', shotId: shot.id, trim },
+                  )
                 }
-                onPlace={(clipId, position) =>
-                  sequenceMutation.mutate({ kind: 'add', clipId, position })
-                }
-                onMoveCutaway={(cutaway, baseShotId, offsetMs) =>
-                  sequenceMutation.mutate({
-                    kind: 'anchor',
-                    cutawayId: cutaway.id,
-                    baseShotId,
-                    offsetMs,
-                  })
-                }
-                onTrimCutaway={(cutaway, trim) =>
-                  sequenceMutation.mutate({ kind: 'trim-cutaway', cutawayId: cutaway.id, trim })
-                }
-                onPlaceCutaway={(clipId, baseShotId, offsetMs) =>
-                  sequenceMutation.mutate({ kind: 'cover', clipId, baseShotId, offsetMs })
-                }
-                onPlaceEnd={() => setPlacingClipId(null)}
+                onRemove={(shot) => {
+                  setSelectedShotId(null)
+                  if (selectedCutaway) {
+                    sequenceMutation.mutate({ kind: 'uncover', cutawayId: shot.id })
+                    return
+                  }
+                  setUndoRemoval({ shot: shot as Shot, title: selectedClip.title })
+                  sequenceMutation.mutate({ kind: 'remove', shotId: shot.id })
+                }}
                 busy={sequenceMutation.isPending}
               />
-              </div>
-              <div className="batch-editor__panels">
-              {selectedClip && (selectedShot || selectedCutaway) && (
-                <ShotInspector
-                  shot={selectedShot ?? selectedCutaway!}
-                  clip={selectedClip}
-                  index={selectedIndex}
-                  count={shots.length}
-                  covering={coveredTitle}
-                  onMove={(shot, position) =>
-                    sequenceMutation.mutate({ kind: 'move', shotId: shot.id, position })
-                  }
-                  onTrim={(shot, trim) =>
-                    sequenceMutation.mutate(
-                      selectedCutaway
-                        ? { kind: 'trim-cutaway', cutawayId: shot.id, trim }
-                        : { kind: 'trim', shotId: shot.id, trim },
-                    )
-                  }
-                  onRemove={(shot) => {
-                    setSelectedShotId(null)
-                    if (selectedCutaway) {
-                      sequenceMutation.mutate({ kind: 'uncover', cutawayId: shot.id })
-                      return
-                    }
-                    setUndoRemoval({ shot: shot as Shot, title: selectedClip.title })
-                    sequenceMutation.mutate({ kind: 'remove', shotId: shot.id })
+            )}
+
+            {undoRemoval && (
+              <div className="undo-toast" role="status">
+                Removed {undoRemoval.title} from the timeline
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => {
+                    const { shot } = undoRemoval
+                    setUndoRemoval(null)
+                    sequenceMutation.mutate({
+                      kind: 'add',
+                      clipId: shot.clip_id,
+                      position: shot.position,
+                      trim: {
+                        trim_start_ms: shot.trim_start_ms,
+                        trim_end_ms: shot.trim_end_ms,
+                      },
+                    })
                   }}
-                  busy={sequenceMutation.isPending}
-                />
-              )}
-              {undoRemoval && (
-                <div className="undo-toast" role="status">
-                  Removed {undoRemoval.title} from the timeline
-                  <button
-                    className="text-button"
-                    type="button"
-                    onClick={() => {
-                      const { shot } = undoRemoval
-                      setUndoRemoval(null)
-                      sequenceMutation.mutate({
-                        kind: 'add',
-                        clipId: shot.clip_id,
-                        position: shot.position,
-                        trim: {
-                          trim_start_ms: shot.trim_start_ms,
-                          trim_end_ms: shot.trim_end_ms,
-                        },
-                      })
-                    }}
-                  >
-                    Undo
-                  </button>
-                  <button
-                    className="text-button"
-                    type="button"
-                    onClick={() => setUndoRemoval(null)}
-                    aria-label="Dismiss"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              )}
-              <ExportPanel
-                sequenceRender={batch.sequence_render}
-                shotCount={shots.length}
-                totalMs={sequenceDurationMs(shots, clips)}
-                onExport={() => exportMutation.mutate()}
-                starting={exportMutation.isPending}
-                error={exportMutation.error}
-              />
-              {sequenceMutation.error && (
-                <div className="toast-error" role="alert">{sequenceMutation.error.message}</div>
-              )}
-              <ClipGrid
-                clips={clips}
-                onOpen={(clip) => navigate(clipRoute(batch.id, clip.id))}
-                onAdd={(clip) => sequenceMutation.mutate({ kind: 'add', clipId: clip.id })}
-                onDragToTimeline={(clip) => setPlacingClipId(clip.id)}
-                placedCounts={placedCounts}
-                adding={sequenceMutation.isPending}
-              />
+                >
+                  Undo
+                </button>
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => setUndoRemoval(null)}
+                  aria-label="Dismiss"
+                >
+                  Dismiss
+                </button>
               </div>
-            </div>
-          ) : (
-            <p className="batch-empty">
-              No clips yet. Add videos above and each one imports on its own — you can start
-              another batch while these run.
-            </p>
-          )}
+            )}
+
+            {sequenceMutation.error && (
+              <div className="toast-error" role="alert">{sequenceMutation.error.message}</div>
+            )}
+            <Timeline
+              shots={shots}
+              cutaways={cutaways}
+              clips={clips}
+              selectedShotId={selectedShotId}
+              placingClipId={placingClipId}
+              playheadMs={playheadMs}
+              onScrub={setPlayheadMs}
+              onSelect={setSelectedShotId}
+              onMove={(shot, position) =>
+                sequenceMutation.mutate({ kind: 'move', shotId: shot.id, position })
+              }
+              onTrim={(shot, trim) =>
+                sequenceMutation.mutate({ kind: 'trim', shotId: shot.id, trim })
+              }
+              onPlace={(clipId, position) =>
+                sequenceMutation.mutate({ kind: 'add', clipId, position })
+              }
+              onMoveCutaway={(cutaway, baseShotId, offsetMs) =>
+                sequenceMutation.mutate({
+                  kind: 'anchor',
+                  cutawayId: cutaway.id,
+                  baseShotId,
+                  offsetMs,
+                })
+              }
+              onTrimCutaway={(cutaway, trim) =>
+                sequenceMutation.mutate({ kind: 'trim-cutaway', cutawayId: cutaway.id, trim })
+              }
+              onPlaceCutaway={(clipId, baseShotId, offsetMs) =>
+                sequenceMutation.mutate({ kind: 'cover', clipId, baseShotId, offsetMs })
+              }
+              onPlaceEnd={() => setPlacingClipId(null)}
+              busy={sequenceMutation.isPending}
+            />
+          </div>
         </main>
       </div>
     )

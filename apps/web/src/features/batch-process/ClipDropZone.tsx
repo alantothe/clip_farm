@@ -10,15 +10,17 @@ const ACCEPTED = '.mp4,.mov,.m4v,.webm,.mkv,.avi'
  * Both routes end in the same call, and both accept several files at once,
  * because picking twelve files one at a time is the thing this Mode exists to
  * avoid.
+ *
+ * It is a strip at the head of the bin, a line high. Adding videos is the
+ * first thing done in a Batch and rarely the next one, and the panel it used
+ * to be held its height all session — height the Player is the better owner of.
  */
 export function ClipDropZone({
   onAdd,
   uploading,
-  compact = false,
 }: {
   onAdd: (files: File[]) => void
   uploading: boolean
-  compact?: boolean
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -30,7 +32,7 @@ export function ClipDropZone({
 
   return (
     <div
-      className={`clip-drop ${compact ? 'clip-drop--compact' : ''} ${dragging ? 'is-dragging' : ''}`}
+      className={`clip-drop ${dragging ? 'is-dragging' : ''}`}
       onDragOver={(event) => {
         event.preventDefault()
         setDragging(true)
@@ -55,20 +57,23 @@ export function ClipDropZone({
         }}
       />
       <span className="clip-drop__mark" aria-hidden="true">
-        {uploading ? <LoaderCircle className="spin" size={compact ? 20 : 30} /> : <UploadCloud size={compact ? 20 : 30} />}
+        {uploading ? <LoaderCircle className="spin" size={16} /> : <UploadCloud size={16} />}
       </span>
       <div className="clip-drop__copy">
-        <strong>{uploading ? 'Adding videos…' : 'Drop videos here'}</strong>
-        {!compact && <small>MP4, MOV, M4V, WebM, MKV, or AVI · up to 25 at a time</small>}
+        <strong>{uploading ? 'Adding videos…' : 'Drop videos'}</strong>
       </div>
       <button
-        className="primary-button"
+        className="text-button"
         type="button"
         onClick={() => inputRef.current?.click()}
         disabled={uploading}
+        // The visible word is inside the spoken one, so the strip can be a
+        // line high without the button going nameless.
+        aria-label="Choose videos"
+        title="Choose videos"
       >
-        <FolderOpen size={18} />
-        Choose videos
+        <FolderOpen size={14} />
+        Choose
       </button>
     </div>
   )
