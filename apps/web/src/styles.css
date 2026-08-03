@@ -2625,6 +2625,18 @@ input[type='range']::-webkit-slider-thumb {
 @media (max-width: 1100px) {
   .editing-grid { grid-template-columns: minmax(300px, 1fr) 340px; }
   .workspace { padding-right: 14px; padding-left: 14px; }
+  /*
+   * One column, and the Timeline directly under the Player: when vertical
+   * space is short, those two are the pairing that has to stay together. The
+   * stage gives up height so the Timeline is still reachable without
+   * scrolling past the thing you are scrubbing.
+   */
+  .batch-editor {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'player' 'timeline' 'panels';
+  }
+  .player__stage { max-height: 40vh; }
+  .player__stage--format { height: min(40vh, 460px); }
   .empty-workspace h1 { font-size: 64px; }
   .mode-grid { grid-template-columns: 1fr; }
   .mode-placeholder { min-height: 120px; }
@@ -3271,68 +3283,207 @@ input[type='range']::-webkit-slider-thumb {
   z-index: 4;
 }
 
-/* --- The rough cut ----------------------------------------------------- */
+/* --- The editing layout ------------------------------------------------ */
 
-.preview {
+/*
+ * A vertical Player and a proportional Timeline want opposite axes: one is
+ * narrow and tall, the other wide and short. So the Player takes a column of
+ * its own beside the panels, and the Timeline runs the full width beneath
+ * both — which is where an editor expects to find it.
+ */
+.batch-editor {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  grid-template-areas:
+    'player panels'
+    'timeline timeline';
+  gap: 18px 20px;
+  align-items: start;
+  margin-top: 20px;
+}
+
+.batch-editor__player { grid-area: player; min-width: 0; }
+.batch-editor__timeline { grid-area: timeline; min-width: 0; }
+
+.batch-editor__panels {
+  grid-area: panels;
   display: flex;
-  align-items: stretch;
-  gap: 16px;
-  margin: 22px 0 0;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* --- The Player -------------------------------------------------------- */
+
+.player {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 5px;
   background: var(--surface);
 }
 
-.preview__screen {
+/*
+ * The stage is the Batch's Format, so its aspect ratio is set inline from the
+ * Format rather than here. In the Source view it takes the source frame's own
+ * ratio instead, which is why neither is hard-coded.
+ */
+.player__stage {
   position: relative;
-  flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 132px;
-  height: 132px;
+  width: 100%;
+  max-height: 52vh;
+  margin: 0 auto;
   border-radius: 4px;
   background: var(--dark);
   overflow: hidden;
 }
 
-.preview__placeholder { color: #4a5350; }
+/* A 9:16 stage is tall, so cap it by height and let width follow. */
+.player__stage--format { height: min(52vh, 620px); width: auto; }
 
-/* Both elements are mounted so the next Shot can load while this one plays. */
-.preview__video {
+.player__placeholder { color: #4a5350; }
+
+/* The blurred fill a fit renders against, as the export builds it. */
+.player__backdrop {
+  position: absolute;
+  inset: -28px;
+  z-index: 1;
+  background-image: var(--stage-thumb);
+  background-position: center;
+  background-size: cover;
+  filter: blur(19px) saturate(1.15);
+  opacity: 0.7;
+}
+
+/* All three elements are mounted so the next Shot can load while this plays. */
+.player__video {
   position: absolute;
   inset: 0;
+  z-index: 2;
   width: 100%;
   height: 100%;
-  object-fit: contain;
   opacity: 0;
 }
 
-.preview__video.is-active { opacity: 1; }
+.player__video.is-active { opacity: 1; }
+
+/* Framed as the export will frame it: cropped to fill, or fitted whole. */
+.player__video--smart_crop { object-fit: cover; object-position: var(--crop-x) center; }
+.player__video--fit_background { object-fit: contain; }
+/* The Source view shows the frame entire, uncropped. */
+.player__video--whole { object-fit: contain; }
 
 /* Over the top, muted: the base element below still carries the sound. */
-.preview__video--cover { z-index: 2; }
+.player__video--cover { z-index: 3; }
 
-.preview__side {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
+/*
+ * In the Source view, the slice the vertical crop keeps. Everything outside it
+ * is dimmed by the ring shadow rather than by extra elements.
+ */
+.player__kept {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 4;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 0 9999px rgba(8, 10, 9, 0.55);
+  pointer-events: none;
 }
 
-.preview__transport {
+/* --- The Sequence under the Player ------------------------------------- */
+
+.scrub {
+  padding: 5px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.scrub:focus-visible { outline: 2px solid var(--dark); outline-offset: 2px; }
+
+.scrub__track {
+  position: relative;
+  height: 7px;
+  border-radius: 3px;
+  background: #e4e8e5;
+}
+
+.scrub__played {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: #9aa39c;
+}
+
+/* Where a Cutaway takes the picture over. */
+.scrub__cutaway {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 107, 82, 0.5);
+}
+
+/* A tick at every join, so the bar maps the cut and not just the progress. */
+.scrub__join {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--surface);
+}
+
+.scrub__head {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 15px;
+  margin-left: -1.5px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: var(--coral);
+}
+
+/* --- The Player's controls --------------------------------------------- */
+
+.player__transport {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.preview__clock {
+.player__clock {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
 
-.preview__now {
+.player__views {
+  display: flex;
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.player__views button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.player__views button + button { border-left: 1px solid var(--line); }
+.player__views button.is-active { background: var(--dark); color: var(--acid); }
+
+.player__now {
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -3340,7 +3491,7 @@ input[type='range']::-webkit-slider-thumb {
   min-width: 0;
 }
 
-.preview__now strong {
+.player__now strong {
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
@@ -3348,15 +3499,14 @@ input[type='range']::-webkit-slider-thumb {
   text-overflow: ellipsis;
 }
 
-.preview__now small,
-.preview__caveat {
+.player__now small,
+.player__caveat {
   font-size: 11px;
   color: var(--muted);
 }
 
-.preview__caveat {
-  margin: auto 0 0;
-  max-width: 44ch;
+.player__caveat {
+  margin: 0;
   line-height: 1.5;
 }
 

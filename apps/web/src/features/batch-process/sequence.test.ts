@@ -9,6 +9,7 @@
  */
 import { applySequenceEdit } from './BatchProcessPage'
 import { shotIsOver } from './useSequencePlayer'
+import { keptLeftPercent, keptWidthFraction } from './Player'
 import {
   anchorAt,
   insertionIndex,
@@ -297,5 +298,44 @@ describe('when a shot is over', () => {
     expect(shotIsOver(4_950, 5_000, null)).toBe(true)
     // Still a tenth of a second to play: not over.
     expect(shotIsOver(4_900, 5_000, null)).toBe(false)
+  })
+})
+
+describe('what the vertical crop keeps of a landscape frame', () => {
+  const landscape = { width: 1920, height: 1080, crop_center_x: 50 }
+
+  test('a 9:16 slice of a 16:9 frame is under a third of its width', () => {
+    // 1080 tall means 607.5 wide at 9:16, which is 31.6% of 1920.
+    expect(keptWidthFraction(landscape, 'vertical')).toBeCloseTo(0.3164, 3)
+  })
+
+  test('a source already narrower than the format loses nothing', () => {
+    expect(keptWidthFraction({ width: 1080, height: 1920 }, 'vertical')).toBe(1)
+    expect(keptWidthFraction({ width: 1000, height: 2000 }, 'vertical')).toBe(1)
+  })
+
+  test('a frame of unknown size is treated as 16:9', () => {
+    expect(keptWidthFraction({ width: null, height: null }, 'vertical')).toBeCloseTo(
+      keptWidthFraction(landscape, 'vertical'),
+      3,
+    )
+  })
+
+  test('the slice is centred where the operator put it', () => {
+    expect(keptLeftPercent(landscape, 'vertical')).toBeCloseTo(50 - 31.64 / 2, 1)
+    expect(keptLeftPercent({ ...landscape, crop_center_x: 25 }, 'vertical')).toBeCloseTo(
+      25 - 31.64 / 2,
+      1,
+    )
+  })
+
+  test('the slice cannot hang off either edge', () => {
+    // The renderer clamps the same way, so the outline must not promise a
+    // framing the export will not produce.
+    expect(keptLeftPercent({ ...landscape, crop_center_x: 0 }, 'vertical')).toBe(0)
+    expect(keptLeftPercent({ ...landscape, crop_center_x: 100 }, 'vertical')).toBeCloseTo(
+      100 - 31.64,
+      1,
+    )
   })
 })
