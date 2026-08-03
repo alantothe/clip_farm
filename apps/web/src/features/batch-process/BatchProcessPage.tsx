@@ -16,6 +16,7 @@ import { ClipDropZone } from './ClipDropZone'
 import { ClipGrid } from './ClipGrid'
 import { ExportPanel } from './ExportPanel'
 import { NewBatchDialog } from './NewBatchDialog'
+import { LayerProfilesDialog } from './LayerProfilesDialog'
 import { Player } from './Player'
 import { ShotInspector } from './ShotInspector'
 import { MIN_SPAN_MS, Timeline, sequenceDurationMs, shotTrim, sourceTimeMs } from './Timeline'
@@ -30,6 +31,7 @@ import type {
   Cutaway,
   Format,
   Phrase,
+  LayerProfile,
   Project,
   Shot,
   ShotFraming,
@@ -45,6 +47,7 @@ const batchKey = (id: string) => ['batch', id] as const
 const TITLE_STYLES_KEY = ['title-styles'] as const
 const PHRASES_KEY = ['phrases'] as const
 const FONTS_KEY = ['fonts'] as const
+const LAYER_PROFILES_KEY = ['layer-profiles'] as const
 
 /** What a Title edit sends, alongside which one it is about. */
 type TitleEdit =
@@ -67,6 +70,11 @@ type StyleAction =
 type PhraseAction =
   | { kind: 'save'; text: string; look: Partial<Title> }
   | { kind: 'delete'; phrase: Phrase }
+
+type LayerProfileAction =
+  | { kind: 'save'; name: string; titleIds: string[]; mediaIds: string[] }
+  | { kind: 'apply'; profile: LayerProfile }
+  | { kind: 'delete'; profile: LayerProfile }
 
 type SequenceEdit =
   | { kind: 'add'; clipId: string; position?: number; trim?: ShotTrim; framing?: ShotFraming }
@@ -277,6 +285,7 @@ export function BatchProcessPage() {
   const [selectedTitleId, setSelectedTitleId] = useState<string | null>(null)
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null)
   const [addMediaOpen, setAddMediaOpen] = useState(false)
+  const [layerProfilesOpen, setLayerProfilesOpen] = useState(false)
   // An inspector control still under the operator's finger. Local only, so the
   // stage follows a slider without a request per pixel.
   const [titlePreview, setTitlePreview] = useState<({ titleId: string } & TitlePatch) | null>(
@@ -313,6 +322,10 @@ export function BatchProcessPage() {
   // releases — the faces are vendored — so it is never refetched.
   const stylesQuery = useQuery({ queryKey: TITLE_STYLES_KEY, queryFn: api.listTitleStyles })
   const phrasesQuery = useQuery({ queryKey: PHRASES_KEY, queryFn: api.listPhrases })
+  const layerProfilesQuery = useQuery({
+    queryKey: LAYER_PROFILES_KEY,
+    queryFn: api.listLayerProfiles,
+  })
   const fontsQuery = useQuery({
     queryKey: FONTS_KEY,
     queryFn: api.getFontCatalog,
@@ -320,6 +333,7 @@ export function BatchProcessPage() {
   })
   const titleStyles: TitleStyle[] = stylesQuery.data ?? []
   const phrases: Phrase[] = phrasesQuery.data ?? []
+  const layerProfiles: LayerProfile[] = layerProfilesQuery.data ?? []
 
   const batch = batchQuery.data ?? null
   const clips = batch?.clips ?? []
@@ -338,6 +352,7 @@ export function BatchProcessPage() {
     onScrub: setPlayheadMs,
     selectedShotId,
   })
+  const layerProfileAtMs = Math.max(0, Math.min(playheadMs, player.totalMs))
   // A Clip can be placed more than once, so this counts rather than flags.
   const placedCounts = shots.reduce(
     (counts, shot) => counts.set(shot.clip_id, (counts.get(shot.clip_id) ?? 0) + 1),
@@ -474,6 +489,7 @@ export function BatchProcessPage() {
           text: 'Your text here',
           start_ms: 0,
           end_ms: Math.round(player.totalMs),
+          end_at_sequence_end: true,
           // The first built-in Style, so a new Title arrives looking like
           // something rather than as unstyled default type.
           style_id: titleStyles[0]?.id,
@@ -582,6 +598,33 @@ export function BatchProcessPage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: PHRASES_KEY }),
   })
 
+  const layerProfileMutation = useMutation<
+    LayerProfile | Batch | { deleted: number },
+    Error,
+    LayerProfileAction
+  >({
+    mutationFn: (action: LayerProfileAction) => {
+      if (action.kind === 'save') {
+        return api.createLayerProfile(batchId!, {
+          name: action.name,
+          title_ids: action.titleIds,
+          media_ids: action.mediaIds,
+        })
+      }
+      if (action.kind === 'apply') return api.applyLayerProfile(batchId!, action.profile.id)
+      return api.deleteLayerProfile(action.profile.id)
+    },
+    onSuccess: (result, action) => {
+      if (action.kind === 'apply' && 'shots' in result) {
+        queryClient.setQueryData(batchKey(result.id), result)
+        setSelectedTitleId(null)
+        setSelectedMediaId(null)
+      }
+      void queryClient.invalidateQueries({ queryKey: LAYER_PROFILES_KEY })
+      if (action.kind !== 'delete') setLayerProfilesOpen(false)
+    },
+  })
+
   const exportMutation = useMutation({
     mutationFn: () => api.renderSequence(batchId!),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) }),
@@ -624,6 +667,7 @@ export function BatchProcessPage() {
     setSelectedTitleId(null)
     setSelectedMediaId(null)
     setAddMediaOpen(false)
+    setLayerProfilesOpen(false)
     setTitlePreview(null)
     setFramingPreview(null)
     setUndoRemoval(null)
@@ -949,6 +993,10 @@ export function BatchProcessPage() {
                   setAddMediaOpen(true)
                 }}
                 canAddMedia={player.totalMs > 0}
+                onOpenProfiles={() => {
+                  layerProfileMutation.reset()
+                  setLayerProfilesOpen(true)
+                }}
               />
 
               {/*
@@ -1172,6 +1220,31 @@ export function BatchProcessPage() {
             setAddMediaOpen(false)
           }}
           onChoose={(image) => mediaMutation.mutate({ kind: 'add', image })}
+        />
+      )}
+      {layerProfilesOpen && batch && (
+        <LayerProfilesDialog
+          profiles={layerProfiles}
+          currentTitles={titles
+            .filter((title) => titleIsVisible(title, layerProfileAtMs))
+            .map((title) =>
+              titlePreview?.titleId === title.id ? { ...title, ...titlePreview } : title,
+            )}
+          currentMedia={media.filter((item) => {
+            return item.start_ms <= layerProfileAtMs && item.end_ms > layerProfileAtMs
+          })}
+          playheadMs={layerProfileAtMs}
+          pending={layerProfileMutation.isPending}
+          error={layerProfileMutation.error ?? layerProfilesQuery.error}
+          onCancel={() => {
+            layerProfileMutation.reset()
+            setLayerProfilesOpen(false)
+          }}
+          onSave={({ name, titleIds, mediaIds }) =>
+            layerProfileMutation.mutate({ kind: 'save', name, titleIds, mediaIds })
+          }
+          onApply={(profile) => layerProfileMutation.mutate({ kind: 'apply', profile })}
+          onDelete={(profile) => layerProfileMutation.mutate({ kind: 'delete', profile })}
         />
       )}
     </>

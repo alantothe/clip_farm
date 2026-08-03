@@ -11,6 +11,7 @@ from app.routers import (
     batches_router,
     batch_media_router,
     jobs_router,
+    layer_profiles_router,
     media_router,
     platforms_router,
     projects_router,
@@ -53,6 +54,7 @@ app.include_router(storage_router)
 app.include_router(titles_router)
 app.include_router(projects_router)
 app.include_router(jobs_router)
+app.include_router(layer_profiles_router)
 
 
 if settings.web_dist_dir and (settings.web_dist_dir / "index.html").is_file():

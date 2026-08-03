@@ -15,6 +15,7 @@ import {
   Pause,
   Play,
   Repeat,
+  Save,
   SkipBack,
   SkipForward,
   Square,
@@ -377,6 +378,7 @@ export function Player({
   canAddText = false,
   onAddMedia,
   canAddMedia = false,
+  onOpenProfiles,
 }: {
   player: SequencePlayer
   format: Format
@@ -409,6 +411,8 @@ export function Player({
   /** Open the full-length Sequence image uploader. */
   onAddMedia?: () => void
   canAddMedia?: boolean
+  /** Save the visible layers, or apply an arrangement saved from another Batch. */
+  onOpenProfiles?: () => void
 }) {
   const [view, setView] = useState<View>('format')
   const [guides, setGuides] = useState(false)
@@ -426,6 +430,9 @@ export function Player({
   const addMediaTooltip = dead
     ? 'Add a video before adding media'
     : 'Add an image for the full video'
+  const profilesTooltip = dead
+    ? 'Add a video before using layer profiles'
+    : 'Save or reuse a layer profile'
 
   /**
    * Fullscreen the stage, not the video.
@@ -724,7 +731,7 @@ export function Player({
       />
 
       <div className="player__transport">
-        {(onAddText || onAddMedia) && (
+        {(onAddText || onAddMedia || onOpenProfiles) && (
           <span className="player__layer-actions">
             {onAddText && (
               <span className="player__layer-action">
@@ -759,6 +766,24 @@ export function Player({
                 </button>
                 <span className="control-tooltip" id="add-media-tooltip" role="tooltip">
                   {addMediaTooltip}
+                </span>
+              </span>
+            )}
+            {onOpenProfiles && (
+              <span className="player__layer-action">
+                <button
+                  className="player__primary-action player__primary-action--profile"
+                  type="button"
+                  onClick={onOpenProfiles}
+                  disabled={dead}
+                  aria-label="Save or reuse layout"
+                  aria-describedby="layer-profiles-tooltip"
+                  title={profilesTooltip}
+                >
+                  <Save size={16} />
+                </button>
+                <span className="control-tooltip" id="layer-profiles-tooltip" role="tooltip">
+                  {profilesTooltip}
                 </span>
               </span>
             )}

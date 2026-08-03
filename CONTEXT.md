@@ -100,6 +100,10 @@ _Avoid_: profile, preset, template, theme, style
 Words an operator saves whole — the text together with its look and its place — to write again on another Batch. A Title Style saves the look without the words; a Phrase saves both. It has no name, because the words are its name, and no timing, because where it lands in a Sequence is a fact about that Sequence. Applying one copies its words and its look onto a Title and leaves that Title's timing alone (ADR 0008).
 _Avoid_: snippet, preset, saved text, template, favourite
 
+**Layer Profile**:
+A named, reusable arrangement of the Titles and Sequence images visible at one point in a Batch. It saves independent copies of their words, image bytes, look, size and placement, but no timing. Applying one to another Batch creates new layers that all run from the Sequence beginning to its actual end, whatever that duration becomes (ADR 0010). A Layer Profile is broader than a Title Style or Phrase because it may carry text and images together.
+_Avoid_: layout (already means how a source frame fits the Format), template, composition preset
+
 **Trim**:
 The span of the Source Video that survives into the Render.
 _Avoid_: cut, range, in/out

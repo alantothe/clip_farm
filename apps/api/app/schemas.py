@@ -265,6 +265,7 @@ class TitleCreate(TitleLookPatch):
     text: str = Field(default="", max_length=500)
     start_ms: int = Field(default=0, ge=0)
     end_ms: int = Field(default=3000, gt=0)
+    end_at_sequence_end: bool = False
     style_id: str | None = None
 
     @model_validator(mode="after")
@@ -378,6 +379,61 @@ class PhraseWrite(TitleLookPatch):
 class PhraseOut(TitleLookOut):
     id: str
     text: str
+
+
+class LayerProfileCreate(BaseModel):
+    """Save the chosen layers from one Batch as a reusable arrangement."""
+
+    name: str = Field(min_length=1, max_length=80)
+    title_ids: list[str] = Field(default_factory=list, max_length=3)
+    media_ids: list[str] = Field(default_factory=list, max_length=12)
+
+    @field_validator("name")
+    @classmethod
+    def name_is_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("A layer profile needs a name")
+        return cleaned
+
+    @model_validator(mode="after")
+    def contains_a_layer(self):
+        if not self.title_ids and not self.media_ids:
+            raise ValueError("Choose at least one text or image layer")
+        if len(set(self.title_ids)) != len(self.title_ids) or len(set(self.media_ids)) != len(
+            self.media_ids
+        ):
+            raise ValueError("A layer can only be saved once")
+        return self
+
+
+class LayerProfileTitleOut(TitleLookOut):
+    id: str
+    text: str
+
+
+class LayerProfileMediaOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    mime_type: str
+    size_bytes: int
+    center_x: float
+    center_y: float
+    width_percent: float
+    rotation_deg: float
+    opacity: float
+    url: str = ""
+
+
+class LayerProfileOut(BaseModel):
+    id: str
+    name: str
+    created_at: datetime
+    updated_at: datetime
+    titles: list[LayerProfileTitleOut] = Field(default_factory=list)
+    media: list[LayerProfileMediaOut] = Field(default_factory=list)
 
 
 class FontFamilyOut(BaseModel):

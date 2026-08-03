@@ -39,6 +39,7 @@ from app.schemas import (
     ShotUpdate,
 )
 from app.services.upload import UploadRejected, clip_title, source_suffix, store_source_video
+from app.services.sequence_layers import sync_sequence_end_layers
 from app.tasks import import_upload_task, render_sequence_task
 
 from app.routers._helpers import (
@@ -144,6 +145,7 @@ def _reject_inverted_trim(start_ms: int | None, end_ms: int | None) -> None:
 def _touch(session: Session, batch: Batch) -> BatchOut:
     """Stamp the Batch as edited and hand back its current state."""
     batch.updated_at = datetime.now(timezone.utc)
+    sync_sequence_end_layers(session, batch.id)
     session.commit()
     return serialize_batch(session, batch)
 

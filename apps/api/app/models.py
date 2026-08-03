@@ -343,6 +343,9 @@ class Title(TitleLook, Base):
     text: Mapped[str] = mapped_column(Text, default="")
     start_ms: Mapped[int] = mapped_column(Integer, default=0)
     end_ms: Mapped[int] = mapped_column(Integer, default=3000)
+    # Full-Sequence layers created by the editor and Layer Profiles follow a
+    # moving Sequence end until the operator explicitly retimes their end.
+    end_at_sequence_end: Mapped[bool] = mapped_column(Boolean, default=False)
     #: Which Style this was made from, for the label alone. Nulled rather than
     #: cascaded when that Style is deleted: the look is already copied here, so
     #: the Title is unaffected by losing the name it came from.
@@ -374,6 +377,7 @@ class BatchMedia(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)
     start_ms: Mapped[int] = mapped_column(Integer, default=0)
     end_ms: Mapped[int] = mapped_column(Integer)
+    end_at_sequence_end: Mapped[bool] = mapped_column(Boolean, default=False)
     center_x: Mapped[float] = mapped_column(Float, default=50.0)
     center_y: Mapped[float] = mapped_column(Float, default=50.0)
     width_percent: Mapped[float] = mapped_column(Float, default=65.0)
@@ -383,6 +387,71 @@ class BatchMedia(Base):
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
     batch: Mapped["Batch"] = relationship(back_populates="media")
+
+
+class LayerProfile(Base):
+    """A named arrangement of Titles and Sequence images, reusable by any Batch.
+
+    Timing deliberately does not live here. Applying a profile gives every
+    saved layer the target Sequence's whole span, so an eight-second source and
+    an eighty-second source use the same arrangement without stale end times.
+    """
+
+    __tablename__ = "layer_profiles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String, unique=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    titles: Mapped[list["LayerProfileTitle"]] = relationship(
+        back_populates="profile",
+        cascade="all, delete-orphan",
+        order_by="LayerProfileTitle.position",
+    )
+    media: Mapped[list["LayerProfileMedia"]] = relationship(
+        back_populates="profile",
+        cascade="all, delete-orphan",
+        order_by="LayerProfileMedia.position",
+    )
+
+
+class LayerProfileTitle(TitleLook, Base):
+    """One Title saved in a Layer Profile, without Sequence timing."""
+
+    __tablename__ = "layer_profile_titles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    profile_id: Mapped[str] = mapped_column(
+        ForeignKey("layer_profiles.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    text: Mapped[str] = mapped_column(Text, default="")
+
+    profile: Mapped["LayerProfile"] = relationship(back_populates="titles")
+
+
+class LayerProfileMedia(Base):
+    """One independently stored Sequence image in a Layer Profile."""
+
+    __tablename__ = "layer_profile_media"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    profile_id: Mapped[str] = mapped_column(
+        ForeignKey("layer_profiles.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String)
+    path: Mapped[str] = mapped_column(String)
+    mime_type: Mapped[str] = mapped_column(String)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    center_x: Mapped[float] = mapped_column(Float, default=50.0)
+    center_y: Mapped[float] = mapped_column(Float, default=50.0)
+    width_percent: Mapped[float] = mapped_column(Float, default=65.0)
+    rotation_deg: Mapped[float] = mapped_column(Float, default=0.0)
+    opacity: Mapped[float] = mapped_column(Float, default=1.0)
+
+    profile: Mapped["LayerProfile"] = relationship(back_populates="media")
 
 
 class Project(Base):

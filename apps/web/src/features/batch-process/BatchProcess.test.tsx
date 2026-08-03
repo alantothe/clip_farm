@@ -3,7 +3,16 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { vi } from 'vitest'
 import { App } from '../../App'
-import type { Batch, BatchMedia, BatchSummary, Project, SequenceRender, Shot } from '../../types'
+import type {
+  Batch,
+  BatchMedia,
+  BatchSummary,
+  LayerProfile,
+  Project,
+  SequenceRender,
+  Shot,
+  Title,
+} from '../../types'
 
 function LocationDisplay() {
   return <output data-testid="location">{useLocation().pathname}</output>
@@ -408,6 +417,63 @@ const sequenceImage: BatchMedia = {
   url: '/api/batches/batch-1/media/media-1/file',
 }
 
+const sequenceTitle: Title = {
+  id: 'title-1',
+  batch_id: 'batch-1',
+  text: 'Follow for more',
+  start_ms: 0,
+  end_ms: 8000,
+  style_id: null,
+  font_family: 'anton',
+  font_weight: 900,
+  italic: false,
+  uppercase: true,
+  font_size_percent: 6,
+  letter_spacing: 0,
+  color: '#FFFFFF',
+  opacity: 1,
+  align: 'center',
+  outline_color: '#000000',
+  outline_width: 0.08,
+  shadow_color: '#000000',
+  shadow_offset: 0,
+  background: 'none',
+  background_color: '#000000',
+  background_opacity: 0.7,
+  background_padding: 0.25,
+  center_x: 50,
+  center_y: 20,
+  width_percent: 80,
+  rotation_deg: 0,
+}
+
+const layerProfile: LayerProfile = {
+  id: 'profile-1',
+  name: 'Brand close',
+  created_at: '2026-08-03T12:00:00Z',
+  updated_at: '2026-08-03T12:00:00Z',
+  titles: [{
+    ...sequenceTitle,
+    id: 'profile-title-1',
+    batch_id: undefined,
+    start_ms: undefined,
+    end_ms: undefined,
+    style_id: undefined,
+  } as unknown as LayerProfile['titles'][number]],
+  media: [{
+    id: 'profile-media-1',
+    name: sequenceImage.name,
+    mime_type: sequenceImage.mime_type,
+    size_bytes: sequenceImage.size_bytes,
+    center_x: sequenceImage.center_x,
+    center_y: sequenceImage.center_y,
+    width_percent: sequenceImage.width_percent,
+    rotation_deg: sequenceImage.rotation_deg,
+    opacity: sequenceImage.opacity,
+    url: '/api/layer-profiles/profile-1/media/profile-media-1/file',
+  }],
+}
+
 const storedImage = {
   id: 'stored-1',
   name: 'brand-mark.png',
@@ -525,6 +591,70 @@ test('adds an image beside text and places it across the full timeline', async (
     'src',
     '/api/batches/batch-1/media/media-1/file',
   )
+})
+
+test('saves the text and image visible on the player as one layer profile', async () => {
+  const current = { ...placed, titles: [sequenceTitle], media: [sequenceImage] }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': current,
+    'GET /api/layer-profiles': [],
+    'GET /api/fonts': { families: [], faces: [] },
+    'POST /api/batches/batch-1/layer-profiles': layerProfile,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Save or reuse layout' }))
+
+  const dialog = screen.getByRole('dialog', { name: 'Layer profiles' })
+  expect(within(dialog).getByRole('checkbox', { name: /Follow for more/ })).toBeChecked()
+  expect(within(dialog).getByRole('checkbox', { name: /brand-mark.png/ })).toBeChecked()
+  fireEvent.change(within(dialog).getByLabelText('Profile name'), {
+    target: { value: 'Brand close' },
+  })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save profile' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/layer-profiles',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Brand close',
+          title_ids: ['title-1'],
+          media_ids: ['media-1'],
+        }),
+      }),
+    ),
+  )
+})
+
+test('applies a saved layer profile to the full target timeline', async () => {
+  const applied = { ...placed, titles: [sequenceTitle], media: [sequenceImage] }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': placed,
+    'GET /api/layer-profiles': [layerProfile],
+    'GET /api/fonts': { families: [], faces: [] },
+    'POST /api/batches/batch-1/layer-profiles/profile-1/apply': applied,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Save or reuse layout' }))
+  const dialog = screen.getByRole('dialog', { name: 'Layer profiles' })
+  expect(within(dialog).getByText('0:00 → end')).toBeVisible()
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/layer-profiles/profile-1/apply',
+      expect.objectContaining({ method: 'POST' }),
+    ),
+  )
+  const titleTrack = await screen.findByRole('list', { name: 'Titles' })
+  expect(within(titleTrack).getByRole('button', { name: /Follow for more, 00:00.0 to 00:08.0/ }))
+    .toBeVisible()
+  const mediaTrack = screen.getByRole('list', { name: 'Media' })
+  expect(within(mediaTrack).getByRole('button', { name: /brand-mark.png, 00:00.0 to 00:08.0/ }))
+    .toBeVisible()
 })
 
 test('reuses and deletes images from global Storage', async () => {

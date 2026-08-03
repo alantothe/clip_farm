@@ -3,6 +3,7 @@
 from app.routers.batches import router as batches_router
 from app.routers.batch_media import router as batch_media_router
 from app.routers.jobs import router as jobs_router
+from app.routers.layer_profiles import router as layer_profiles_router
 from app.routers.media import router as media_router
 from app.routers.platforms import router as platforms_router
 from app.routers.projects import router as projects_router
@@ -14,6 +15,7 @@ __all__ = [
     "batches_router",
     "batch_media_router",
     "jobs_router",
+    "layer_profiles_router",
     "media_router",
     "platforms_router",
     "projects_router",

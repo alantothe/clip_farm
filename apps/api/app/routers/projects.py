@@ -32,6 +32,7 @@ from app.schemas import (
 )
 from app.services.caption_rewrite import CaptionRewriteError, rewrite_social_caption
 from app.services.media import MediaProcessingError, validate_overlay_image
+from app.services.sequence_layers import sync_sequence_end_layers
 from app.services.x_download import normalize_x_post_url
 from app.tasks import import_project_task
 
@@ -126,7 +127,11 @@ def get_project(project_id: str, session: Session = Depends(get_db)) -> ProjectO
 def delete_project(project_id: str, session: Session = Depends(get_db)) -> DeletionOut:
     project = get_project_or_404(session, project_id)
     ensure_project_can_be_deleted(project)
+    batch_id = project.batch_id
     session.delete(project)
+    session.flush()
+    if batch_id:
+        sync_sequence_end_layers(session, batch_id)
     session.commit()
     remove_project_files(project_id)
     return DeletionOut(deleted=1)
@@ -146,6 +151,8 @@ def update_project(
         raise HTTPException(status_code=422, detail="Trim end exceeds source duration")
     for field, value in updates.items():
         setattr(project, field, value)
+    if project.batch_id and {"trim_start_ms", "trim_end_ms"} & updates.keys():
+        sync_sequence_end_layers(session, project.batch_id)
     session.commit()
     return serialize_project(get_project_or_404(session, project.id))
 

@@ -166,6 +166,22 @@ def init_db() -> None:
         # none of the table rebuild ADR 0004 did to `shots`.
         "format": "ALTER TABLE batches ADD COLUMN format VARCHAR NOT NULL DEFAULT 'vertical'",
     }
+    title_columns = {column["name"] for column in inspect(engine).get_columns("titles")}
+    title_additions = {
+        "end_at_sequence_end": (
+            "ALTER TABLE titles ADD COLUMN end_at_sequence_end "
+            "BOOLEAN NOT NULL DEFAULT 0"
+        ),
+    }
+    batch_media_columns = {
+        column["name"] for column in inspect(engine).get_columns("batch_media")
+    }
+    batch_media_additions = {
+        "end_at_sequence_end": (
+            "ALTER TABLE batch_media ADD COLUMN end_at_sequence_end "
+            "BOOLEAN NOT NULL DEFAULT 0"
+        ),
+    }
     with engine.begin() as connection:
         for name, statement in overlay_additions.items():
             if name not in overlay_columns:
@@ -181,4 +197,10 @@ def init_db() -> None:
                 connection.exec_driver_sql(statement)
         for name, statement in batch_additions.items():
             if name not in batch_columns:
+                connection.exec_driver_sql(statement)
+        for name, statement in title_additions.items():
+            if name not in title_columns:
+                connection.exec_driver_sql(statement)
+        for name, statement in batch_media_additions.items():
+            if name not in batch_media_columns:
                 connection.exec_driver_sql(statement)

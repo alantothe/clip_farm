@@ -89,6 +89,7 @@ async def upload_batch_media(
         path="",
         mime_type=image.content_type or "image/jpeg",
         end_ms=end,
+        end_at_sequence_end=True,
     )
     session.add(item)
     session.flush()
@@ -151,6 +152,7 @@ def add_batch_media_from_storage(
         mime_type=stored.mime_type,
         size_bytes=stored.size_bytes,
         end_ms=end,
+        end_at_sequence_end=True,
     )
     session.add(item)
     session.flush()
@@ -200,6 +202,8 @@ def update_batch_media(
         value = getattr(payload, field)
         if field in sent and value is not None:
             setattr(item, field, value)
+    if "end_ms" in sent:
+        item.end_at_sequence_end = False
     return _touch(session, batch_id)
 
 

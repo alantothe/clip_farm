@@ -32,6 +32,7 @@ from app.services.media import (
     sha256_file,
 )
 from app.services.sequence import plan_sequence
+from app.services.sequence_layers import sync_sequence_end_layers
 from app.services.batch_media import media_in_span
 from app.services.titles import titles_in_span
 from app.services.transcription import TranscriptionError, transcribe_audio
@@ -133,6 +134,8 @@ def _prepare_clip(session, project: Project, job: Job, source: Path) -> None:
     project.width = metadata["width"]
     project.height = metadata["height"]
     project.fps = metadata["fps"]
+    if project.batch_id:
+        sync_sequence_end_layers(session, project.batch_id)
 
     session.execute(delete(Artifact).where(Artifact.project_id == project.id))
     _add_artifact(session, project.id, "source", source)

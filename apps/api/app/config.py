@@ -78,6 +78,11 @@ class Settings(BaseSettings):
         return self.data_dir / "storage" / "images"
 
     @property
+    def layer_profiles_dir(self) -> Path:
+        """Independent image copies kept by reusable layer profiles."""
+        return self.data_dir / "layer-profiles"
+
+    @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
@@ -108,6 +113,7 @@ class Settings(BaseSettings):
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.batches_dir.mkdir(parents=True, exist_ok=True)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.layer_profiles_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

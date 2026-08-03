@@ -78,12 +78,21 @@ def _reject_title_slot_overflow(
     """
     events = [(start_ms, 1), (end_ms, -1)]
     for title in titles:
-        if title.id == replacing_id or title.start_ms >= end_ms or title.end_ms <= start_ms:
+        # A full-Sequence Title owns its slot through a future extension too.
+        # Treating its current stored end as final would allow an orphaned
+        # fourth Title immediately after it, then extending the Sequence would
+        # make the two overlap behind the API's back.
+        title_end = 10**15 if title.end_at_sequence_end else title.end_ms
+        if (
+            (replacing_id is not None and title.id == replacing_id)
+            or title.start_ms >= end_ms
+            or title_end <= start_ms
+        ):
             continue
         events.extend(
             (
                 (max(start_ms, title.start_ms), 1),
-                (min(end_ms, title.end_ms), -1),
+                (min(end_ms, title_end), -1),
             )
         )
 
@@ -137,6 +146,7 @@ def add_title(
         text=payload.text,
         start_ms=payload.start_ms,
         end_ms=payload.end_ms,
+        end_at_sequence_end=payload.end_at_sequence_end,
     )
     if payload.style_id is not None:
         apply_style(title, _resolve_style(session, payload.style_id))
@@ -174,6 +184,8 @@ def update_title(
             batch_titles(session, batch.id), start, end, replacing_id=title.id
         )
     title.start_ms, title.end_ms = start, end
+    if "end_ms" in sent:
+        title.end_at_sequence_end = False
     if payload.text is not None:
         title.text = payload.text
 

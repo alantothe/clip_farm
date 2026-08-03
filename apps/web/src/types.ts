@@ -266,9 +266,45 @@ export interface Phrase extends TitleLook {
   text: string
 }
 
+/** A Title saved inside a reusable Layer Profile, without Sequence timing. */
+export interface LayerProfileTitle extends TitleLook {
+  id: string
+  text: string
+}
+
+/** A still image saved inside a reusable Layer Profile, without Sequence timing. */
+export interface LayerProfileMedia {
+  id: string
+  name: string
+  mime_type: string
+  size_bytes: number
+  center_x: number
+  center_y: number
+  width_percent: number
+  rotation_deg: number
+  opacity: number
+  url: string
+}
+
+/** A named arrangement copied onto any Batch from 0:00 to its Sequence end. */
+export interface LayerProfile {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+  titles: LayerProfileTitle[]
+  media: LayerProfileMedia[]
+}
+
 /** What a Title edit sends: only what changed. */
 export type TitlePatch = Partial<TitleLook> &
-  Partial<{ text: string; start_ms: number; end_ms: number; style_id: string }>
+  Partial<{
+    text: string
+    start_ms: number
+    end_ms: number
+    style_id: string
+    end_at_sequence_end: boolean
+  }>
 
 export interface FontFamily {
   id: string
