@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { vi } from 'vitest'
 import { App } from '../../App'
-import type { Batch, BatchSummary, Project, SequenceRender } from '../../types'
+import type { Batch, BatchSummary, Project, SequenceRender, Shot } from '../../types'
 
 function LocationDisplay() {
   return <output data-testid="location">{useLocation().pathname}</output>
@@ -300,10 +300,14 @@ function sequencedBatch(overrides: Partial<Batch> = {}): Batch {
   }
 }
 
+function makeShot(overrides: Partial<Shot> & Pick<Shot, 'id' | 'clip_id' | 'position'>): Shot {
+  return { trim_start_ms: null, trim_end_ms: null, ...overrides }
+}
+
 const placed: Batch = sequencedBatch({
   shots: [
-    { id: 'shot-1', clip_id: 'clip-ready', position: 0 },
-    { id: 'shot-2', clip_id: 'clip-second', position: 1 },
+    makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0 }),
+    makeShot({ id: 'shot-2', clip_id: 'clip-second', position: 1 }),
   ],
 })
 
@@ -327,7 +331,7 @@ test('an imported clip waits off the timeline until it is added', async () => {
   )
 })
 
-test('shows the placed clips in order with a running total', async () => {
+test('draws each shot as wide as it is long, and names it', async () => {
   stubApi({ 'GET /api/batches/batch-1': placed })
 
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
@@ -335,20 +339,51 @@ test('shows the placed clips in order with a running total', async () => {
   const timeline = await screen.findByRole('list', { name: 'Timeline' })
   const entries = within(timeline).getAllByRole('listitem')
   expect(entries).toHaveLength(2)
-  expect(entries[0]).toHaveTextContent('first')
-  expect(entries[1]).toHaveTextContent('second')
+  // Horizontal space is time: 5s then 3s, at the default scale.
+  expect(entries[0]).toHaveStyle({ left: '0px', width: '120px' })
+  expect(entries[1]).toHaveStyle({ left: '120px', width: '72px' })
+  // A shot too narrow to hold its title still says what it is.
+  expect(within(timeline).getByRole('button', { name: 'first, shot 1 of 2, 00:05.0' })).toBeVisible()
+  expect(within(timeline).getByRole('button', { name: 'second, shot 2 of 2, 00:03.0' })).toBeVisible()
   // 5s + 3s of trimmed clip, not the raw sources.
   expect(screen.getByRole('heading', { name: /2 clips/ })).toHaveTextContent('0:08')
-  // A clip already placed is not offered again.
-  expect(screen.queryByRole('button', { name: 'Add first to the timeline' })).toBeNull()
 })
+
+test('a clip already on the timeline can be placed again', async () => {
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': placed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  // The old timeline swapped this button for a badge; a clip can repeat now.
+  const add = await screen.findByRole('button', { name: 'Add first to the timeline' })
+  expect(add).toBeEnabled()
+  expect(screen.getAllByText('On the timeline').length).toBeGreaterThan(0)
+  fireEvent.click(add)
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ clip_id: 'clip-ready' }),
+      }),
+    ),
+  )
+})
+
+/** Selecting a Shot is what opens the controls that dragging cannot reach. */
+async function selectShot(name: RegExp) {
+  const timeline = await screen.findByRole('list', { name: 'Timeline' })
+  fireEvent.focus(within(timeline).getByRole('button', { name }))
+}
 
 test('reorders the timeline by position rather than by swap', async () => {
   const fetchMock = stubApi({ 'GET /api/batches/batch-1': placed })
 
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/second, shot 2 of 2/)
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Move second earlier' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Move second earlier' }))
 
   await waitFor(() =>
     expect(fetchMock).toHaveBeenCalledWith(
@@ -358,21 +393,80 @@ test('reorders the timeline by position rather than by swap', async () => {
   )
 })
 
-test('the first clip cannot move earlier and the last cannot move later', async () => {
+test('the first shot cannot move earlier and the last cannot move later', async () => {
   stubApi({ 'GET /api/batches/batch-1': placed })
 
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
 
-  expect(await screen.findByRole('button', { name: 'Move first earlier' })).toBeDisabled()
+  await selectShot(/first, shot 1 of 2/)
+  expect(screen.getByRole('button', { name: 'Move first earlier' })).toBeDisabled()
+  await selectShot(/second, shot 2 of 2/)
   expect(screen.getByRole('button', { name: 'Move second later' })).toBeDisabled()
 })
 
-test('removing a clip from the timeline leaves it in the batch', async () => {
+test('trimming a shot sends only the edge that moved', async () => {
   const fetchMock = stubApi({ 'GET /api/batches/batch-1': placed })
 
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 2/)
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Remove first from the timeline' }))
+  const out = screen.getByRole('spinbutton', { name: 'Shot out point, seconds' })
+  fireEvent.change(out, { target: { value: '3.5' } })
+  fireEvent.blur(out)
+
+  // The in point is untouched, so it keeps following the clip rather than
+  // being frozen at its current value.
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots/shot-1',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ trim_end_ms: 3500 }) }),
+    ),
+  )
+})
+
+test('a shot trimmed on the timeline can be reset to follow its clip', async () => {
+  const trimmed = sequencedBatch({
+    shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0, trim_end_ms: 2000 })],
+  })
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': trimmed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 1/)
+  expect(screen.getByText(/trimmed here/)).toBeVisible()
+
+  fireEvent.click(screen.getByRole('button', { name: "Reset first to its clip's trim" }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots/shot-1',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ trim_start_ms: null, trim_end_ms: null }),
+      }),
+    ),
+  )
+})
+
+test('reset is offered only to a shot that has its own trim', async () => {
+  stubApi({ 'GET /api/batches/batch-1': placed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 2/)
+
+  expect(screen.getByText(/follows clip/)).toBeVisible()
+  expect(screen.getByRole('button', { name: "Reset first to its clip's trim" })).toBeDisabled()
+})
+
+test('removing a shot leaves the clip in the batch, and offers an undo', async () => {
+  const trimmed = sequencedBatch({
+    shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0, trim_start_ms: 500 })],
+  })
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': trimmed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 1/)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Remove first from the timeline' }))
 
   await waitFor(() =>
     expect(fetchMock).toHaveBeenCalledWith(
@@ -382,6 +476,25 @@ test('removing a clip from the timeline leaves it in the batch', async () => {
   )
   // Still in the grid, ready to add back.
   expect(screen.getByRole('button', { name: 'Edit first' })).toBeVisible()
+
+  // Removing is the one gesture that discards a trim a re-drag would not
+  // restore, so undo puts the shot back where it was, trimmed as it was.
+  fireEvent.click(await screen.findByRole('button', { name: 'Undo' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          clip_id: 'clip-ready',
+          position: 0,
+          trim_start_ms: 500,
+          trim_end_ms: null,
+        }),
+      }),
+    ),
+  )
 })
 
 test('exporting is refused until something is on the timeline', async () => {

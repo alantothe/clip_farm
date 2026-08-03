@@ -116,7 +116,16 @@ export interface Shot {
   id: string
   clip_id: string
   position: number
+  /** Null means this Shot plays its Clip's Trim rather than one of its own. */
+  trim_start_ms: number | null
+  trim_end_ms: number | null
 }
+
+/** What a trim drag sends: only the edge that moved, so the other stays as it was. */
+export type ShotTrim = Partial<{
+  trim_start_ms: number | null
+  trim_end_ms: number | null
+}>
 
 /** The finished video a Sequence produces: every Shot in order, joined. */
 export interface SequenceRender {
