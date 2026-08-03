@@ -844,6 +844,69 @@ test('removing a shot leaves the clip in the batch, and offers an undo', async (
   )
 })
 
+test('right-clicking a timeline clip offers the shared remove menu', async () => {
+  const removed = sequencedBatch({
+    shots: [makeShot({ id: 'shot-2', clip_id: 'clip-second', position: 0 })],
+  })
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': placed,
+    'DELETE /api/batches/batch-1/shots/shot-1': removed,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const timeline = await screen.findByRole('list', { name: 'Timeline' })
+  fireEvent.contextMenu(within(timeline).getByRole('button', { name: /first, shot 1 of 2/ }), {
+    clientX: 80,
+    clientY: 120,
+  })
+
+  const menu = screen.getByRole('menu', { name: 'Clip options for first' })
+  const remove = within(menu).getByRole('menuitem', { name: /Remove clip from timeline Del/ })
+  expect(remove).toBeVisible()
+  fireEvent.click(remove)
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots/shot-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+  expect(await screen.findByRole('button', { name: 'Undo' })).toBeVisible()
+})
+
+test('Delete removes the selected timeline clip but not while editing a field', async () => {
+  const trimmed = sequencedBatch({
+    shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0 })],
+  })
+  const removed = sequencedBatch({ shots: [] })
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': trimmed,
+    'DELETE /api/batches/batch-1/shots/shot-1': removed,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 1/)
+
+  const inPoint = screen.getByRole('spinbutton', { name: 'Shot in point, seconds' })
+  fireEvent.keyDown(inPoint, { key: 'Delete' })
+  expect(fetchMock).not.toHaveBeenCalledWith(
+    '/api/batches/batch-1/shots/shot-1',
+    expect.objectContaining({ method: 'DELETE' }),
+  )
+
+  const timeline = screen.getByRole('list', { name: 'Timeline' })
+  const shot = within(timeline).getByRole('button', { name: /first, shot 1 of 1/ })
+  fireEvent.keyDown(shot, { key: 'Delete' })
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots/shot-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+})
+
 test('plays the sequence as a rough cut, and says that is what it is', async () => {
   stubApi({ 'GET /api/batches/batch-1': placed })
 

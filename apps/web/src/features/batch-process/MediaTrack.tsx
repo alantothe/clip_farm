@@ -229,7 +229,7 @@ export function MediaTrack({
       {menu && menuItem &&
         createPortal(
           <div
-            className="media-context-menu"
+            className="timeline-context-menu"
             ref={menuRef}
             role="menu"
             aria-label={`Image options for ${menuItem.name}`}

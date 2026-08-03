@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Maximize2, Type } from 'lucide-react'
+import { Maximize2, Trash2, Type } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import type { Title } from '../../types'
 
@@ -10,7 +10,7 @@ const SNAP_MS = 100
 const DRAG_THRESHOLD_PX = 3
 const TITLE_ROW_PX = 50
 const CONTEXT_MENU_WIDTH = 204
-const CONTEXT_MENU_HEIGHT = 50
+const CONTEXT_MENU_HEIGHT = 96
 export const MAX_TITLE_SLOTS = 3
 
 /** The editor row assigned to each Title by interval partitioning. */
@@ -122,6 +122,7 @@ export function TitleTrack({
   onSelect,
   onMove,
   onTrim,
+  onRemove,
   busy,
 }: {
   titles: Title[]
@@ -131,6 +132,7 @@ export function TitleTrack({
   onSelect: (titleId: string | null) => void
   onMove: (title: Title, span: TitleSpan) => void
   onTrim: (title: Title, span: TitleSpan) => void
+  onRemove: (title: Title) => void
   busy: boolean
 }) {
   const [draft, setDraft] = useState<{ titleId: string; start: number; end: number } | null>(null)
@@ -313,6 +315,8 @@ export function TitleTrack({
               onPointerUp={onPointerUp}
               onContextMenu={(event) => openContextMenu(event, title)}
               onFocus={() => onSelect(title.id)}
+              title="Right-click for text options · Delete to remove"
+              aria-keyshortcuts="Delete Backspace"
               aria-label={`${title.text || 'Empty title'}, ${formatTime(
                 title.start_ms,
               )} to ${formatTime(title.end_ms)}${
@@ -395,6 +399,20 @@ export function TitleTrack({
               <Maximize2 size={14} aria-hidden="true" />
               <span>{contextTitleIsFull ? 'Already fills timeline' : 'Fill entire timeline'}</span>
               <small>100%</small>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="is-danger"
+              disabled={busy}
+              onClick={() => {
+                onRemove(contextTitle)
+                setContextMenu(null)
+              }}
+            >
+              <Trash2 size={14} aria-hidden="true" />
+              <span>Remove text</span>
+              <kbd>Del</kbd>
             </button>
           </div>,
           document.body,

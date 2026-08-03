@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Clapperboard, ZoomIn, ZoomOut } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Clapperboard, Trash2, ZoomIn, ZoomOut } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import { artifact } from '../../lib/project'
 import type { BatchMedia, BatchMediaPatch, Cutaway, Project, Shot, ShotTrim, Title } from '../../types'
@@ -182,6 +183,8 @@ type Gesture =
       from: { start: number; end: number }
     }
 
+type TimelineContextMenu = { itemId: string; x: number; y: number }
+
 /**
  * The strip that presents a Sequence for editing.
  *
@@ -215,6 +218,7 @@ export function Timeline({
   onSelectMedia,
   onMove,
   onTrim,
+  onRemove,
   onPlace,
   onMoveCutaway,
   onTrimCutaway,
@@ -222,6 +226,7 @@ export function Timeline({
   onPlaceEnd,
   onMoveTitle,
   onTrimTitle,
+  onRemoveTitle,
   onChangeMedia,
   onRemoveMedia,
   busy,
@@ -242,6 +247,7 @@ export function Timeline({
   onSelectMedia: (mediaId: string | null) => void
   onMove: (shot: Shot, position: number) => void
   onTrim: (shot: Shot, trim: ShotTrim) => void
+  onRemove: (shot: Shot | Cutaway) => void
   onPlace: (clipId: string, position: number) => void
   onMoveCutaway: (cutaway: Cutaway, baseShotId: string, offsetMs: number) => void
   onTrimCutaway: (cutaway: Cutaway, trim: ShotTrim) => void
@@ -249,6 +255,7 @@ export function Timeline({
   onPlaceEnd: () => void
   onMoveTitle: (title: Title, span: TitleSpan) => void
   onTrimTitle: (title: Title, span: TitleSpan) => void
+  onRemoveTitle: (title: Title) => void
   onChangeMedia: (media: BatchMedia, patch: BatchMediaPatch) => void
   onRemoveMedia: (media: BatchMedia) => void
   busy: boolean
@@ -263,9 +270,11 @@ export function Timeline({
     { cutawayId: string; baseShotId: string; offsetMs: number } | null
   >(null)
   const [coverDrop, setCoverDrop] = useState<number | null>(null)
+  const [contextMenu, setContextMenu] = useState<TimelineContextMenu | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const trackRef = useRef<HTMLOListElement>(null)
   const coverRef = useRef<HTMLOListElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const dragged = useRef(false)
   const fitted = useRef(false)
@@ -397,13 +406,44 @@ export function Timeline({
   })
 
   function begin(event: React.PointerEvent<HTMLElement>, next: Gesture) {
-    if (busy) return
+    if (busy || event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
     dragged.current = false
     gesture.current = next
   }
+
+  function openContextMenu(event: React.MouseEvent<HTMLElement>, itemId: string) {
+    event.preventDefault()
+    event.stopPropagation()
+    onSelect(itemId)
+    setContextMenu({ itemId, x: event.clientX, y: event.clientY })
+  }
+
+  useEffect(() => {
+    if (!contextMenu) return
+    menuRef.current?.querySelector('button')?.focus()
+
+    function dismiss(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setContextMenu(null)
+    }
+    function dismissOnKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') setContextMenu(null)
+    }
+    const dismissWithoutEvent = () => setContextMenu(null)
+
+    window.addEventListener('pointerdown', dismiss)
+    window.addEventListener('resize', dismissWithoutEvent)
+    window.addEventListener('scroll', dismissWithoutEvent, true)
+    document.addEventListener('keydown', dismissOnKey)
+    return () => {
+      window.removeEventListener('pointerdown', dismiss)
+      window.removeEventListener('resize', dismissWithoutEvent)
+      window.removeEventListener('scroll', dismissWithoutEvent, true)
+      document.removeEventListener('keydown', dismissOnKey)
+    }
+  }, [contextMenu])
 
   function onPointerMove(event: React.PointerEvent<HTMLElement>) {
     const current = gesture.current
@@ -530,6 +570,13 @@ export function Timeline({
   const ticks: number[] = []
   for (let second = 0; second * 1000 <= totalMs; second += stepSec) ticks.push(second)
 
+  const contextShot = shots.find((shot) => shot.id === contextMenu?.itemId) ?? null
+  const contextCutaway = cutaways.find((cutaway) => cutaway.id === contextMenu?.itemId) ?? null
+  const contextItem = contextShot ?? contextCutaway
+  const contextClip = contextItem
+    ? clips.find((clip) => clip.id === contextItem.clip_id) ?? null
+    : null
+
   return (
     <div className="sequence">
       <div className="sequence__bar">
@@ -596,6 +643,7 @@ export function Timeline({
             onSelect={onSelectTitle}
             onMove={onMoveTitle}
             onTrim={onTrimTitle}
+            onRemove={onRemoveTitle}
             busy={busy}
           />
 
@@ -642,7 +690,10 @@ export function Timeline({
                       }
                       onPointerMove={onPointerMove}
                       onPointerUp={onPointerUp}
+                      onContextMenu={(event) => openContextMenu(event, item.cutaway.id)}
                       onFocus={() => onSelect(item.cutaway.id)}
+                      title="Right-click for cutaway options · Delete to remove"
+                      aria-keyshortcuts="Delete Backspace"
                       aria-label={`${item.clip.title}, cutaway covering ${
                         formatTime(item.spanMs)
                       }${item.overflows ? ', clipped to the shot it covers' : ''}`}
@@ -720,7 +771,10 @@ export function Timeline({
                     }
                     onPointerMove={onPointerMove}
                     onPointerUp={onPointerUp}
+                    onContextMenu={(event) => openContextMenu(event, item.shot.id)}
                     onFocus={() => onSelect(item.shot.id)}
+                    title="Right-click for clip options · Delete to remove"
+                    aria-keyshortcuts="Delete Backspace"
                     aria-label={`${item.clip.title}, shot ${index + 1} of ${placed.length}, ${
                       formatTime(item.spanMs)
                     }${overridden ? ', trimmed on the timeline' : ''}`}
@@ -791,6 +845,36 @@ export function Timeline({
           />
         </div>
       </div>
+
+      {contextMenu && contextItem && contextClip &&
+        createPortal(
+          <div
+            className="timeline-context-menu"
+            ref={menuRef}
+            role="menu"
+            aria-label={`${contextCutaway ? 'Cutaway' : 'Clip'} options for ${contextClip.title}`}
+            style={{
+              left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 228)),
+              top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 58)),
+            }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="is-danger"
+              disabled={busy}
+              onClick={() => {
+                onRemove(contextItem)
+                setContextMenu(null)
+              }}
+            >
+              <Trash2 size={14} aria-hidden="true" />
+              <span>{contextCutaway ? 'Remove cutaway' : 'Remove clip from timeline'}</span>
+              <kbd>Del</kbd>
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }

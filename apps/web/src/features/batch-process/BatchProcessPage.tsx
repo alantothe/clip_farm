@@ -686,6 +686,73 @@ export function BatchProcessPage() {
     }
   }
 
+  /** Every Timeline removal route shares selection cleanup and Shot undo. */
+  function removeTimelineItem(item: Shot | Cutaway) {
+    setSelectedShotId((current) => (current === item.id ? null : current))
+    setFramingPreview(null)
+    if ('base_shot_id' in item) {
+      sequenceMutation.mutate({ kind: 'uncover', cutawayId: item.id })
+      return
+    }
+    const clip = clips.find((entry) => entry.id === item.clip_id)
+    setUndoRemoval({ shot: item, title: clip?.title ?? 'clip' })
+    sequenceMutation.mutate({ kind: 'remove', shotId: item.id })
+  }
+
+  function removeTimelineTitle(title: Title) {
+    setSelectedTitleId((current) => (current === title.id ? null : current))
+    setTitlePreview(null)
+    titleMutation.mutate({ kind: 'remove', titleId: title.id })
+  }
+
+  // Delete is an editor command while a timeline item is selected. Keep it out
+  // of fields so editing its numbers or words can never remove the item.
+  useEffect(() => {
+    function removeSelected(event: KeyboardEvent) {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        (event.key !== 'Delete' && event.key !== 'Backspace') ||
+        sequenceMutation.isPending ||
+        titleMutation.isPending
+      ) {
+        return
+      }
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        (target.matches('input, textarea, select') || target.isContentEditable)
+      ) {
+        return
+      }
+      const item =
+        shots.find((shot) => shot.id === selectedShotId) ??
+        cutaways.find((cutaway) => cutaway.id === selectedShotId)
+      if (item) {
+        event.preventDefault()
+        removeTimelineItem(item)
+        return
+      }
+      const title = titles.find((entry) => entry.id === selectedTitleId)
+      if (title) {
+        event.preventDefault()
+        removeTimelineTitle(title)
+      }
+    }
+
+    document.addEventListener('keydown', removeSelected)
+    return () => document.removeEventListener('keydown', removeSelected)
+  }, [
+    selectedShotId,
+    selectedTitleId,
+    shots,
+    cutaways,
+    clips,
+    titles,
+    sequenceMutation.isPending,
+    titleMutation.isPending,
+  ])
+
   // With no batch in the URL, open the most recent one rather than a dead end.
   useEffect(() => {
     if (!batchesQuery.isLoading && !batchId && batches.length) {
@@ -905,10 +972,7 @@ export function BatchProcessPage() {
                   onPreview={(patch) =>
                     setTitlePreview(patch ? { titleId: selectedTitle.id, ...patch } : null)
                   }
-                  onRemove={() => {
-                    setSelectedTitleId(null)
-                    titleMutation.mutate({ kind: 'remove', titleId: selectedTitle.id })
-                  }}
+                  onRemove={() => removeTimelineTitle(selectedTitle)}
                   onSaveStyle={(name) =>
                     styleMutation.mutate({ kind: 'save', name, look: lookOf(selectedTitle) })
                   }
@@ -960,15 +1024,7 @@ export function BatchProcessPage() {
                 }
                 onPreviewFraming={previewSelectedFraming}
                 onFrame={(_shot, framing) => commitSelectedFraming(framing)}
-                onRemove={(shot) => {
-                  setSelectedShotId(null)
-                  if (selectedCutaway) {
-                    sequenceMutation.mutate({ kind: 'uncover', cutawayId: shot.id })
-                    return
-                  }
-                  setUndoRemoval({ shot: shot as Shot, title: selectedClip.title })
-                  sequenceMutation.mutate({ kind: 'remove', shotId: shot.id })
-                }}
+                onRemove={removeTimelineItem}
                 busy={sequenceMutation.isPending}
               />
             )}
@@ -1038,6 +1094,7 @@ export function BatchProcessPage() {
               onTrimTitle={(title, span: TitleSpan) =>
                 titleMutation.mutate({ kind: 'patch', titleId: title.id, patch: span })
               }
+              onRemoveTitle={removeTimelineTitle}
               onChangeMedia={(item: BatchMedia, patch: BatchMediaPatch) =>
                 mediaMutation.mutate({ kind: 'patch', mediaId: item.id, patch })
               }
@@ -1050,6 +1107,7 @@ export function BatchProcessPage() {
               onTrim={(shot, trim) =>
                 sequenceMutation.mutate({ kind: 'trim', shotId: shot.id, trim })
               }
+              onRemove={removeTimelineItem}
               onPlace={(clipId, position) =>
                 sequenceMutation.mutate({ kind: 'add', clipId, position })
               }
@@ -1069,7 +1127,9 @@ export function BatchProcessPage() {
                 sequenceMutation.mutate({ kind: 'cover', clipId, baseShotId, offsetMs })
               }
               onPlaceEnd={() => setPlacingClipId(null)}
-              busy={sequenceMutation.isPending || mediaMutation.isPending}
+              busy={
+                sequenceMutation.isPending || titleMutation.isPending || mediaMutation.isPending
+              }
             />
           </div>
         </main>

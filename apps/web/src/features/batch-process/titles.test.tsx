@@ -386,6 +386,60 @@ test('right-clicking text can stretch it across 100% of the timeline', async () 
   })
 })
 
+test('right-clicking text offers removal from the timeline', async () => {
+  const batch = makeBatch([
+    look({ id: 'title-1', text: 'DELETE ME', start_ms: 1000, end_ms: 2000 }),
+  ])
+  const fetchMock = stubApi(batch, {
+    'DELETE /api/batches/batch-1/titles/title-1': makeBatch([]),
+  })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.contextMenu(within(track).getByRole('button', { name: /DELETE ME/ }), {
+    clientX: 120,
+    clientY: 160,
+  })
+  const menu = screen.getByRole('menu', { name: /Text options for DELETE ME/ })
+  fireEvent.click(within(menu).getByRole('menuitem', { name: /Remove text Del/ }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/titles/title-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+  expect(within(track).queryByRole('button', { name: /DELETE ME/ })).not.toBeInTheDocument()
+})
+
+test('Delete removes selected text but is ignored while editing its words', async () => {
+  const batch = makeBatch([look({ id: 'title-1', text: 'DELETE ME' })])
+  const fetchMock = stubApi(batch, {
+    'DELETE /api/batches/batch-1/titles/title-1': makeBatch([]),
+  })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  const title = within(track).getByRole('button', { name: /DELETE ME/ })
+  fireEvent.focus(title)
+  const words = await screen.findByLabelText('Title text')
+  fireEvent.keyDown(words, { key: 'Delete' })
+  expect(fetchMock).not.toHaveBeenCalledWith(
+    '/api/batches/batch-1/titles/title-1',
+    expect.objectContaining({ method: 'DELETE' }),
+  )
+
+  fireEvent.keyDown(title, { key: 'Delete' })
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/titles/title-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+})
+
 test('adding text is unavailable when a full-video layer would exceed three slots', async () => {
   stubApi(
     makeBatch(
