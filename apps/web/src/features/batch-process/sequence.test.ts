@@ -8,6 +8,7 @@
  * a gesture ends.
  */
 import { applySequenceEdit } from './BatchProcessPage'
+import { shotIsOver } from './SequencePreview'
 import {
   anchorAt,
   insertionIndex,
@@ -264,5 +265,30 @@ describe('where a dragged cutaway anchors', () => {
 
   test('an empty sequence has nothing to cover', () => {
     expect(anchorAt([], 0, 1_000)).toBeNull()
+  })
+})
+
+describe('when a shot is over', () => {
+  test('reaching its trim end hands over to the next shot', () => {
+    expect(shotIsOver(5_000, 5_000, 5_000)).toBe(true)
+    expect(shotIsOver(2_000, 5_000, 5_000)).toBe(false)
+  })
+
+  test('a preview shorter than the clip still ends the shot', () => {
+    // The regression: trim_end_ms is the source's duration, but the preview is
+    // a re-encode two frames shorter, so currentTime never reaches 5000 and the
+    // sequence stalled after one shot.
+    expect(shotIsOver(4_966, 5_000, 4_966)).toBe(true)
+  })
+
+  test('a trimmed shot ends at its trim, not at the media', () => {
+    expect(shotIsOver(3_000, 3_000, 20_000)).toBe(true)
+    expect(shotIsOver(2_500, 3_000, 20_000)).toBe(false)
+  })
+
+  test('an unknown media duration falls back to the trim alone', () => {
+    expect(shotIsOver(4_950, 5_000, null)).toBe(true)
+    // Still a tenth of a second to play: not over.
+    expect(shotIsOver(4_900, 5_000, null)).toBe(false)
   })
 })

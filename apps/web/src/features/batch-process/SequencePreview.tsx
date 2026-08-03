@@ -13,6 +13,28 @@ export function previewUrl(clip: Project): string | null {
 /** How far the video may drift before a seek is a correction rather than a jump. */
 const SEEK_TOLERANCE_MS = 300
 
+/** About two frames at 30 fps. */
+const BOUNDARY_TOLERANCE_MS = 60
+
+/**
+ * Whether playback has run out of this Shot and should hand over to the next.
+ *
+ * A Clip's Trim end is the duration ffprobe read from its Source Video, but
+ * what plays here is the `preview` Artifact — a re-encode, which can be a frame
+ * or two shorter. A Shot trimmed to the very end therefore never reaches its
+ * own end: `currentTime` stops just below it, the element fires `ended` instead
+ * of another `timeupdate`, and the Sequence stalls after one Shot. So the
+ * media's own duration ends the Shot too, whatever the Clip recorded.
+ */
+export function shotIsOver(
+  atMs: number,
+  endMs: number,
+  mediaDurationMs: number | null,
+): boolean {
+  if (atMs >= endMs - BOUNDARY_TOLERANCE_MS) return true
+  return mediaDurationMs !== null && atMs >= mediaDurationMs - BOUNDARY_TOLERANCE_MS
+}
+
 /**
  * The Sequence as one rough cut.
  *
@@ -126,21 +148,27 @@ export function SequencePreview({
   // playhead chasing Shots that have moved.
   useEffect(() => setPlaying(false), [shots.length])
 
+  /** Move to the next Shot, or stop if this was the last. */
+  function advance() {
+    if (!current) return
+    if (!next) {
+      setPlaying(false)
+      onScrub(totalMs)
+      return
+    }
+    // Hand over to the element already sitting on the next Shot's in-point.
+    setSlot((value) => 1 - value)
+    onScrub(current.item.startMs + current.item.spanMs)
+  }
+
   function onTimeUpdate() {
     const video = active.current
     if (!video || !current) return
     const { start, end } = shotTrim(current.item.shot, current.item.clip)
     const atMs = video.currentTime * 1000
 
-    if (atMs >= end) {
-      if (!next) {
-        setPlaying(false)
-        onScrub(totalMs)
-        return
-      }
-      // Hand over to the element already sitting on the next Shot's in-point.
-      setSlot((value) => 1 - value)
-      onScrub(current.item.startMs + current.item.spanMs)
+    if (shotIsOver(atMs, end, Number.isFinite(video.duration) ? video.duration * 1000 : null)) {
+      advance()
       return
     }
     onScrub(current.item.startMs + Math.max(0, atMs - start))
@@ -165,6 +193,9 @@ export function SequencePreview({
             preload="auto"
             muted={value !== slot}
             onTimeUpdate={value === slot ? onTimeUpdate : undefined}
+            // `timeupdate` stops firing once the media ends, so the last word
+            // on whether a Shot is over belongs to the element itself.
+            onEnded={value === slot ? advance : undefined}
           />
         ))}
         {/* Muted, and over the top: the base element below still has the sound. */}
