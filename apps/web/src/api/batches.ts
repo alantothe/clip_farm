@@ -4,6 +4,7 @@ import type {
   BatchUploadResult,
   Format,
   SequenceRender,
+  ShotFraming,
   ShotTrim,
 } from '../types'
 import { request } from './client'
@@ -46,7 +47,7 @@ export const deleteBatch = (id: string) =>
 export const addShot = (
   batchId: string,
   clipId: string,
-  placement: { position?: number } & ShotTrim = {},
+  placement: { position?: number } & ShotTrim & Partial<ShotFraming> = {},
 ) =>
   request<Batch>(`/api/batches/${batchId}/shots`, {
     method: 'POST',
@@ -74,6 +75,12 @@ export const trimShot = (batchId: string, shotId: string, trim: ShotTrim) =>
     body: JSON.stringify(trim),
   })
 
+export const frameShot = (batchId: string, shotId: string, framing: ShotFraming) =>
+  request<Batch>(`/api/batches/${batchId}/shots/${shotId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(framing),
+  })
+
 /**
  * Cover a Shot with a Clip for a span.
  *
@@ -82,7 +89,8 @@ export const trimShot = (batchId: string, shotId: string, trim: ShotTrim) =>
  */
 export const addCutaway = (
   batchId: string,
-  cutaway: { clip_id: string; base_shot_id: string; offset_ms: number } & ShotTrim,
+  cutaway: { clip_id: string; base_shot_id: string; offset_ms: number } & ShotTrim &
+    Partial<ShotFraming>,
 ) =>
   request<Batch>(`/api/batches/${batchId}/cutaways`, {
     method: 'POST',
@@ -92,7 +100,7 @@ export const addCutaway = (
 export const updateCutaway = (
   batchId: string,
   cutawayId: string,
-  patch: { base_shot_id?: string; offset_ms?: number } & ShotTrim,
+  patch: { base_shot_id?: string; offset_ms?: number } & ShotTrim & Partial<ShotFraming>,
 ) =>
   request<Batch>(`/api/batches/${batchId}/cutaways/${cutawayId}`, {
     method: 'PATCH',

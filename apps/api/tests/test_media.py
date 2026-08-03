@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pysubs2
 
+from app.services import media
 from app.services.media import create_ass_captions
 
 
@@ -66,3 +67,33 @@ def test_caption_position_selects_matching_vertical_alignment(tmp_path) -> None:
             output=output,
         )
         assert pysubs2.load(str(output)).styles["Default"].alignment == alignment
+
+
+def test_fitted_video_zoom_and_position_are_built_into_the_filter(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(media, "run_command", lambda command: commands.append(command))
+
+    media.render_vertical(
+        source=source,
+        output=tmp_path / "output.mp4",
+        temp_dir=tmp_path,
+        layout="fit_background",
+        start_ms=0,
+        end_ms=1_000,
+        crop_center_x=50,
+        frame_zoom=1.5,
+        frame_center_x=20,
+        frame_center_y=80,
+        caption_segments=[],
+        captions_enabled=False,
+        caption_style="bold",
+        caption_position="bottom",
+        image_overlays=[],
+    )
+
+    command = commands[0]
+    filters = command[command.index("-filter_complex") + 1]
+    assert "[fg]scale=1620:2880" in filters
+    assert "overlay=x='(W-w)*0.2000':y='(H-h)*0.8000'" in filters

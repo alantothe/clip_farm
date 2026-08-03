@@ -208,7 +208,7 @@ test('a title edit lands in the cache before the round trip finishes', () => {
   ])
   expect(applyTitleEdit(batch, { kind: 'remove', titleId: 'a' }).titles).toHaveLength(1)
   // Only the server can name a new Title, so an add is not predicted.
-  expect(applyTitleEdit(batch, { kind: 'add', atMs: 0 }).titles).toHaveLength(2)
+  expect(applyTitleEdit(batch, { kind: 'add' }).titles).toHaveLength(2)
 })
 
 // --- The Title Track and the stage, in the page -------------------------
@@ -246,7 +246,16 @@ const clip: Project = {
   latest_job: null,
 }
 
-const shot: Shot = { id: 'shot-1', clip_id: 'clip-a', position: 0, trim_start_ms: null, trim_end_ms: null }
+const shot: Shot = {
+  id: 'shot-1',
+  clip_id: 'clip-a',
+  position: 0,
+  trim_start_ms: null,
+  trim_end_ms: null,
+  frame_zoom: 1,
+  frame_center_x: 50,
+  frame_center_y: 50,
+}
 
 const styles: TitleStyle[] = [
   { ...look(), id: 'builtin:hook', name: 'Hook', builtin: true } as unknown as TitleStyle,
@@ -343,11 +352,40 @@ test('a batch carries three visible title slots at a time', async () => {
   const second = within(track).getByRole('button', { name: /SECOND/ }).closest('li')
   const third = within(track).getByRole('button', { name: /THIRD/ }).closest('li')
   expect(first).toHaveStyle({ top: '0px' })
-  expect(second).toHaveStyle({ top: '24px' })
-  expect(third).toHaveStyle({ top: '48px' })
+  expect(second).toHaveStyle({ top: '50px' })
+  expect(third).toHaveStyle({ top: '100px' })
 })
 
-test('adding text is unavailable where all three slots are occupied', async () => {
+test('right-clicking text can stretch it across 100% of the timeline', async () => {
+  const batch = makeBatch([
+    look({ id: 'title-1', text: 'SHORT TEXT', start_ms: 1000, end_ms: 2000 }),
+  ])
+  const fetchMock = stubApi(batch, {
+    'PATCH /api/batches/batch-1/titles/title-1': batch,
+  })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.contextMenu(within(track).getByRole('button', { name: /SHORT TEXT/ }), {
+    clientX: 120,
+    clientY: 160,
+  })
+  const menu = screen.getByRole('menu', { name: /Text options for SHORT TEXT/ })
+  fireEvent.click(within(menu).getByRole('menuitem', { name: /Fill entire timeline 100%/ }))
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(([path]) =>
+      String(path).endsWith('/titles/title-1'),
+    )
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      start_ms: 0,
+      end_ms: 5000,
+    })
+  })
+})
+
+test('adding text is unavailable when a full-video layer would exceed three slots', async () => {
   stubApi(
     makeBatch(
       ['FIRST', 'SECOND', 'THIRD'].map((text, index) =>
@@ -360,10 +398,10 @@ test('adding text is unavailable where all three slots are occupied', async () =
 
   const add = await screen.findByRole('button', { name: /Add text/ })
   expect(add).toBeDisabled()
-  expect(add).toHaveAttribute('title', 'All 3 text slots are occupied here')
+  expect(add).toHaveAttribute('title', 'All three text layers are already occupied')
 })
 
-test('adding text puts a title at the playhead and opens it for editing', async () => {
+test('adding text spans the full video and opens it for editing', async () => {
   const added = look({ id: 'title-new', text: 'Your text here' })
   const fetchMock = stubApi(makeBatch([]), {
     'POST /api/batches/batch-1/titles': makeBatch([added]),
@@ -371,6 +409,8 @@ test('adding text puts a title at the playhead and opens it for editing', async 
 
   renderBatch(newClient())
 
+  const titleTrack = await screen.findByRole('list', { name: 'Titles' })
+  expect(within(titleTrack).queryByRole('button', { name: /Add text/ })).toBeNull()
   fireEvent.click(await screen.findByRole('button', { name: /Add text/ }))
 
   await waitFor(() =>
@@ -384,7 +424,7 @@ test('adding text puts a title at the playhead and opens it for editing', async 
       .body as string,
   )
   expect(sent.start_ms).toBe(0)
-  expect(sent.end_ms).toBe(3000)
+  expect(sent.end_ms).toBe(5000)
   // Made from a Style, so it arrives looking like something.
   expect(sent.style_id).toBe('builtin:hook')
 

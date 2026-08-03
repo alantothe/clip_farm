@@ -145,7 +145,13 @@ def test_init_db_drops_the_unique_clip_constraint_from_shots(tmp_path, monkeypat
     assert rows == [("shot-0", "legacy-0", 0), ("shot-1", "legacy-1", 1)]
     assert {"ix_shots_batch_id", "ix_shots_project_id"} <= set(indexes)
     columns = {column["name"] for column in inspect(engine).get_columns("shots")}
-    assert {"trim_start_ms", "trim_end_ms"} <= columns
+    assert {
+        "trim_start_ms",
+        "trim_end_ms",
+        "frame_zoom",
+        "frame_center_x",
+        "frame_center_y",
+    } <= columns
 
 
 def test_the_shots_rebuild_does_not_run_twice(tmp_path, monkeypatch):

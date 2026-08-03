@@ -461,6 +461,9 @@ def render_vertical(
     start_ms: int,
     end_ms: int,
     crop_center_x: float,
+    frame_zoom: float = 1.0,
+    frame_center_x: float = 50.0,
+    frame_center_y: float = 50.0,
     caption_segments: list,
     captions_enabled: bool,
     caption_style: str,
@@ -595,7 +598,15 @@ def render_vertical(
             str(source),
         ]
         add_overlay_inputs(command)
-        filters = ["[0:v]null[base]"]
+        zoom_width = max(1080, round(1080 * frame_zoom))
+        zoom_height = max(1920, round(1920 * frame_zoom))
+        zoom_width += zoom_width % 2
+        zoom_height += zoom_height % 2
+        filters = [
+            f"[0:v]scale={zoom_width}:{zoom_height},"
+            f"crop=1080:1920:x='(iw-ow)*{frame_center_x / 100:.4f}':"
+            f"y='(ih-oh)*{frame_center_y / 100:.4f}'[base]"
+        ]
         map_label = add_text_filters(filters, add_overlay_filters(filters, "base", 2))
         command.extend([
             "-filter_complex",
@@ -607,12 +618,21 @@ def render_vertical(
         ])
         command.extend(common_output)
     else:
+        # At 1× the sharp picture uses the full Format box. A landscape Clip
+        # therefore touches both side edges; only the unused height is filled
+        # by the blurred backdrop. Framing zoom grows from those clean bounds.
+        foreground_width = max(1080, round(1080 * frame_zoom))
+        foreground_height = max(1920, round(1920 * frame_zoom))
+        foreground_width += foreground_width % 2
+        foreground_height += foreground_height % 2
         filters = [
             "[0:v]split=2[bg][fg];"
             "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
             "crop=1080:1920,gblur=sigma=38[bgv];"
-            "[fg]scale=1000:1780:force_original_aspect_ratio=decrease[fgv];"
-            "[bgv][fgv]overlay=(W-w)/2:(H-h)/2[composed]"
+            f"[fg]scale={foreground_width}:{foreground_height}:"
+            "force_original_aspect_ratio=decrease[fgv];"
+            f"[bgv][fgv]overlay=x='(W-w)*{frame_center_x / 100:.4f}':"
+            f"y='(H-h)*{frame_center_y / 100:.4f}'[composed]"
         ]
         command = [
             "ffmpeg",

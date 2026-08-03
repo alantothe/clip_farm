@@ -78,7 +78,14 @@ const second = makeClip({ id: 'clip-b', title: 'second', duration_ms: 3000, trim
 
 const makeShot = (
   overrides: Partial<Shot> & Pick<Shot, 'id' | 'clip_id' | 'position'>,
-): Shot => ({ trim_start_ms: null, trim_end_ms: null, ...overrides })
+): Shot => ({
+  trim_start_ms: null,
+  trim_end_ms: null,
+  frame_zoom: 1,
+  frame_center_x: 50,
+  frame_center_y: 50,
+  ...overrides,
+})
 
 function makeBatch(overrides: Partial<Batch> = {}): Batch {
   return {
@@ -164,6 +171,48 @@ async function openPlayer(batch: Batch) {
   return await screen.findByRole('region', { name: 'Player' })
 }
 
+function openPlaybackOptions(player: HTMLElement) {
+  fireEvent.click(within(player).getByRole('button', { name: 'More playback options' }))
+}
+
+test('Text starts the row while Pause, Play, Export stay centered and ordered', async () => {
+  const player = await openPlayer(makeBatch())
+  const controls = player.querySelector<HTMLElement>('.player__primary-controls')!
+  const [pause, play, exportButton] = within(controls).getAllByRole('button')
+  const addText = within(player).getByRole('button', { name: 'Add text' })
+
+  expect(pause).toHaveAccessibleName('Pause the rough cut')
+  expect(play).toHaveAccessibleName('Play the rough cut')
+  expect(exportButton).toHaveAccessibleName('Export video')
+  expect(addText).toHaveAccessibleName('Add text')
+  expect(controls).not.toContainElement(addText)
+  expect(addText.parentElement).toHaveClass('player__text-action')
+  const clock = within(player).getByLabelText(/Playhead and duration/)
+  expect(clock.parentElement).toHaveClass('player__frame')
+  expect(player.querySelector('.player__stage')).not.toContainElement(clock)
+  expect(pause).toBeDisabled()
+  expect(play).toBeEnabled()
+  expect(within(player).queryByRole('button', { name: 'Next cut' })).toBeNull()
+
+  fireEvent.click(play)
+  expect(pause).toBeEnabled()
+  expect(play).toBeDisabled()
+  tick(stageVideos()[0], 2.5)
+  fireEvent.click(pause)
+
+  await waitFor(() =>
+    expect(within(player).getByRole('slider', { name: 'Sequence position' })).toHaveAttribute(
+      'aria-valuenow',
+      '2500',
+    ),
+  )
+  expect(clock).toHaveTextContent('00:02:15 / 00:08:00')
+  expect(stageVideos()[0].paused).toBe(true)
+
+  openPlaybackOptions(player)
+  expect(within(player).getByRole('button', { name: 'Next cut' })).toBeVisible()
+})
+
 test('the idle element is primed with the next shot while the first one plays', async () => {
   await openPlayer(makeBatch())
 
@@ -193,12 +242,12 @@ test('a shot that runs out hands over to the next one', async () => {
   const [active] = stageVideos()
   // Two seconds into a five-second Shot: still shot 1 of 2.
   tick(active, 2)
-  await waitFor(() => expect(within(player).getByText('shot 1 of 2')).toBeVisible())
+  await waitFor(() => expect(within(player).getByText('shot 1 of 2')).toBeInTheDocument())
 
   // Past its Trim end. The Sequence must move on rather than stall.
   tick(active, 5)
-  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeVisible())
-  expect(within(player).getByText('second')).toBeVisible()
+  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeInTheDocument())
+  expect(within(player).getByText('second')).toBeInTheDocument()
 })
 
 test('a preview shorter than the clip still ends the shot', async () => {
@@ -216,7 +265,7 @@ test('a preview shorter than the clip still ends the shot', async () => {
   setDuration(active, 4.8)
   tick(active, 4.8)
 
-  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeVisible())
+  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeInTheDocument())
 })
 
 test('a shot short of both its trim and its media keeps playing', async () => {
@@ -228,7 +277,7 @@ test('a shot short of both its trim and its media keeps playing', async () => {
   setDuration(active, 4.8)
   tick(active, 3)
 
-  await waitFor(() => expect(within(player).getByText('shot 1 of 2')).toBeVisible())
+  await waitFor(() => expect(within(player).getByText('shot 1 of 2')).toBeInTheDocument())
 })
 
 test('the media ending advances even when timeupdate has stopped firing', async () => {
@@ -238,7 +287,7 @@ test('the media ending advances even when timeupdate has stopped firing', async 
   const [active] = stageVideos()
   fireEvent.ended(active)
 
-  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeVisible())
+  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeInTheDocument())
 })
 
 test('the last shot running out stops playback rather than looping', async () => {
@@ -252,7 +301,7 @@ test('the last shot running out stops playback rather than looping', async () =>
   await waitFor(() =>
     expect(within(player).getByRole('button', { name: 'Play the rough cut' })).toBeVisible(),
   )
-  expect(within(player).getByText('00:05.0 / 00:05.0')).toBeVisible()
+  expect(within(player).getByText('00:05:00 / 00:05:00')).toBeVisible()
 })
 
 const cutaway: Cutaway = {
@@ -262,6 +311,9 @@ const cutaway: Cutaway = {
   offset_ms: 1000,
   trim_start_ms: 0,
   trim_end_ms: 2000,
+  frame_zoom: 1,
+  frame_center_x: 50,
+  frame_center_y: 50,
 }
 
 test('a cutaway covers the picture while the shot underneath keeps the sound', async () => {
@@ -334,6 +386,15 @@ test('each shot is framed on the stage the way its layout will render it', async
   expect(active.style.getPropertyValue('--crop-x')).toBe('30%')
 })
 
+test('a fitted landscape picture reaches the stage edges at default framing', async () => {
+  await openPlayer(makeBatch())
+
+  const [active] = stageVideos()
+  await waitFor(() => expect(active).toHaveClass('player__video--fit_background'))
+  expect(active.style.getPropertyValue('--fit-left')).toBe('0%')
+  expect(active.style.getPropertyValue('--fit-width')).toBe('100%')
+})
+
 test('the source view shows the whole frame and outlines what survives', async () => {
   const cropped = makeClip({
     id: 'clip-a',
@@ -342,6 +403,7 @@ test('the source view shows the whole frame and outlines what survives', async (
     crop_center_x: 50,
   })
   const player = await openPlayer(makeBatch({ clips: [cropped, second] }))
+  openPlaybackOptions(player)
 
   fireEvent.click(within(player).getByRole('button', { name: /Source/ }))
 
@@ -361,6 +423,7 @@ test('a fitted shot outlines nothing, because it discards nothing', async () => 
   // fit_background pads the whole frame in rather than cropping it, so an
   // outline would claim a loss that does not happen.
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   fireEvent.click(within(player).getByRole('button', { name: /Source/ }))
 
@@ -377,7 +440,7 @@ test('the scrub bar reports the whole sequence, whatever the timeline shows', as
 
   fireEvent.keyDown(scrub, { key: 'End' })
   await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '8000'))
-  expect(within(player).getByText('00:08.0 / 00:08.0')).toBeVisible()
+  expect(within(player).getByText('00:08:00 / 00:08:00')).toBeVisible()
 })
 
 test('the scrub bar ticks every join and shades every cutaway', async () => {
@@ -415,14 +478,15 @@ test('scrubbing moves the playhead and the shot it lands on', async () => {
 
   // A tenth of an eight-second Sequence, capped at a second.
   await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '800'))
-  expect(within(player).getByText('shot 1 of 2')).toBeVisible()
+  expect(within(player).getByText('shot 1 of 2')).toBeInTheDocument()
 
   fireEvent.keyDown(scrub, { key: 'End' })
-  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeVisible())
+  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeInTheDocument())
 })
 
 test('the speed survives a cut, on whichever element becomes visible', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   fireEvent.click(within(player).getByRole('button', { name: '2×' }))
 
@@ -435,12 +499,13 @@ test('the speed survives a cut, on whichever element becomes visible', async () 
   fireEvent.click(within(player).getByRole('button', { name: 'Play the rough cut' }))
   fireEvent.ended(active)
 
-  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeVisible())
+  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeInTheDocument())
   expect(stageVideos()[1].playbackRate).toBe(2)
 })
 
 test('muting silences the element carrying the sound, not the structure', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   const [active, idle] = stageVideos()
   // The idle element is muted because it is not the sound source. That is
@@ -461,6 +526,7 @@ test('muting silences the element carrying the sound, not the structure', async 
 
 test('the volume reaches every element', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   fireEvent.change(within(player).getByLabelText('Volume'), { target: { value: '0.4' } })
 
@@ -470,6 +536,7 @@ test('the volume reaches every element', async () => {
 
 test('stepping a frame moves by the clip’s own frame rate, and stops playback', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
   fireEvent.click(within(player).getByRole('button', { name: 'Play the rough cut' }))
 
   fireEvent.click(within(player).getByRole('button', { name: 'Forward one frame' }))
@@ -483,13 +550,14 @@ test('stepping a frame moves by the clip’s own frame rate, and stops playback'
 
 test('jumping to a cut parks the playhead exactly on the join', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
   const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
 
   fireEvent.click(within(player).getByRole('button', { name: 'Next cut' }))
 
   // The join is five seconds in, not a frame either side of it.
   await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '5000'))
-  expect(within(player).getByText('shot 2 of 2')).toBeVisible()
+  expect(within(player).getByText('shot 2 of 2')).toBeInTheDocument()
 
   fireEvent.click(within(player).getByRole('button', { name: 'Previous cut' }))
   await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '0'))
@@ -497,6 +565,7 @@ test('jumping to a cut parks the playhead exactly on the join', async () => {
 
 test('looping a shot is the review range with its edges set, not a second loop', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   // Selecting the second shot on the timeline, then looping it.
   // The timeline selects a shot on focus, which is how a keyboard reaches it.
@@ -515,6 +584,7 @@ test('looping a shot is the review range with its edges set, not a second loop',
 
 test('a marked range loops back rather than running to the end', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   // Mark a range over the first two seconds.
   fireEvent.keyDown(window, { key: '[' })
@@ -544,6 +614,7 @@ test('a marked range loops back rather than running to the end', async () => {
 
 test('the keyboard drives the player from anywhere on the page', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   fireEvent.keyDown(window, { key: ' ' })
   await waitFor(() =>
@@ -563,6 +634,7 @@ test('the keyboard drives the player from anywhere on the page', async () => {
 
 test('typing a batch name is not a stream of shortcuts', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   fireEvent.click(await screen.findByRole('button', { name: /Rename/ }))
   const field = await screen.findByLabelText('Batch name')
@@ -595,6 +667,7 @@ test('the scrub bar owns the arrows while it has focus', async () => {
 
 test('trimming to the playhead is offered only for the shot it is inside', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   // Nothing selected: there is no shot to trim.
   expect(within(player).getByRole('button', { name: 'In to playhead' })).toBeDisabled()
@@ -617,6 +690,7 @@ test('trimming to the playhead sends only the edge that moved', async () => {
   const fetchMock = stubApi(makeBatch())
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
   const player = await screen.findByRole('region', { name: 'Player' })
+  openPlaybackOptions(player)
 
   fireEvent.focus(await screen.findByRole('button', { name: /first, shot 1 of 2/ }))
   const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
@@ -640,12 +714,13 @@ test('trimming to the playhead will not leave a shot too short to see', async ()
   const fetchMock = stubApi(makeBatch())
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
   const player = await screen.findByRole('region', { name: 'Player' })
+  openPlaybackOptions(player)
 
   fireEvent.focus(await screen.findByRole('button', { name: /first, shot 1 of 2/ }))
   // At the very start of the shot, an out-point here would leave nothing.
   fireEvent.click(within(player).getByRole('button', { name: 'Out to playhead' }))
 
-  await waitFor(() => expect(within(player).getByText('shot 1 of 2')).toBeVisible())
+  await waitFor(() => expect(within(player).getByText('shot 1 of 2')).toBeInTheDocument())
   expect(fetchMock).not.toHaveBeenCalledWith(
     '/api/batches/batch-1/shots/shot-1',
     expect.objectContaining({ method: 'PATCH' }),
@@ -755,6 +830,7 @@ test('an overlay is drawn where and when the export burns it', async () => {
 
 test('the safe area is offered, and off until asked for', async () => {
   const player = await openPlayer(makeBatch())
+  openPlaybackOptions(player)
 
   expect(document.querySelector('.safe-area')).toBeNull()
   fireEvent.click(within(player).getByRole('button', { name: /Safe area/ }))
@@ -782,6 +858,7 @@ test('the cutaway badge names the picture and the sound', async () => {
 test('a smart-cropped shot says its framing is approximate, and a fitted one does not', async () => {
   const smart = makeClip({ id: 'clip-a', title: 'first', layout: 'smart_crop' })
   const player = await openPlayer(makeBatch({ clips: [smart, second] }))
+  openPlaybackOptions(player)
 
   expect(within(player).getByText(/crop follows faces on export/)).toBeVisible()
 

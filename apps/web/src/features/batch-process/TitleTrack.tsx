@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react'
-import { Type } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Maximize2, Type } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import type { Title } from '../../types'
 
@@ -7,8 +8,10 @@ import type { Title } from '../../types'
 const MIN_TITLE_MS = 400
 const SNAP_MS = 100
 const DRAG_THRESHOLD_PX = 3
+const TITLE_ROW_PX = 50
+const CONTEXT_MENU_WIDTH = 204
+const CONTEXT_MENU_HEIGHT = 50
 export const MAX_TITLE_SLOTS = 3
-export const NEW_TITLE_MS = 3000
 
 /** The editor row assigned to each Title by interval partitioning. */
 export function titleSlots(titles: Title[]): Map<string, number> {
@@ -80,6 +83,8 @@ type Gesture =
       from: { start: number; end: number }
     }
 
+type TitleContextMenu = { titleId: string; x: number; y: number }
+
 /**
  * Where a Title dragged to `ms` lands, kept on the Sequence.
  *
@@ -114,26 +119,24 @@ export function TitleTrack({
   selectedTitleId,
   pxPerSec,
   totalMs,
-  playheadMs,
   onSelect,
   onMove,
   onTrim,
-  onAdd,
   busy,
 }: {
   titles: Title[]
   selectedTitleId: string | null
   pxPerSec: number
   totalMs: number
-  playheadMs: number
   onSelect: (titleId: string | null) => void
   onMove: (title: Title, span: TitleSpan) => void
   onTrim: (title: Title, span: TitleSpan) => void
-  onAdd: (atMs: number) => void
   busy: boolean
 }) {
   const [draft, setDraft] = useState<{ titleId: string; start: number; end: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<TitleContextMenu | null>(null)
   const laneRef = useRef<HTMLOListElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const dragged = useRef(false)
 
@@ -144,7 +147,6 @@ export function TitleTrack({
       : title,
   )
   const slots = titleSlots(drafted)
-  const canAdd = hasTitleSlot(titles, playheadMs, playheadMs + NEW_TITLE_MS)
 
   function msAtX(clientX: number) {
     const rect = laneRef.current?.getBoundingClientRect()
@@ -153,7 +155,7 @@ export function TitleTrack({
   }
 
   function begin(event: React.PointerEvent<HTMLElement>, next: Gesture) {
-    if (busy) return
+    if (busy || event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -228,6 +230,47 @@ export function TitleTrack({
     setDraft(null)
   }
 
+  function openContextMenu(event: React.MouseEvent<HTMLElement>, title: Title) {
+    event.preventDefault()
+    event.stopPropagation()
+    onSelect(title.id)
+    setContextMenu({
+      titleId: title.id,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - CONTEXT_MENU_WIDTH - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - CONTEXT_MENU_HEIGHT - 8)),
+    })
+  }
+
+  useEffect(() => {
+    if (!contextMenu) return
+    menuRef.current?.querySelector('button')?.focus()
+
+    function dismiss(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) setContextMenu(null)
+    }
+    function dismissOnKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') setContextMenu(null)
+    }
+    const dismissWithoutEvent = () => setContextMenu(null)
+
+    window.addEventListener('pointerdown', dismiss)
+    window.addEventListener('resize', dismissWithoutEvent)
+    window.addEventListener('scroll', dismissWithoutEvent, true)
+    document.addEventListener('keydown', dismissOnKey)
+    return () => {
+      window.removeEventListener('pointerdown', dismiss)
+      window.removeEventListener('resize', dismissWithoutEvent)
+      window.removeEventListener('scroll', dismissWithoutEvent, true)
+      document.removeEventListener('keydown', dismissOnKey)
+    }
+  }, [contextMenu])
+
+  const contextTitle = titles.find((title) => title.id === contextMenu?.titleId) ?? null
+  const contextTitleIsFull =
+    contextTitle?.start_ms === 0 && contextTitle.end_ms === totalMs
+  const contextTitleCanFill =
+    contextTitle != null && hasTitleSlot(titles, 0, totalMs, contextTitle.id)
+
   return (
     <ol className="sequence__titles" aria-label="Titles" ref={laneRef}>
       {drafted.map((title) => {
@@ -251,7 +294,7 @@ export function TitleTrack({
             key={title.id}
             style={{
               left: Math.max(0, orphaned ? pxOf(totalMs) - ORPHAN_PX : pxOf(start)),
-              top: (slots.get(title.id) ?? 0) * 24,
+              top: (slots.get(title.id) ?? 0) * TITLE_ROW_PX,
               width,
             }}
           >
@@ -268,6 +311,7 @@ export function TitleTrack({
               }
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
+              onContextMenu={(event) => openContextMenu(event, title)}
               onFocus={() => onSelect(title.id)}
               aria-label={`${title.text || 'Empty title'}, ${formatTime(
                 title.start_ms,
@@ -324,22 +368,37 @@ export function TitleTrack({
         </span>
       )}
 
-      {/* Dragging is not reachable by keyboard, so adding never is either: the
-          button puts a Title at the playhead, and the inspector retimes it. */}
-      <button
-        className="sequence__titles-add"
-        type="button"
-        onClick={() => onAdd(playheadMs)}
-        disabled={busy || !canAdd}
-        title={
-          canAdd
-            ? 'Add text at the playhead'
-            : `All ${MAX_TITLE_SLOTS} text slots are occupied here`
-        }
-      >
-        <Type size={11} />
-        Add text
-      </button>
+      {contextMenu &&
+        contextTitle &&
+        createPortal(
+          <div
+            className="title-context-menu"
+            ref={menuRef}
+            role="menu"
+            aria-label={`Text options for ${contextTitle.text || 'Empty title'}`}
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              disabled={busy || contextTitleIsFull || !contextTitleCanFill}
+              title={
+                contextTitleCanFill
+                  ? 'Set this text from the start to the end of the timeline'
+                  : `All ${MAX_TITLE_SLOTS} text layers are occupied somewhere in this range`
+              }
+              onClick={() => {
+                onTrim(contextTitle, { start_ms: 0, end_ms: totalMs })
+                setContextMenu(null)
+              }}
+            >
+              <Maximize2 size={14} aria-hidden="true" />
+              <span>{contextTitleIsFull ? 'Already fills timeline' : 'Fill entire timeline'}</span>
+              <small>100%</small>
+            </button>
+          </div>,
+          document.body,
+        )}
     </ol>
   )
 }

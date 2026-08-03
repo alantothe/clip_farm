@@ -127,6 +127,36 @@ def test_moving_past_the_end_lands_at_the_end(tmp_path, monkeypatch) -> None:
     session.close()
 
 
+def test_framing_is_saved_on_one_shot_without_changing_another(tmp_path, monkeypatch) -> None:
+    """Repeated placements of one Clip can use different framing."""
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+    batch_id, clips = make_batch_with_clips(session, 1)
+    batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
+    batch = batches_router.add_shot(batch_id, ShotCreate(clip_id=clips[0]), session)
+    first, second = sorted(batch.shots, key=lambda item: item.position)
+
+    updated = batches_router.update_shot(
+        batch_id,
+        second.id,
+        ShotUpdate(frame_zoom=1.75, frame_center_x=20, frame_center_y=80),
+        session,
+    )
+
+    first_out, second_out = sorted(updated.shots, key=lambda item: item.position)
+    assert (first_out.frame_zoom, first_out.frame_center_x, first_out.frame_center_y) == (
+        1,
+        50,
+        50,
+    )
+    assert (second_out.frame_zoom, second_out.frame_center_x, second_out.frame_center_y) == (
+        1.75,
+        20,
+        80,
+    )
+    session.close()
+
+
 def test_removing_a_shot_keeps_the_clip_in_the_batch(tmp_path, monkeypatch) -> None:
     session = make_session(tmp_path)
     use_projects_dir(monkeypatch, tmp_path)

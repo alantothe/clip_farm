@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react'
 import {
   Clapperboard,
   ChevronLeft,
@@ -9,20 +10,31 @@ import {
   Frame,
   Layers,
   Maximize,
+  MoreHorizontal,
   Pause,
   Play,
   Repeat,
   SkipBack,
   SkipForward,
   Square,
+  Type,
   Volume2,
   VolumeX,
 } from 'lucide-react'
 import { api } from '../../api'
 import { formatDefinition } from '../../formats/registry'
-import { formatTime } from '../../lib/format'
+import { formatTime, formatTimecode } from '../../lib/format'
 import { artifact } from '../../lib/project'
-import type { FontCatalog, Format, Project, Title, TitlePatch } from '../../types'
+import type {
+  FontCatalog,
+  Format,
+  Project,
+  Cutaway,
+  Shot,
+  ShotFraming,
+  Title,
+  TitlePatch,
+} from '../../types'
 import { ScrubBar } from './ScrubBar'
 import { TitleStage } from './TitleStage'
 import { usePlayerKeys } from './usePlayerKeys'
@@ -31,8 +43,213 @@ import type { SequencePlayer } from './useSequencePlayer'
 /** What the stage is showing: the finished shape, or the whole source frame. */
 type View = 'format' | 'source'
 
+type FramingGesture = {
+  mode: 'move' | 'zoom'
+  originX: number
+  originY: number
+  startDistance: number
+  framing: ShotFraming
+  latest: ShotFraming
+  rect: DOMRect
+  layout: Project['layout']
+}
+
 /** Half speed to study a cut, double to sit through a long Sequence. */
 const RATES = [0.5, 1, 1.5, 2]
+
+const clampPercent = (value: number) => Math.min(100, Math.max(0, value))
+const clampZoom = (value: number) => Math.min(3, Math.max(1, value))
+
+/** Move one framing axis by the same geometry the Player and renderer use. */
+export function movedFrameCenter({
+  center,
+  deltaPx,
+  stagePx,
+  zoom,
+  layout,
+  fitFraction,
+}: {
+  center: number
+  deltaPx: number
+  stagePx: number
+  zoom: number
+  layout: Project['layout']
+  fitFraction: number
+}): number {
+  if (stagePx <= 0) return center
+  const deltaPercent = (deltaPx / stagePx) * 100
+  if (layout === 'smart_crop') {
+    // At 1× there is no picture outside the Format to pull into view.
+    if (zoom <= 1.001) return center
+    return clampPercent(center - deltaPercent / (zoom - 1))
+  }
+  const travelPercent = 100 - fitFraction * 100 * zoom
+  if (Math.abs(travelPercent) < 0.01) return center
+  return clampPercent(center + (deltaPercent * 100) / travelPercent)
+}
+
+/** Pulling a corner radially scales the picture, capped to the slider's range. */
+export function pulledFrameZoom(startZoom: number, startDistance: number, distance: number) {
+  if (startDistance <= 0) return startZoom
+  return clampZoom(startZoom * (distance / startDistance))
+}
+
+/** The sharp fitted picture's exact size inside the 1080×1920 Format. */
+export function fittedVideoPercent(
+  clip: Pick<Project, 'width' | 'height'>,
+  zoom: number,
+): { width: number; height: number } {
+  const sourceWidth = clip.width ?? 16
+  const sourceHeight = clip.height ?? 9
+  const scale = Math.min((1080 * zoom) / sourceWidth, (1920 * zoom) / sourceHeight)
+  return {
+    width: ((sourceWidth * scale) / 1080) * 100,
+    height: ((sourceHeight * scale) / 1920) * 100,
+  }
+}
+
+/**
+ * Direct-manipulation frame around the selected picture.
+ *
+ * Only its narrow edges and corners receive pointer events, so Titles remain
+ * selectable through the open middle. Sliders below remain the exact and
+ * keyboard-accessible path to the same numbers.
+ */
+function FramingCage({
+  stageRef,
+  shot,
+  clip,
+  onPreview,
+  onCommit,
+}: {
+  stageRef: RefObject<HTMLDivElement>
+  shot: Shot | Cutaway
+  clip: Project
+  onPreview: (framing: ShotFraming | null) => void
+  onCommit: (framing: ShotFraming) => void
+}) {
+  const gesture = useRef<FramingGesture | null>(null)
+  const [mode, setMode] = useState<'move' | 'zoom' | null>(null)
+
+  function begin(event: ReactPointerEvent<HTMLElement>, nextMode: 'move' | 'zoom') {
+    const rect = stageRef.current?.getBoundingClientRect()
+    if (!rect?.width || !rect.height) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    const centerX = rect.left + rect.width / 2
+    const centerY = rect.top + rect.height / 2
+    const framing = {
+      frame_zoom: shot.frame_zoom,
+      frame_center_x: shot.frame_center_x,
+      frame_center_y: shot.frame_center_y,
+    }
+    gesture.current = {
+      mode: nextMode,
+      originX: event.clientX,
+      originY: event.clientY,
+      startDistance: Math.hypot(event.clientX - centerX, event.clientY - centerY),
+      framing,
+      latest: framing,
+      rect,
+      layout: clip.layout,
+    }
+    setMode(nextMode)
+  }
+
+  function move(event: ReactPointerEvent<HTMLElement>) {
+    const current = gesture.current
+    if (!current) return
+    let next: ShotFraming
+    if (current.mode === 'zoom') {
+      const centerX = current.rect.left + current.rect.width / 2
+      const centerY = current.rect.top + current.rect.height / 2
+      next = {
+        ...current.framing,
+        frame_zoom: pulledFrameZoom(
+          current.framing.frame_zoom,
+          current.startDistance,
+          Math.hypot(event.clientX - centerX, event.clientY - centerY),
+        ),
+      }
+    } else {
+      const fitted = fittedVideoPercent(clip, 1)
+      next = {
+        ...current.framing,
+        frame_center_x: movedFrameCenter({
+          center: current.framing.frame_center_x,
+          deltaPx: event.clientX - current.originX,
+          stagePx: current.rect.width,
+          zoom: current.framing.frame_zoom,
+          layout: current.layout,
+          fitFraction: fitted.width / 100,
+        }),
+        frame_center_y: movedFrameCenter({
+          center: current.framing.frame_center_y,
+          deltaPx: event.clientY - current.originY,
+          stagePx: current.rect.height,
+          zoom: current.framing.frame_zoom,
+          layout: current.layout,
+          fitFraction: fitted.height / 100,
+        }),
+      }
+    }
+    current.latest = next
+    onPreview(next)
+  }
+
+  function finish() {
+    const current = gesture.current
+    gesture.current = null
+    setMode(null)
+    onPreview(null)
+    if (!current) return
+    if (
+      current.latest.frame_zoom !== current.framing.frame_zoom ||
+      current.latest.frame_center_x !== current.framing.frame_center_x ||
+      current.latest.frame_center_y !== current.framing.frame_center_y
+    ) onCommit(current.latest)
+  }
+
+  function cancel() {
+    gesture.current = null
+    setMode(null)
+    onPreview(null)
+  }
+
+  const gestureProps = {
+    onPointerMove: move,
+    onPointerUp: finish,
+    onPointerCancel: cancel,
+  }
+
+  return (
+    <div
+      className={`player__framing-cage ${mode ? `is-${mode}` : ''}`}
+      aria-label={`Framing controls for ${clip.title}`}
+    >
+      {(['top', 'right', 'bottom', 'left'] as const).map((edge) => (
+        <span
+          key={edge}
+          className={`player__framing-edge player__framing-edge--${edge}`}
+          onPointerDown={(event) => begin(event, 'move')}
+          {...gestureProps}
+        />
+      ))}
+      {(['nw', 'ne', 'se', 'sw'] as const).map((corner) => (
+        <span
+          key={corner}
+          className={`player__framing-corner player__framing-corner--${corner}`}
+          onPointerDown={(event) => begin(event, 'zoom')}
+          {...gestureProps}
+        />
+      ))}
+      <span className="player__framing-hint">
+        {mode === 'move' ? 'Positioning' : mode === 'zoom' ? 'Scaling' : 'Drag edge · pull corner'}
+      </span>
+    </div>
+  )
+}
 
 /**
  * How wide the Format's frame is as a share of a source frame's width.
@@ -138,11 +355,18 @@ export function Player({
   titles = [],
   fontCatalog = null,
   selectedTitleId = null,
+  selectedShotId = null,
   titlePreview = null,
+  framingPreview = null,
   onSelectTitle,
   onEditTitle,
+  onPreviewFraming,
+  onCommitFraming,
   onTrimToPlayhead,
   canTrim = false,
+  exportControl = null,
+  onAddText,
+  canAddText = false,
 }: {
   player: SequencePlayer
   format: Format
@@ -150,19 +374,37 @@ export function Player({
   titles?: Title[]
   fontCatalog?: FontCatalog | null
   selectedTitleId?: string | null
+  selectedShotId?: string | null
   /** An in-flight inspector edit, drawn but not yet sent. */
   titlePreview?: ({ titleId: string } & TitlePatch) | null
+  /** An in-flight Shot framing edit, drawn while its slider is moving. */
+  framingPreview?: ({ shotId: string } & ShotFraming) | null
   onSelectTitle?: (titleId: string) => void
   onEditTitle?: (title: Title, patch: TitlePatch) => void
+  onPreviewFraming?: (framing: ShotFraming | null) => void
+  onCommitFraming?: (framing: ShotFraming) => void
   /** Set the selected Shot's Trim to the playhead. Absent when nothing can. */
   onTrimToPlayhead?: (edge: 'in' | 'out') => void
   canTrim?: boolean
+  /** The Batch-level export action, kept beside playback where it is used. */
+  exportControl?: ReactNode
+  /** Add a full-length text layer without putting a large action on the Timeline. */
+  onAddText?: () => void
+  canAddText?: boolean
 }) {
   const [view, setView] = useState<View>('format')
   const [guides, setGuides] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
+  const moreRef = useRef<HTMLDivElement>(null)
+  const moreButtonRef = useRef<HTMLButtonElement>(null)
   const { placed, totalMs, current, next, covering, playing, slot, videos } = player
   const dead = !placed.length
+  const addTextTooltip = dead
+    ? 'Add a video before adding text'
+    : canAddText
+      ? 'Add text for the full video'
+      : 'All three text layers are already occupied'
 
   /**
    * Fullscreen the stage, not the video.
@@ -183,8 +425,32 @@ export function Player({
   // Timeline rather than only when the Player happens to hold focus.
   usePlayerKeys({ player, enabled: !dead, onTrimToPlayhead, onFullscreen })
 
+  // The secondary controls float over the Player instead of permanently
+  // taking space from the picture. Dismiss them like a native popover.
+  useEffect(() => {
+    if (!moreOpen) return
+
+    function onPointerDown(event: PointerEvent) {
+      if (!moreRef.current?.contains(event.target as Node)) setMoreOpen(false)
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return
+      setMoreOpen(false)
+      moreButtonRef.current?.focus()
+    }
+
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [moreOpen])
+
   const shape = formatDefinition(format)
   const currentClip = current?.item.clip ?? null
+  const clockFps = currentClip?.fps ?? 30
   const stageRatio =
     view === 'format'
       ? shape.width / shape.height
@@ -192,8 +458,34 @@ export function Player({
   const { frameRef, fitted } = useFittedStage(stageRatio)
   // The cover element holds a Cutaway's Clip; the two swapping elements hold
   // the current Shot's and the next one's, so each is framed by its own Layout.
-  const clipInSlot = (value: number): Project | null =>
-    value === slot ? currentClip : next?.clip ?? null
+  const itemInSlot = (value: number) =>
+    value === slot ? current?.item ?? null : next
+
+  const frameOf = (shot: Shot | Cutaway): ShotFraming =>
+    framingPreview?.shotId === shot.id ? framingPreview : shot
+
+  const videoStyle = (shot: Shot | Cutaway | null, clip: Project | null) => {
+    const framing = shot ? frameOf(shot) : null
+    const zoom = framing?.frame_zoom ?? 1
+    // Calculate the sharp foreground itself, rather than a larger invisible
+    // contain box around it. This matches ffmpeg's `scale ... decrease` and
+    // makes its visible edge land exactly where the Player says it will.
+    const fitted = clip ? fittedVideoPercent(clip, zoom) : { width: 100, height: 100 }
+    const fitWidth = fitted.width
+    const fitHeight = fitted.height
+    const centerX = framing?.frame_center_x ?? 50
+    const centerY = framing?.frame_center_y ?? 50
+    return {
+      '--crop-x': `${clip?.crop_center_x ?? 50}%`,
+      '--frame-zoom': zoom,
+      '--frame-x': `${centerX}%`,
+      '--frame-y': `${centerY}%`,
+      '--fit-width': `${fitWidth}%`,
+      '--fit-height': `${fitHeight}%`,
+      '--fit-left': `${((100 - fitWidth) * centerX) / 100}%`,
+      '--fit-top': `${((100 - fitHeight) * centerY) / 100}%`,
+    } as object
+  }
 
   const framed = view === 'format'
   // Only a smart crop discards anything. A fit keeps the whole frame and pads
@@ -204,6 +496,12 @@ export function Player({
   // Whichever Clip is supplying the picture, and where in its own Source Video
   // the playhead is sitting. During a Cutaway that is the Cutaway's Clip.
   const pictureClip = covering?.clip ?? currentClip
+  const framingPicture =
+    covering?.cutaway.id === selectedShotId
+      ? { shot: covering.cutaway, clip: covering.clip }
+      : !covering && current?.item.shot.id === selectedShotId
+        ? { shot: current.item.shot, clip: current.item.clip }
+        : null
   const pictureMs = covering ? player.coverSourceMs ?? 0 : player.sourceMs
   const subtitle = currentClip?.captions.find(
     (segment) => player.sourceMs >= segment.start_ms && player.sourceMs <= segment.end_ms,
@@ -219,6 +517,13 @@ export function Player({
   return (
     <section className="player" aria-label="Player">
       <div className="player__frame" ref={frameRef}>
+        <span
+          className="player__clock"
+          aria-label={`Playhead and duration at ${Math.round(clockFps)} frames per second`}
+        >
+          {formatTimecode(Math.min(player.playheadMs, totalMs), clockFps)} /{' '}
+          {formatTimecode(totalMs, clockFps)}
+        </span>
         <div
           ref={stageRef}
           className={`player__stage player__stage--${view}`}
@@ -242,7 +547,8 @@ export function Player({
           )}
 
           {[0, 1].map((value) => {
-            const clip = clipInSlot(value)
+            const item = itemInSlot(value)
+            const clip = item?.clip ?? null
             return (
               <video
                 key={value}
@@ -250,7 +556,7 @@ export function Player({
                 className={`player__video player__video--${
                   framed ? clip?.layout ?? 'fit_background' : 'whole'
                 } ${value === slot ? 'is-active' : ''}`}
-                style={{ '--crop-x': `${clip?.crop_center_x ?? 50}%` } as object}
+                style={videoStyle(item?.shot ?? null, clip)}
                 playsInline
                 preload="auto"
                 // Two different reasons to be silent: this element is not the
@@ -270,7 +576,7 @@ export function Player({
             className={`player__video player__video--cover player__video--${
               framed ? covering?.clip.layout ?? 'fit_background' : 'whole'
             } ${covering ? 'is-active' : ''}`}
-            style={{ '--crop-x': `${covering?.clip.crop_center_x ?? 50}%` } as object}
+            style={videoStyle(covering?.cutaway ?? null, covering?.clip ?? null)}
             playsInline
             preload="auto"
             muted
@@ -350,6 +656,16 @@ export function Player({
             />
           )}
 
+          {framed && framingPicture && onPreviewFraming && onCommitFraming && (
+            <FramingCage
+              stageRef={stageRef}
+              shot={framingPicture.shot}
+              clip={framingPicture.clip}
+              onPreview={onPreviewFraming}
+              onCommit={onCommitFraming}
+            />
+          )}
+
           {/* Where Instagram's own chrome will sit over the picture. */}
           {framed && guides && <div className="safe-area" aria-hidden="true" />}
 
@@ -376,250 +692,318 @@ export function Player({
       />
 
       <div className="player__transport">
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => player.jumpCut(-1)}
-          disabled={dead}
-          aria-label="Previous cut"
-          title="Previous cut (Shift ←)"
-        >
-          <SkipBack size={15} />
-        </button>
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => player.stepFrame(-1)}
-          disabled={dead}
-          aria-label="Back one frame"
-          title="Back one frame (,)"
-        >
-          <ChevronLeft size={15} />
-        </button>
-        <button
-          className="icon-button icon-button--play"
-          type="button"
-          onClick={() => player.setPlaying(!playing)}
-          disabled={dead}
-          aria-label={playing ? 'Pause the rough cut' : 'Play the rough cut'}
-          title={playing ? 'Pause (space)' : 'Play (space)'}
-        >
-          {playing ? <Pause size={16} /> : <Play size={16} />}
-        </button>
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => player.stepFrame(1)}
-          disabled={dead}
-          aria-label="Forward one frame"
-          title="Forward one frame (.)"
-        >
-          <ChevronRight size={15} />
-        </button>
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => player.jumpCut(1)}
-          disabled={dead}
-          aria-label="Next cut"
-          title="Next cut (Shift →)"
-        >
-          <SkipForward size={15} />
-        </button>
-
-        <span className="player__clock">
-          {formatTime(Math.min(player.playheadMs, totalMs))} / {formatTime(totalMs)}
-        </span>
-
-        {/* What is playing rides in the transport rather than on a line of its
-            own: every row this Player keeps is a row the stage does not get. */}
-        <p className="player__now">
-          {covering ? (
-            <>
-              <strong>{covering.clip.title}</strong>
-              <small>covering {current ? current.item.clip.title : 'a shot'}, its sound playing</small>
-            </>
-          ) : current ? (
-            <>
-              <strong>{current.item.clip.title}</strong>
-              <small>shot {player.index + 1} of {placed.length}</small>
-            </>
-          ) : (
-            <small>Nothing placed yet.</small>
-          )}
-        </p>
-
-        <button
-          className={`icon-button ${player.muted ? 'is-off' : ''}`}
-          type="button"
-          onClick={() => player.setMuted(!player.muted)}
-          aria-label={player.muted ? 'Unmute' : 'Mute'}
-          aria-pressed={player.muted}
-          title={player.muted ? 'Unmute (M)' : 'Mute (M)'}
-        >
-          {player.muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-        </button>
-        <input
-          className="player__volume"
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={player.muted ? 0 : player.volume}
-          aria-label="Volume"
-          onChange={(event) => {
-            player.setVolume(Number(event.target.value))
-            if (player.muted) player.setMuted(false)
-          }}
-        />
-        <button
-          className="icon-button"
-          type="button"
-          onClick={onFullscreen}
-          disabled={dead}
-          aria-label="Fullscreen"
-          title="Fullscreen (F)"
-        >
-          <Maximize size={15} />
-        </button>
-      </div>
-
-      <div className="player__tools">
-        <div className="player__rates" role="group" aria-label="Playback speed">
-          {RATES.map((option) => (
+        {onAddText && (
+          <span className="player__text-action">
             <button
-              key={option}
+              className="player__primary-action player__primary-action--text"
               type="button"
-              className={player.rate === option ? 'is-active' : ''}
-              aria-pressed={player.rate === option}
-              onClick={() => player.setRate(option)}
+              onClick={onAddText}
+              disabled={dead || !canAddText}
+              aria-label="Add text"
+              aria-describedby="add-text-tooltip"
+              title={addTextTooltip}
             >
-              {option}×
+              <Type size={16} />
             </button>
-          ))}
-        </div>
-
-        <button
-          className={`chip ${player.looping ? 'is-active' : ''}`}
-          type="button"
-          onClick={() => player.setLooping(!player.looping)}
-          aria-pressed={player.looping}
-          disabled={dead}
-          title="Loop (R)"
-        >
-          <Repeat size={13} />
-          Loop
-        </button>
-
-        <button
-          className={`chip ${guides ? 'is-active' : ''}`}
-          type="button"
-          onClick={() => setGuides(!guides)}
-          aria-pressed={guides}
-          disabled={!framed}
-          title="Where the app's own buttons will cover the picture"
-        >
-          <Frame size={13} />
-          Safe area
-        </button>
-
-        <div className="player__views" role="group" aria-label="What the stage shows">
-          <button
-            type="button"
-            className={framed ? 'is-active' : ''}
-            aria-pressed={framed}
-            onClick={() => setView('format')}
-            title={`${shape.name} ${shape.ratio} — the shape being made`}
-          >
-            <Square size={13} />
-            Format
-          </button>
-          <button
-            type="button"
-            className={!framed ? 'is-active' : ''}
-            aria-pressed={!framed}
-            onClick={() => setView('source')}
-            title="The whole source frame, and what the crop keeps"
-          >
-            <Crop size={13} />
-            Source
-          </button>
-        </div>
-      </div>
-
-      <div className="player__tools">
-        <span className="player__tools-label">Review range</span>
-        <button
-          className="chip"
-          type="button"
-          onClick={player.markIn}
-          disabled={dead}
-          title="Mark the range in-point here ([)"
-        >
-          <ChevronsRight size={13} />
-          In
-        </button>
-        <button
-          className="chip"
-          type="button"
-          onClick={player.markOut}
-          disabled={dead}
-          title="Mark the range out-point here (])"
-        >
-          <ChevronsLeft size={13} />
-          Out
-        </button>
-        <button
-          className="chip"
-          type="button"
-          onClick={player.rangeToSelection}
-          disabled={!player.canRangeToSelection}
-          title="Set the range to the selected shot, and loop it"
-        >
-          <Repeat size={13} />
-          This shot
-        </button>
-        {player.range && (
-          <>
-            <span className="player__range-readout">
-              {formatTime(player.range.inMs)}–{formatTime(player.range.outMs)}
+            <span className="control-tooltip" id="add-text-tooltip" role="tooltip">
+              {addTextTooltip}
             </span>
-            <button className="text-button" type="button" onClick={player.clearRange}>
-              Clear
-            </button>
-          </>
+          </span>
         )}
 
-        {/* Trimming shares the row rather than taking one: both groups act on
-            the playhead, and they wrap apart when there is no room for both. */}
-        {onTrimToPlayhead && (
-          <>
-            <span className="player__tools-label">Trim shot</span>
-            <button
-              className="chip"
-              type="button"
-              onClick={() => onTrimToPlayhead('in')}
-              disabled={!canTrim}
-              title="Set the selected shot's in-point to the playhead (I)"
-            >
-              In to playhead
-            </button>
-            <button
-              className="chip"
-              type="button"
-              onClick={() => onTrimToPlayhead('out')}
-              disabled={!canTrim}
-              title="Set the selected shot's out-point to the playhead (O)"
-            >
-              Out to playhead
-            </button>
-            {!canTrim && (
-              <small className="player__hint">
-                Select the shot the playhead is inside.
-              </small>
+        <div className="player__primary-controls">
+          <button
+            className="player__primary-action"
+            type="button"
+            onClick={() => player.setPlaying(false)}
+            disabled={dead || !playing}
+            aria-label="Pause the rough cut"
+            title="Pause (space)"
+          >
+            <Pause size={15} />
+          </button>
+          <button
+            className="player__primary-action player__primary-action--play"
+            type="button"
+            onClick={() => player.setPlaying(true)}
+            disabled={dead || playing}
+            aria-label="Play the rough cut"
+            title="Play (space)"
+          >
+            <Play size={18} />
+          </button>
+          {exportControl}
+        </div>
+
+        {current && (
+          <p className="player__status" aria-live="polite">
+            {covering ? (
+              <>
+                <strong>{covering.clip.title}</strong>
+                <span>covering {current.item.clip.title}, its sound playing</span>
+              </>
+            ) : (
+              <>
+                <strong>{current.item.clip.title}</strong>
+                <span>shot {player.index + 1} of {placed.length}</span>
+              </>
             )}
-          </>
+          </p>
         )}
+
+        <div className="player__more" ref={moreRef}>
+          <button
+            ref={moreButtonRef}
+            className={`icon-button player__more-trigger ${moreOpen ? 'is-active' : ''}`}
+            type="button"
+            onClick={() => setMoreOpen((open) => !open)}
+            aria-label="More playback options"
+            aria-expanded={moreOpen}
+            aria-controls="player-more-options"
+            title="More playback options"
+          >
+            <MoreHorizontal size={18} />
+          </button>
+
+          {moreOpen && (
+            <div
+              className="player__more-panel"
+              id="player-more-options"
+              role="group"
+              aria-label="Playback options"
+            >
+              <div className="player__more-section">
+                <span className="player__tools-label">Navigate</span>
+                <div className="player__more-row">
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={() => player.jumpCut(-1)}
+                    disabled={dead}
+                    aria-label="Previous cut"
+                    title="Previous cut (Shift ←)"
+                  >
+                    <SkipBack size={15} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={() => player.stepFrame(-1)}
+                    disabled={dead}
+                    aria-label="Back one frame"
+                    title="Back one frame (,)"
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={() => player.stepFrame(1)}
+                    disabled={dead}
+                    aria-label="Forward one frame"
+                    title="Forward one frame (.)"
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={() => player.jumpCut(1)}
+                    disabled={dead}
+                    aria-label="Next cut"
+                    title="Next cut (Shift →)"
+                  >
+                    <SkipForward size={15} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={onFullscreen}
+                    disabled={dead}
+                    aria-label="Fullscreen"
+                    title="Fullscreen (F)"
+                  >
+                    <Maximize size={15} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="player__more-section">
+                <span className="player__tools-label">Sound</span>
+                <div className="player__more-row player__more-row--sound">
+                  <button
+                    className={`icon-button ${player.muted ? 'is-off' : ''}`}
+                    type="button"
+                    onClick={() => player.setMuted(!player.muted)}
+                    aria-label={player.muted ? 'Unmute' : 'Mute'}
+                    aria-pressed={player.muted}
+                    title={player.muted ? 'Unmute (M)' : 'Mute (M)'}
+                  >
+                    {player.muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+                  </button>
+                  <input
+                    className="player__volume"
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={player.muted ? 0 : player.volume}
+                    aria-label="Volume"
+                    onChange={(event) => {
+                      player.setVolume(Number(event.target.value))
+                      if (player.muted) player.setMuted(false)
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="player__more-section">
+                <span className="player__tools-label">Speed</span>
+                <div className="player__rates" role="group" aria-label="Playback speed">
+                  {RATES.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={player.rate === option ? 'is-active' : ''}
+                      aria-pressed={player.rate === option}
+                      onClick={() => player.setRate(option)}
+                    >
+                      {option}×
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="player__more-section">
+                <div className="player__more-row player__more-row--wrap">
+                  <button
+                    className={`chip ${player.looping ? 'is-active' : ''}`}
+                    type="button"
+                    onClick={() => player.setLooping(!player.looping)}
+                    aria-pressed={player.looping}
+                    disabled={dead}
+                    title="Loop (R)"
+                  >
+                    <Repeat size={13} />
+                    Loop
+                  </button>
+
+                  <button
+                    className={`chip ${guides ? 'is-active' : ''}`}
+                    type="button"
+                    onClick={() => setGuides(!guides)}
+                    aria-pressed={guides}
+                    disabled={!framed}
+                    title="Where the app's own buttons will cover the picture"
+                  >
+                    <Frame size={13} />
+                    Safe area
+                  </button>
+
+                  <div className="player__views" role="group" aria-label="What the stage shows">
+                    <button
+                      type="button"
+                      className={framed ? 'is-active' : ''}
+                      aria-pressed={framed}
+                      onClick={() => setView('format')}
+                      title={`${shape.name} ${shape.ratio} — the shape being made`}
+                    >
+                      <Square size={13} />
+                      Format
+                    </button>
+                    <button
+                      type="button"
+                      className={!framed ? 'is-active' : ''}
+                      aria-pressed={!framed}
+                      onClick={() => setView('source')}
+                      title="The whole source frame, and what the crop keeps"
+                    >
+                      <Crop size={13} />
+                      Source
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="player__more-section">
+                <span className="player__tools-label">Review range</span>
+                <div className="player__more-row player__more-row--wrap">
+                  <button
+                    className="chip"
+                    type="button"
+                    onClick={player.markIn}
+                    disabled={dead}
+                    title="Mark the range in-point here ([)"
+                  >
+                    <ChevronsRight size={13} />
+                    In
+                  </button>
+                  <button
+                    className="chip"
+                    type="button"
+                    onClick={player.markOut}
+                    disabled={dead}
+                    title="Mark the range out-point here (])"
+                  >
+                    <ChevronsLeft size={13} />
+                    Out
+                  </button>
+                  <button
+                    className="chip"
+                    type="button"
+                    onClick={player.rangeToSelection}
+                    disabled={!player.canRangeToSelection}
+                    title="Set the range to the selected shot, and loop it"
+                  >
+                    <Repeat size={13} />
+                    This shot
+                  </button>
+                  {player.range && (
+                    <>
+                      <span className="player__range-readout">
+                        {formatTime(player.range.inMs)}–{formatTime(player.range.outMs)}
+                      </span>
+                      <button className="text-button" type="button" onClick={player.clearRange}>
+                        Clear
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {onTrimToPlayhead && (
+                <div className="player__more-section">
+                  <span className="player__tools-label">Trim shot</span>
+                  <div className="player__more-row player__more-row--wrap">
+                    <button
+                      className="chip"
+                      type="button"
+                      onClick={() => onTrimToPlayhead('in')}
+                      disabled={!canTrim}
+                      title="Set the selected shot's in-point to the playhead (I)"
+                    >
+                      In to playhead
+                    </button>
+                    <button
+                      className="chip"
+                      type="button"
+                      onClick={() => onTrimToPlayhead('out')}
+                      disabled={!canTrim}
+                      title="Set the selected shot's out-point to the playhead (O)"
+                    >
+                      Out to playhead
+                    </button>
+                    {!canTrim && (
+                      <small className="player__hint">
+                        Select the shot the playhead is inside.
+                      </small>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/*

@@ -124,6 +124,11 @@ class Shot(Base):
     # Null is the Shot following its Clip's Trim, not an absent value.
     trim_start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trim_end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Framing belongs to the placement rather than the Clip: the same Clip can
+    # be a wide establishing Shot once and a tight detail later in a Sequence.
+    frame_zoom: Mapped[float] = mapped_column(Float, default=1.0)
+    frame_center_x: Mapped[float] = mapped_column(Float, default=50.0)
+    frame_center_y: Mapped[float] = mapped_column(Float, default=50.0)
     # Set on a Cutaway: the Shot it covers, and how far into that Shot it lands.
     parent_shot_id: Mapped[str | None] = mapped_column(
         ForeignKey("shots.id", ondelete="CASCADE"), nullable=True, index=True

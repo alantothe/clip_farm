@@ -461,10 +461,13 @@ class ShotCreate(BaseModel):
     position: int | None = Field(default=None, ge=0)
     trim_start_ms: int | None = Field(default=None, ge=0)
     trim_end_ms: int | None = Field(default=None, ge=0)
+    frame_zoom: float = Field(default=1.0, ge=1, le=3)
+    frame_center_x: float = Field(default=50.0, ge=0, le=100)
+    frame_center_y: float = Field(default=50.0, ge=0, le=100)
 
 
 class ShotUpdate(BaseModel):
-    """Move a Shot, trim it, or both.
+    """Move, trim, or frame a Shot.
 
     Every field is optional, and a null trim is meaningful — it resets the Shot
     to following its Clip. Absent and null are told apart by `model_fields_set`,
@@ -474,6 +477,9 @@ class ShotUpdate(BaseModel):
     position: int | None = Field(default=None, ge=0)
     trim_start_ms: int | None = Field(default=None, ge=0)
     trim_end_ms: int | None = Field(default=None, ge=0)
+    frame_zoom: float | None = Field(default=None, ge=1, le=3)
+    frame_center_x: float | None = Field(default=None, ge=0, le=100)
+    frame_center_y: float | None = Field(default=None, ge=0, le=100)
 
 
 class CutawayCreate(BaseModel):
@@ -484,10 +490,13 @@ class CutawayCreate(BaseModel):
     offset_ms: int = Field(ge=0)
     trim_start_ms: int | None = Field(default=None, ge=0)
     trim_end_ms: int | None = Field(default=None, ge=0)
+    frame_zoom: float = Field(default=1.0, ge=1, le=3)
+    frame_center_x: float = Field(default=50.0, ge=0, le=100)
+    frame_center_y: float = Field(default=50.0, ge=0, le=100)
 
 
 class CutawayUpdate(BaseModel):
-    """Move a Cutaway, re-anchor it to another Base Shot, or trim it.
+    """Move, re-anchor, trim, or frame a Cutaway.
 
     Same absent-versus-null rule as `ShotUpdate`: a null trim resets that edge
     to following the Clip, and an omitted one leaves it alone.
@@ -497,6 +506,9 @@ class CutawayUpdate(BaseModel):
     offset_ms: int | None = Field(default=None, ge=0)
     trim_start_ms: int | None = Field(default=None, ge=0)
     trim_end_ms: int | None = Field(default=None, ge=0)
+    frame_zoom: float | None = Field(default=None, ge=1, le=3)
+    frame_center_x: float | None = Field(default=None, ge=0, le=100)
+    frame_center_y: float | None = Field(default=None, ge=0, le=100)
 
 
 class CutawayOut(BaseModel):
@@ -510,6 +522,9 @@ class CutawayOut(BaseModel):
     offset_ms: int
     trim_start_ms: int | None = None
     trim_end_ms: int | None = None
+    frame_zoom: float
+    frame_center_x: float
+    frame_center_y: float
 
 
 class ShotOut(BaseModel):
@@ -526,6 +541,9 @@ class ShotOut(BaseModel):
     # difference, so it needs the override rather than only the result.
     trim_start_ms: int | None = None
     trim_end_ms: int | None = None
+    frame_zoom: float
+    frame_center_x: float
+    frame_center_y: float
 
 
 class SequenceRenderOut(BaseModel):

@@ -218,7 +218,6 @@ export function Timeline({
   onPlaceEnd,
   onMoveTitle,
   onTrimTitle,
-  onAddTitle,
   busy,
 }: {
   shots: Shot[]
@@ -241,7 +240,6 @@ export function Timeline({
   onPlaceEnd: () => void
   onMoveTitle: (title: Title, span: TitleSpan) => void
   onTrimTitle: (title: Title, span: TitleSpan) => void
-  onAddTitle: (atMs: number) => void
   busy: boolean
 }) {
   const [pxPerSec, setPxPerSec] = useState(24)
@@ -584,11 +582,9 @@ export function Timeline({
             selectedTitleId={selectedTitleId}
             pxPerSec={pxPerSec}
             totalMs={totalMs}
-            playheadMs={playheadMs}
             onSelect={onSelectTitle}
             onMove={onMoveTitle}
             onTrim={onTrimTitle}
-            onAdd={onAddTitle}
             busy={busy}
           />
 

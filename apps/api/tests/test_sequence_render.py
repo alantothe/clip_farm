@@ -378,6 +378,9 @@ def test_the_worker_renders_each_shots_own_span(tmp_path, monkeypatch) -> None:
                 position=1,
                 trim_start_ms=3_000,
                 trim_end_ms=4_500,
+                frame_zoom=1.75,
+                frame_center_x=20,
+                frame_center_y=80,
             )
         )
         sequence_render = SequenceRender(batch_id=batch.id, shot_count=2)
@@ -385,10 +388,18 @@ def test_the_worker_renders_each_shots_own_span(tmp_path, monkeypatch) -> None:
         session.commit()
         batch_id, render_id = batch.id, sequence_render.id
 
-    spans: list[tuple[int, int]] = []
+    spans: list[tuple[int, int, float, float, float]] = []
 
     def fake_render_vertical(**kwargs):
-        spans.append((kwargs["start_ms"], kwargs["end_ms"]))
+        spans.append(
+            (
+                kwargs["start_ms"],
+                kwargs["end_ms"],
+                kwargs["frame_zoom"],
+                kwargs["frame_center_x"],
+                kwargs["frame_center_y"],
+            )
+        )
         Path(kwargs["output"]).write_bytes(b"rendered")
 
     monkeypatch.setattr(tasks, "SessionLocal", factory)
@@ -405,7 +416,10 @@ def test_the_worker_renders_each_shots_own_span(tmp_path, monkeypatch) -> None:
     # `render_sequence_task` is a huey task, so calling it would only enqueue.
     tasks.render_sequence_task.call_local(batch_id, render_id)
 
-    assert spans == [(1_000, 9_000), (3_000, 4_500)]
+    assert spans == [
+        (1_000, 9_000, 1, 50, 50),
+        (3_000, 4_500, 1.75, 20, 80),
+    ]
     with factory() as session:
         assert session.get(SequenceRender, render_id).status == "complete"
 

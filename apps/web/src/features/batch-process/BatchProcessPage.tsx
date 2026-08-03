@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Check, Layers, LoaderCircle, Pencil } from 'lucide-react'
+import { Check, ChevronLeft, Layers, LoaderCircle, Pencil, UploadCloud } from 'lucide-react'
 import { api } from '../../api'
 import { DeleteDialog } from '../../components/DeleteDialog'
 import { formatDefinition } from '../../formats/registry'
+import { formatTime } from '../../lib/format'
 import { titleIsVisible } from '../../lib/titles'
 import type { DeleteIntent } from '../../components/DeleteDialog'
 import { ProjectRail } from '../../components/ProjectRail'
@@ -18,7 +19,7 @@ import { Player } from './Player'
 import { ShotInspector } from './ShotInspector'
 import { MIN_SPAN_MS, Timeline, sequenceDurationMs, shotTrim, sourceTimeMs } from './Timeline'
 import { TitleInspector, lookOf } from './TitleInspector'
-import { NEW_TITLE_MS, type TitleSpan } from './TitleTrack'
+import { hasTitleSlot, type TitleSpan } from './TitleTrack'
 import { useSequencePlayer } from './useSequencePlayer'
 import type {
   Batch,
@@ -28,6 +29,7 @@ import type {
   Phrase,
   Project,
   Shot,
+  ShotFraming,
   ShotTrim,
   Title,
   TitlePatch,
@@ -42,7 +44,7 @@ const FONTS_KEY = ['fonts'] as const
 
 /** What a Title edit sends, alongside which one it is about. */
 type TitleEdit =
-  | { kind: 'add'; atMs: number }
+  | { kind: 'add' }
   | { kind: 'patch'; titleId: string; patch: TitlePatch }
   | { kind: 'remove'; titleId: string }
 
@@ -58,14 +60,16 @@ type PhraseAction =
   | { kind: 'delete'; phrase: Phrase }
 
 type SequenceEdit =
-  | { kind: 'add'; clipId: string; position?: number; trim?: ShotTrim }
+  | { kind: 'add'; clipId: string; position?: number; trim?: ShotTrim; framing?: ShotFraming }
   | { kind: 'remove'; shotId: string }
   | { kind: 'move'; shotId: string; position: number }
   | { kind: 'trim'; shotId: string; trim: ShotTrim }
+  | { kind: 'frame'; shotId: string; framing: ShotFraming }
   | { kind: 'cover'; clipId: string; baseShotId: string; offsetMs: number }
   | { kind: 'uncover'; cutawayId: string }
   | { kind: 'anchor'; cutawayId: string; baseShotId: string; offsetMs: number }
   | { kind: 'trim-cutaway'; cutawayId: string; trim: ShotTrim; offsetMs?: number }
+  | { kind: 'frame-cutaway'; cutawayId: string; framing: ShotFraming }
 
 /**
  * Trimming a Cutaway, with the offset that keeps its back where it was.
@@ -105,11 +109,13 @@ export function applySequenceEdit(batch: Batch, edit: SequenceEdit): Batch {
   if (edit.kind === 'uncover') {
     return { ...batch, cutaways: batch.cutaways.filter((item) => item.id !== edit.cutawayId) }
   }
-  if (edit.kind === 'anchor' || edit.kind === 'trim-cutaway') {
+  if (edit.kind === 'anchor' || edit.kind === 'trim-cutaway' || edit.kind === 'frame-cutaway') {
     const patch =
       edit.kind === 'anchor'
         ? { base_shot_id: edit.baseShotId, offset_ms: edit.offsetMs }
-        : { ...edit.trim, ...(edit.offsetMs === undefined ? {} : { offset_ms: edit.offsetMs }) }
+        : edit.kind === 'trim-cutaway'
+          ? { ...edit.trim, ...(edit.offsetMs === undefined ? {} : { offset_ms: edit.offsetMs }) }
+          : edit.framing
     return {
       ...batch,
       cutaways: batch.cutaways.map((item) =>
@@ -127,6 +133,10 @@ export function applySequenceEdit(batch: Batch, edit: SequenceEdit): Batch {
     if (from < 0) return batch
     const [moved] = shots.splice(from, 1)
     shots.splice(Math.min(edit.position, shots.length), 0, moved)
+  } else if (edit.kind === 'frame') {
+    shots = shots.map((shot) =>
+      shot.id === edit.shotId ? { ...shot, ...edit.framing } : shot,
+    )
   } else {
     shots = shots.map((shot) => (shot.id === edit.shotId ? { ...shot, ...edit.trim } : shot))
   }
@@ -242,6 +252,7 @@ export function BatchProcessPage() {
   const navigate = useNavigate()
   const { batchId, clipId } = useParams<{ batchId: string; clipId: string }>()
   const [railCollapsed, setRailCollapsed] = useState(false)
+  const [binCollapsed, setBinCollapsed] = useState(false)
   const [deleteIntent, setDeleteIntent] = useState<DeleteIntent | null>(null)
   const [rejected, setRejected] = useState<string[]>([])
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
@@ -260,6 +271,9 @@ export function BatchProcessPage() {
   const [titlePreview, setTitlePreview] = useState<({ titleId: string } & TitlePatch) | null>(
     null,
   )
+  const [framingPreview, setFramingPreview] = useState<
+    ({ shotId: string } & ShotFraming) | null
+  >(null)
 
   const batchesQuery = useQuery({ queryKey: BATCHES_KEY, queryFn: api.listBatches })
   const batches = batchesQuery.data ?? []
@@ -387,10 +401,15 @@ export function BatchProcessPage() {
   const sequenceMutation = useMutation({
     mutationFn: (edit: SequenceEdit) => {
       if (edit.kind === 'add') {
-        return api.addShot(batchId!, edit.clipId, { position: edit.position, ...edit.trim })
+        return api.addShot(batchId!, edit.clipId, {
+          position: edit.position,
+          ...edit.trim,
+          ...edit.framing,
+        })
       }
       if (edit.kind === 'remove') return api.removeShot(batchId!, edit.shotId)
       if (edit.kind === 'trim') return api.trimShot(batchId!, edit.shotId, edit.trim)
+      if (edit.kind === 'frame') return api.frameShot(batchId!, edit.shotId, edit.framing)
       if (edit.kind === 'cover') {
         return api.addCutaway(batchId!, {
           clip_id: edit.clipId,
@@ -410,6 +429,9 @@ export function BatchProcessPage() {
           ...edit.trim,
           ...(edit.offsetMs === undefined ? {} : { offset_ms: edit.offsetMs }),
         })
+      }
+      if (edit.kind === 'frame-cutaway') {
+        return api.updateCutaway(batchId!, edit.cutawayId, edit.framing)
       }
       return api.moveShot(batchId!, edit.shotId, edit.position)
     },
@@ -438,8 +460,8 @@ export function BatchProcessPage() {
       if (edit.kind === 'add') {
         return api.addTitle(batchId!, {
           text: 'Your text here',
-          start_ms: Math.round(edit.atMs),
-          end_ms: Math.round(edit.atMs) + NEW_TITLE_MS,
+          start_ms: 0,
+          end_ms: Math.round(player.totalMs),
           // The first built-in Style, so a new Title arrives looking like
           // something rather than as unstyled default type.
           style_id: titleStyles[0]?.id,
@@ -544,6 +566,7 @@ export function BatchProcessPage() {
     setSelectedShotId(null)
     setSelectedTitleId(null)
     setTitlePreview(null)
+    setFramingPreview(null)
     setUndoRemoval(null)
     setPlayheadMs(0)
   }, [batchId])
@@ -552,7 +575,24 @@ export function BatchProcessPage() {
   // inspectors, and two open at once would leave the dock arguing with itself.
   function selectShot(shotId: string | null) {
     setSelectedShotId(shotId)
-    if (shotId) setSelectedTitleId(null)
+    setFramingPreview(null)
+    if (!shotId) return
+    setSelectedTitleId(null)
+  }
+
+  function previewSelectedFraming(framing: ShotFraming | null) {
+    setFramingPreview(framing && selectedShotId ? { shotId: selectedShotId, ...framing } : null)
+  }
+
+  function commitSelectedFraming(framing: ShotFraming) {
+    const target = selectedShot ?? selectedCutaway
+    if (!target) return
+    setFramingPreview(null)
+    sequenceMutation.mutate(
+      selectedCutaway
+        ? { kind: 'frame-cutaway', cutawayId: target.id, framing }
+        : { kind: 'frame', shotId: target.id, framing },
+    )
   }
 
   /**
@@ -655,64 +695,75 @@ export function BatchProcessPage() {
       <div className="workspace-shell workspace-shell--editor">
         {batchList}
         <main className="workspace workspace--editor">
-          <header className="editor-bar">
-            <div className="editor-bar__id">
-              <BatchTitle batch={batch} onRename={(name) => renameMutation.mutate(name)} />
-              {/* Plain text, not a control: the Format was settled when this
-                  Batch was created and does not change (ADR 0006). */}
-              <span className="editor-bar__meta">
-                {clips.length} {clips.length === 1 ? 'clip' : 'clips'} ·{' '}
-                {formatDefinition(batch.format).platform} ·{' '}
-                {formatDefinition(batch.format).name} {formatDefinition(batch.format).ratio}
-              </span>
-            </div>
-            <ExportPanel
-              sequenceRender={batch.sequence_render}
-              shotCount={shots.length}
-              totalMs={sequenceDurationMs(shots, clips)}
-              onExport={() => exportMutation.mutate()}
-              starting={exportMutation.isPending}
-              error={exportMutation.error}
-            />
-          </header>
-
           <div className="editor-body">
-            <aside className="clip-bin">
-              <ClipDropZone
-                onAdd={(files) => {
-                  setRejected([])
-                  uploadMutation.mutate(files)
-                }}
-                uploading={uploadMutation.isPending}
-              />
+            <aside className={`clip-bin ${binCollapsed ? 'clip-bin--collapsed' : ''}`}>
+              <header className="clip-bin__head">
+                {!binCollapsed ? (
+                  <div className="clip-bin__identity">
+                    <BatchTitle batch={batch} onRename={(name) => renameMutation.mutate(name)} />
+                    <span className="clip-bin__meta">
+                      {clips.length} {clips.length === 1 ? 'video' : 'videos'} ·{' '}
+                      {shots.length} on timeline
+                    </span>
+                    <small>
+                      {formatDefinition(batch.format).platform} ·{' '}
+                      {formatDefinition(batch.format).name} {formatDefinition(batch.format).ratio}
+                      {shots.length > 0 && ` · ${formatTime(sequenceDurationMs(shots, clips))}`}
+                    </small>
+                  </div>
+                ) : (
+                  <UploadCloud size={17} aria-hidden="true" />
+                )}
+                <button
+                  className="icon-button clip-bin__toggle"
+                  type="button"
+                  onClick={() => setBinCollapsed((value) => !value)}
+                  aria-label={binCollapsed ? 'Expand video bin' : 'Collapse video bin'}
+                  title={binCollapsed ? 'Expand video bin' : 'Collapse video bin'}
+                >
+                  <ChevronLeft size={17} />
+                </button>
+              </header>
 
-              {rejected.length > 0 && (
-                <div className="toast-error" role="alert">
-                  {rejected.map((message) => <p key={message}>{message}</p>)}
-                </div>
-              )}
-              {uploadMutation.error && (
-                <div className="toast-error">{uploadMutation.error.message}</div>
-              )}
-              {renameMutation.error && (
-                <div className="toast-error">{renameMutation.error.message}</div>
-              )}
+              {!binCollapsed && (
+                <>
+                  <ClipDropZone
+                    onAdd={(files) => {
+                      setRejected([])
+                      uploadMutation.mutate(files)
+                    }}
+                    uploading={uploadMutation.isPending}
+                  />
 
-              {clips.length > 0 ? (
-                <ClipGrid
-                  clips={clips}
-                  onOpen={(clip) => navigate(clipRoute(batch.id, clip.id))}
-                  onAdd={(clip) => sequenceMutation.mutate({ kind: 'add', clipId: clip.id })}
-                  onDragToTimeline={(clip) => setPlacingClipId(clip.id)}
-                  placedCounts={placedCounts}
-                  adding={sequenceMutation.isPending}
-                />
-              ) : (
-                <p className="batch-empty">
-                  No clips yet. Add videos above and each one imports on its own — you can
-                  start another batch while these run.
-                  <small>MP4, MOV, M4V, WebM, MKV, or AVI · up to 25 at a time</small>
-                </p>
+                  {rejected.length > 0 && (
+                    <div className="toast-error" role="alert">
+                      {rejected.map((message) => <p key={message}>{message}</p>)}
+                    </div>
+                  )}
+                  {uploadMutation.error && (
+                    <div className="toast-error">{uploadMutation.error.message}</div>
+                  )}
+                  {renameMutation.error && (
+                    <div className="toast-error">{renameMutation.error.message}</div>
+                  )}
+
+                  {clips.length > 0 ? (
+                    <ClipGrid
+                      clips={clips}
+                      onOpen={(clip) => navigate(clipRoute(batch.id, clip.id))}
+                      onAdd={(clip) => sequenceMutation.mutate({ kind: 'add', clipId: clip.id })}
+                      onDragToTimeline={(clip) => setPlacingClipId(clip.id)}
+                      placedCounts={placedCounts}
+                      adding={sequenceMutation.isPending}
+                    />
+                  ) : (
+                    <p className="batch-empty">
+                      No clips yet. Add videos above and each one imports on its own — you can
+                      start another batch while these run.
+                      <small>MP4, MOV, M4V, WebM, MKV, or AVI · up to 25 at a time</small>
+                    </p>
+                  )}
+                </>
               )}
             </aside>
 
@@ -723,13 +774,30 @@ export function BatchProcessPage() {
                 titles={titles}
                 fontCatalog={fontsQuery.data ?? null}
                 selectedTitleId={selectedTitleId}
+                selectedShotId={selectedShotId}
                 titlePreview={titlePreview}
+                framingPreview={framingPreview}
                 onSelectTitle={selectTitle}
                 onEditTitle={(title, patch) =>
                   titleMutation.mutate({ kind: 'patch', titleId: title.id, patch })
                 }
+                onPreviewFraming={previewSelectedFraming}
+                onCommitFraming={commitSelectedFraming}
                 onTrimToPlayhead={trimToPlayhead}
                 canTrim={trimTarget !== null}
+                exportControl={(
+                  <ExportPanel
+                    sequenceRender={batch.sequence_render}
+                    shotCount={shots.length}
+                    onExport={() => exportMutation.mutate()}
+                    starting={exportMutation.isPending}
+                    error={exportMutation.error}
+                  />
+                )}
+                onAddText={() => titleMutation.mutate({ kind: 'add' })}
+                canAddText={
+                  player.totalMs > 0 && hasTitleSlot(titles, 0, player.totalMs)
+                }
               />
 
               {/*
@@ -806,6 +874,8 @@ export function BatchProcessPage() {
                       : { kind: 'trim', shotId: shot.id, trim },
                   )
                 }
+                onPreviewFraming={previewSelectedFraming}
+                onFrame={(_shot, framing) => commitSelectedFraming(framing)}
                 onRemove={(shot) => {
                   setSelectedShotId(null)
                   if (selectedCutaway) {
@@ -835,6 +905,11 @@ export function BatchProcessPage() {
                       trim: {
                         trim_start_ms: shot.trim_start_ms,
                         trim_end_ms: shot.trim_end_ms,
+                      },
+                      framing: {
+                        frame_zoom: shot.frame_zoom,
+                        frame_center_x: shot.frame_center_x,
+                        frame_center_y: shot.frame_center_y,
                       },
                     })
                   }}
@@ -873,7 +948,6 @@ export function BatchProcessPage() {
               onTrimTitle={(title, span: TitleSpan) =>
                 titleMutation.mutate({ kind: 'patch', titleId: title.id, patch: span })
               }
-              onAddTitle={(atMs) => titleMutation.mutate({ kind: 'add', atMs })}
               onMove={(shot, position) =>
                 sequenceMutation.mutate({ kind: 'move', shotId: shot.id, position })
               }

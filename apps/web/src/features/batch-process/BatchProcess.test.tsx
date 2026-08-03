@@ -188,6 +188,26 @@ test('adds several videos to a batch in one upload', async () => {
   expect(body.getAll('videos')).toHaveLength(2)
 })
 
+test('the video bin folds away and gives the Player its width back', async () => {
+  stubApi()
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  await screen.findByRole('button', { name: 'Collapse video bin' })
+  const bin = document.querySelector<HTMLElement>('.clip-bin')!
+  expect(within(bin).getByRole('heading', { name: 'Tuesday pulls' })).toBeVisible()
+  expect(within(bin).getByRole('button', { name: 'Choose videos' })).toBeVisible()
+
+  fireEvent.click(within(bin).getByRole('button', { name: 'Collapse video bin' }))
+
+  expect(bin).toHaveClass('clip-bin--collapsed')
+  expect(within(bin).queryByRole('heading', { name: 'Tuesday pulls' })).toBeNull()
+  expect(within(bin).queryByRole('button', { name: 'Choose videos' })).toBeNull()
+
+  fireEvent.click(within(bin).getByRole('button', { name: 'Expand video bin' }))
+  expect(bin).not.toHaveClass('clip-bin--collapsed')
+})
+
 test('reports files that could not become clips without losing the rest', async () => {
   stubApi({
     'POST /api/batches/batch-1/uploads': {
@@ -354,7 +374,14 @@ function sequencedBatch(overrides: Partial<Batch> = {}): Batch {
 }
 
 function makeShot(overrides: Partial<Shot> & Pick<Shot, 'id' | 'clip_id' | 'position'>): Shot {
-  return { trim_start_ms: null, trim_end_ms: null, ...overrides }
+  return {
+    trim_start_ms: null,
+    trim_end_ms: null,
+    frame_zoom: 1,
+    frame_center_x: 50,
+    frame_center_y: 50,
+    ...overrides,
+  }
 }
 
 const placed: Batch = sequencedBatch({
@@ -398,8 +425,10 @@ test('draws each shot as wide as it is long, and names it', async () => {
   // A shot too narrow to hold its title still says what it is.
   expect(within(timeline).getByRole('button', { name: 'first, shot 1 of 2, 00:05.0' })).toBeVisible()
   expect(within(timeline).getByRole('button', { name: 'second, shot 2 of 2, 00:03.0' })).toBeVisible()
-  // 5s + 3s of trimmed clip, not the raw sources.
-  expect(screen.getByRole('heading', { name: /2 clips/ })).toHaveTextContent('0:08')
+  // Batch and timeline facts now live in the video bin instead of a top bar.
+  const bin = document.querySelector('.clip-bin')!
+  expect(bin).toHaveTextContent('2 videos · 2 on timeline')
+  expect(bin).toHaveTextContent('00:08.0')
 })
 
 test('a clip already on the timeline can be placed again', async () => {
@@ -477,6 +506,74 @@ test('trimming a shot sends only the edge that moved', async () => {
   )
 })
 
+test('a selected shot can be zoomed and positioned in the finished frame', async () => {
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': placed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 2/)
+
+  const zoom = screen.getByRole('slider', { name: 'Shot zoom' })
+  const horizontal = screen.getByRole('slider', { name: 'Shot horizontal position' })
+  const vertical = screen.getByRole('slider', { name: 'Shot vertical position' })
+  expect(horizontal).toHaveValue('50')
+  expect(vertical).toHaveValue('50')
+
+  fireEvent.change(zoom, { target: { value: '175' } })
+  const activeVideo = document.querySelector<HTMLElement>('.player__video.is-active')!
+  expect(activeVideo.style.getPropertyValue('--frame-zoom')).toBe('1.75')
+  fireEvent.pointerUp(zoom)
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/shots/shot-1',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          frame_zoom: 1.75,
+          frame_center_x: 50,
+          frame_center_y: 50,
+        }),
+      }),
+    ),
+  )
+})
+
+test('the Player border can be pulled directly to zoom a selected shot', async () => {
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': placed })
+  Object.defineProperty(window, 'PointerEvent', {
+    configurable: true,
+    value: MouseEvent,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 2/)
+
+  const cage = screen.getByLabelText('Framing controls for first')
+  expect(within(cage).getByText('Drag edge · pull corner')).toBeVisible()
+  const stage = document.querySelector<HTMLElement>('.player__stage')!
+  stage.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width: 300, height: 533, right: 300, bottom: 533 }) as DOMRect
+  const corner = cage.querySelector<HTMLElement>('.player__framing-corner--se')!
+
+  fireEvent.pointerDown(corner, { pointerId: 1, clientX: 290, clientY: 523 })
+  fireEvent.pointerMove(corner, { pointerId: 1, clientX: 330, clientY: 580 })
+  const activeVideo = document.querySelector<HTMLElement>('.player__video.is-active')!
+  expect(Number(activeVideo.style.getPropertyValue('--frame-zoom'))).toBeGreaterThan(1)
+  fireEvent.pointerUp(corner, { pointerId: 1, clientX: 330, clientY: 580 })
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(
+      ([url, options]) =>
+        url === '/api/batches/batch-1/shots/shot-1' && options?.method === 'PATCH',
+    )
+    expect(call).toBeTruthy()
+    const body = JSON.parse(String(call?.[1]?.body))
+    expect(body.frame_zoom).toBeGreaterThan(1)
+    expect(body.frame_center_x).toBe(50)
+    expect(body.frame_center_y).toBe(50)
+  })
+})
+
 test('a shot trimmed on the timeline can be reset to follow its clip', async () => {
   const trimmed = sequencedBatch({
     shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0, trim_end_ms: 2000 })],
@@ -544,6 +641,9 @@ test('removing a shot leaves the clip in the batch, and offers an undo', async (
           position: 0,
           trim_start_ms: 500,
           trim_end_ms: null,
+          frame_zoom: 1,
+          frame_center_x: 50,
+          frame_center_y: 50,
         }),
       }),
     ),
@@ -560,9 +660,9 @@ test('plays the sequence as a rough cut, and says that is what it is', async () 
   // export produces and there is nothing to warn about. The caveat is not
   // wallpaper — it appears only where it is true (ADR 0007).
   expect(within(preview).queryByText(/Approximate/)).not.toBeInTheDocument()
-  expect(within(preview).getByText('first')).toBeVisible()
-  expect(within(preview).getByText('shot 1 of 2')).toBeVisible()
-  expect(within(preview).getByText('00:00.0 / 00:08.0')).toBeVisible()
+  expect(within(preview).getByText('first')).toBeInTheDocument()
+  expect(within(preview).getByText('shot 1 of 2')).toBeInTheDocument()
+  expect(within(preview).getByText('00:00:00 / 00:08:00')).toBeVisible()
   expect(within(preview).getByRole('button', { name: 'Play the rough cut' })).toBeEnabled()
 })
 
@@ -573,7 +673,7 @@ test('the transport is dead until something is placed', async () => {
 
   const preview = await screen.findByRole('region', { name: 'Player' })
   expect(within(preview).getByRole('button', { name: 'Play the rough cut' })).toBeDisabled()
-  expect(within(preview).getByText('Nothing placed yet.')).toBeVisible()
+  expect(within(preview).queryByText('Nothing placed yet.')).not.toBeInTheDocument()
 })
 
 const covered: Batch = sequencedBatch({
@@ -586,6 +686,9 @@ const covered: Batch = sequencedBatch({
       offset_ms: 1_000,
       trim_start_ms: null,
       trim_end_ms: null,
+      frame_zoom: 1,
+      frame_center_x: 50,
+      frame_center_y: 50,
     },
   ],
 })
@@ -651,6 +754,9 @@ test('the rough cut says a cutaway is playing over the sound beneath it', async 
           offset_ms: 0,
           trim_start_ms: null,
           trim_end_ms: null,
+          frame_zoom: 1,
+          frame_center_x: 50,
+          frame_center_y: 50,
         },
       ],
     }),
@@ -661,8 +767,8 @@ test('the rough cut says a cutaway is playing over the sound beneath it', async 
   const preview = await screen.findByRole('region', { name: 'Player' })
   // The cover supplies the picture; the shot underneath keeps the sound, which
   // is the one thing a cutaway changes and the preview must not misreport.
-  expect(within(preview).getByText('second')).toBeVisible()
-  expect(within(preview).getByText('covering first, its sound playing')).toBeVisible()
+  expect(within(preview).getByText('second')).toBeInTheDocument()
+  expect(within(preview).getByText('covering first, its sound playing')).toBeInTheDocument()
 })
 
 test('exporting is refused until something is on the timeline', async () => {
@@ -670,7 +776,10 @@ test('exporting is refused until something is on the timeline', async () => {
 
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
 
-  expect(await screen.findByRole('button', { name: /Export video/ })).toBeDisabled()
+  const player = await screen.findByRole('region', { name: 'Player' })
+  const exportButton = within(player).getByRole('button', { name: /Export video/ })
+  expect(exportButton).toBeDisabled()
+  expect(exportButton).toHaveAttribute('title', 'Add clips to the timeline before exporting')
 })
 
 test('exports the timeline as one video', async () => {
@@ -730,7 +839,7 @@ test('shows export progress while the sequence renders', async () => {
 
   const bar = await screen.findByRole('progressbar', { name: 'Export progress' })
   expect(bar).toHaveAttribute('aria-valuenow', '45')
-  expect(screen.getByText('Rendering clip 1 of 2')).toBeVisible()
+  expect(screen.getByRole('tooltip', { name: /Rendering clip 1 of 2/ })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Exporting/ })).toBeDisabled()
 })
 
@@ -760,7 +869,7 @@ test('offers the finished video for download, and flags a timeline changed since
 
   const link = await screen.findByRole('link', { name: /Download MP4/ })
   expect(link).toHaveAttribute('href', '/api/batches/batch-1/render/download')
-  expect(screen.getByText(/timeline changed since this export/)).toBeVisible()
+  expect(screen.getByText(/timeline changed since this export/i)).toBeInTheDocument()
 })
 
 test('reports a failed export instead of a download', async () => {

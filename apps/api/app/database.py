@@ -136,6 +136,15 @@ def init_db() -> None:
     shot_additions = {
         "trim_start_ms": "ALTER TABLE shots ADD COLUMN trim_start_ms INTEGER",
         "trim_end_ms": "ALTER TABLE shots ADD COLUMN trim_end_ms INTEGER",
+        "frame_zoom": (
+            "ALTER TABLE shots ADD COLUMN frame_zoom FLOAT NOT NULL DEFAULT 1.0"
+        ),
+        "frame_center_x": (
+            "ALTER TABLE shots ADD COLUMN frame_center_x FLOAT NOT NULL DEFAULT 50.0"
+        ),
+        "frame_center_y": (
+            "ALTER TABLE shots ADD COLUMN frame_center_y FLOAT NOT NULL DEFAULT 50.0"
+        ),
         # SQLite only accepts a REFERENCES column through ADD COLUMN when it
         # defaults to NULL, which a Shot that is not a Cutaway does anyway.
         "parent_shot_id": (

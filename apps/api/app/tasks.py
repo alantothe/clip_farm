@@ -443,6 +443,9 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
                     start_ms=segment.picture_start_ms,
                     end_ms=segment.picture_end_ms,
                     crop_center_x=clip.crop_center_x,
+                    frame_zoom=segment.picture.frame_zoom,
+                    frame_center_x=segment.picture.frame_center_x,
+                    frame_center_y=segment.picture.frame_center_y,
                     caption_segments=clip.captions,
                     # A Cutaway's Subtitles transcribe audio that is not
                     # playing under it, so they are not burned in (ADR 0005).

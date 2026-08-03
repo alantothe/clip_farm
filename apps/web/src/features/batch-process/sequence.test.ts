@@ -9,7 +9,13 @@
  */
 import { applySequenceEdit, trimCutawayEdit } from './BatchProcessPage'
 import { shotIsOver } from './useSequencePlayer'
-import { fitInside, keptLeftPercent, keptWidthFraction } from './Player'
+import {
+  fitInside,
+  keptLeftPercent,
+  keptWidthFraction,
+  movedFrameCenter,
+  pulledFrameZoom,
+} from './Player'
 import {
   MIN_SPAN_MS,
   anchorAt,
@@ -38,6 +44,9 @@ const shot = (overrides: Partial<Shot> & { id: string; clip_id: string }): Shot 
   position: 0,
   trim_start_ms: null,
   trim_end_ms: null,
+  frame_zoom: 1,
+  frame_center_x: 50,
+  frame_center_y: 50,
   ...overrides,
 })
 
@@ -150,6 +159,9 @@ describe('trimming a cutaway, which has no queue behind it', () => {
     offset_ms: 5_000,
     trim_start_ms: null,
     trim_end_ms: null,
+    frame_zoom: 1,
+    frame_center_x: 50,
+    frame_center_y: 50,
   } as Cutaway
 
   test('cutting its front walks it along its base shot, so its back holds still', () => {
@@ -296,6 +308,9 @@ describe('cutaways positioned against the sequence', () => {
     clip_id: 'cover',
     trim_start_ms: null,
     trim_end_ms: null,
+    frame_zoom: 1,
+    frame_center_x: 50,
+    frame_center_y: 50,
     ...overrides,
   })
 
@@ -420,6 +435,38 @@ describe('what the vertical crop keeps of a landscape frame', () => {
       100 - 31.64,
       1,
     )
+  })
+})
+
+describe('direct Shot framing', () => {
+  test('dragging the border moves an enlarged picture with the pointer', () => {
+    expect(
+      movedFrameCenter({
+        center: 50,
+        deltaPx: 30,
+        stagePx: 300,
+        zoom: 2,
+        layout: 'smart_crop',
+        fitFraction: 1,
+      }),
+    ).toBe(40)
+    // At 1× a smart crop exactly fills the Format, so there is nowhere to pan.
+    expect(
+      movedFrameCenter({
+        center: 50,
+        deltaPx: 30,
+        stagePx: 300,
+        zoom: 1,
+        layout: 'smart_crop',
+        fitFraction: 1,
+      }),
+    ).toBe(50)
+  })
+
+  test('pulling a corner zooms within the slider limits', () => {
+    expect(pulledFrameZoom(1, 100, 175)).toBe(1.75)
+    expect(pulledFrameZoom(2, 100, 200)).toBe(3)
+    expect(pulledFrameZoom(2, 100, 25)).toBe(1)
   })
 })
 

@@ -2714,10 +2714,6 @@ input[type='range']::-webkit-slider-thumb {
   .workspace-title { min-height: 54px; }
   .workspace-title h1 { font-size: 23px; }
   .workspace-title__meta span:last-child { display: none; }
-  .editor-bar { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .export-bar { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
-  .export-bar__go { margin-left: auto; }
-  .editor-bar__meta { font-size: 9px; }
   .download-button span { display: none; }
   .video-stage { width: min(100%, 310px); }
   .editor-panel { min-height: 520px; }
@@ -3105,58 +3101,36 @@ input[type='range']::-webkit-slider-thumb {
  */
 .sequence__titles {
   position: relative;
-  height: 72px;
+  height: 126px;
   margin: 6px 0 0;
   padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   list-style: none;
   border-radius: 3px;
   background: repeating-linear-gradient(
     to bottom,
     #e6e9f5 0,
-    #e6e9f5 23px,
-    #d7dceb 23px,
-    #d7dceb 24px
+    #e6e9f5 49px,
+    #d7dceb 49px,
+    #d7dceb 50px
   );
 }
 
 .sequence__titles-hint {
   position: absolute;
   left: 8px;
-  top: 6px;
+  top: 14px;
   font-size: 10px;
   color: #7c85a3;
   white-space: nowrap;
   pointer-events: none;
 }
 
-/* Pinned to the viewport edge of the strip, so it stays reachable however far
-   the Sequence is scrolled. */
-.sequence__titles-add {
-  position: sticky;
-  float: right;
-  right: 4px;
-  top: 3px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 18px;
-  padding: 0 7px;
-  border: 1px solid var(--blue);
-  border-radius: 9px;
-  background: var(--surface);
-  color: var(--blue);
-  font: inherit;
-  font-size: 10px;
-  cursor: pointer;
-  z-index: 4;
-}
-
-.sequence__titles-add:hover:not(:disabled) { background: var(--blue); color: var(--surface); }
-.sequence__titles-add:disabled { opacity: 0.45; cursor: not-allowed; }
-
 .sequence__title {
   position: absolute;
-  height: 23px;
+  height: 46px;
   border-radius: 3px;
   background: #eff2fd;
   box-shadow: inset 0 0 0 1px #c4cdec;
@@ -3189,11 +3163,11 @@ input[type='range']::-webkit-slider-thumb {
   gap: 5px;
   width: 100%;
   height: 100%;
-  padding: 0 6px;
+  padding: 0 10px;
   border: 0;
   background: none;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   text-align: left;
   cursor: grab;
   overflow: hidden;
@@ -3206,6 +3180,54 @@ input[type='range']::-webkit-slider-thumb {
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
+}
+
+.title-context-menu {
+  position: fixed;
+  z-index: 120;
+  width: 204px;
+  padding: 4px;
+  border: 1px solid #505a54;
+  border-radius: 5px;
+  background: #171c19;
+  box-shadow: 0 12px 28px rgba(8, 10, 9, 0.26);
+}
+
+.title-context-menu button {
+  width: 100%;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--paper);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.title-context-menu button:hover:not(:disabled),
+.title-context-menu button:focus-visible {
+  outline: 0;
+  background: #2b332e;
+  color: var(--acid);
+}
+
+.title-context-menu button:disabled {
+  color: #89918c;
+  cursor: not-allowed;
+}
+
+.title-context-menu small {
+  color: #aeb8b1;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
 }
 
 /* The cover lane: Cutaways sit above the Shots they cover. */
@@ -3442,7 +3464,6 @@ input[type='range']::-webkit-slider-thumb {
  * the shell is exactly one screen tall and nothing may push either off it.
  *
  *   ┌──────────────────────────────────────────────┐
- *   │ name · format                        export  │  editor-bar
  *   ├───────────┬──────────────────────────────────┤
  *   │ clip bin  │            Player                │  editor-body
  *   │ (scrolls) │                                  │
@@ -3451,7 +3472,7 @@ input[type='range']::-webkit-slider-thumb {
  *   └──────────────────────────────────────────────┘
  *
  * What grows — the bin, the Timeline — scrolls inside its own box. The Player
- * takes every pixel the other three leave, which is why its stage is measured
+ * takes every pixel the other two leave, which is why its stage is measured
  * rather than given a height (see `useFittedStage`).
  */
 .workspace-shell--editor {
@@ -3471,52 +3492,6 @@ input[type='range']::-webkit-slider-thumb {
   overflow-y: auto;
   padding: 0;
   background: var(--paper);
-}
-
-.editor-bar {
-  flex: 0 0 auto;
-  min-height: 52px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-}
-
-.editor-bar__id {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.editor-bar__id .batch-title {
-  min-width: 0;
-  overflow: hidden;
-  gap: 4px;
-  font-size: 21px;
-  white-space: nowrap;
-}
-
-.editor-bar__id .batch-title .icon-button {
-  width: 26px;
-  height: 26px;
-  flex-basis: 26px;
-}
-
-.editor-bar__id .batch-title-input {
-  width: min(320px, 60vw);
-  font-size: 21px;
-}
-
-.editor-bar__meta {
-  flex: 0 0 auto;
-  color: #737c76;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .editor-body {
@@ -3901,12 +3876,115 @@ input[type='range']::-webkit-slider-thumb {
  * Timeline off the screen between them.
  */
 .clip-bin {
+  width: 244px;
   flex: 0 0 244px;
   min-height: 0;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line);
   background: var(--surface);
+  transition: width 180ms ease, flex-basis 180ms ease;
+}
+
+.clip-bin--collapsed {
+  width: 52px;
+  flex-basis: 52px;
+}
+
+.clip-bin__head {
+  flex: 0 0 auto;
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 7px 8px 11px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.clip-bin--collapsed .clip-bin__head {
+  min-height: 52px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 6px 0;
+  color: var(--muted);
+}
+
+.clip-bin__identity {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.clip-bin__identity .batch-title {
+  min-width: 0;
+  gap: 2px;
+  overflow: hidden;
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.clip-bin__identity .batch-title .icon-button {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+}
+
+.clip-bin__identity .batch-title-input {
+  width: 100%;
+  font-size: 18px;
+}
+
+.clip-bin__meta,
+.clip-bin__identity > small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.035em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.clip-bin__toggle {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+}
+
+.clip-bin--collapsed .clip-bin__toggle svg {
+  transform: rotate(180deg);
+}
+
+@media (max-width: 1100px) and (min-width: 861px) {
+  .clip-bin:not(.clip-bin--collapsed) {
+    width: 208px;
+    flex-basis: 208px;
+  }
+}
+
+@media (max-width: 860px) {
+  .clip-bin,
+  .clip-bin--collapsed {
+    width: 100%;
+    flex-basis: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .clip-bin--collapsed { max-height: 52px; }
+
+  .clip-bin--collapsed .clip-bin__head {
+    flex-direction: row;
+    justify-content: space-between;
+    padding: 6px 10px;
+  }
+
+  .clip-bin--collapsed .clip-bin__toggle svg { transform: rotate(-90deg); }
 }
 
 .clip-bin .toast-error {
@@ -3947,6 +4025,7 @@ input[type='range']::-webkit-slider-thumb {
    Toned down from the card around it, so the picture is what the eye lands
    on rather than the white space beside it. */
 .player__frame {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -4104,10 +4183,105 @@ input[type='range']::-webkit-slider-thumb {
 .player__video.is-active { opacity: 1; }
 
 /* Framed as the export will frame it: cropped to fill, or fitted whole. */
-.player__video--smart_crop { object-fit: cover; object-position: var(--crop-x) center; }
-.player__video--fit_background { object-fit: contain; }
+.player__video--smart_crop {
+  object-fit: cover;
+  object-position: var(--crop-x) center;
+  transform: scale(var(--frame-zoom, 1));
+  transform-origin: var(--frame-x, 50%) var(--frame-y, 50%);
+}
+.player__video--fit_background {
+  inset: auto;
+  left: var(--fit-left, 0%);
+  top: var(--fit-top, 0%);
+  width: var(--fit-width, 100%);
+  height: var(--fit-height, 100%);
+  object-fit: contain;
+}
 /* The Source view shows the frame entire, uncropped. */
 .player__video--whole { object-fit: contain; }
+
+/*
+ * A selected Shot becomes direct manipulation: the thin frame stays out of
+ * the picture's way, its edges pull the video around, and its four mechanical
+ * corner blocks scale it. Only those eight targets receive pointer events, so
+ * Titles remain selectable through the open centre.
+ */
+.player__framing-cage {
+  position: absolute;
+  inset: 8px;
+  z-index: 9;
+  border: 1px solid rgba(222, 239, 89, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(8, 10, 9, 0.52),
+    inset 0 0 0 1px rgba(8, 10, 9, 0.24);
+  pointer-events: none;
+}
+
+.player__framing-cage.is-move,
+.player__framing-cage.is-zoom {
+  border-color: var(--acid);
+  box-shadow:
+    0 0 0 1px rgba(8, 10, 9, 0.72),
+    0 0 16px rgba(222, 239, 89, 0.2);
+}
+
+.player__framing-edge,
+.player__framing-corner {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.player__framing-edge { cursor: move; }
+.player__framing-edge--top,
+.player__framing-edge--bottom {
+  left: 14px;
+  right: 14px;
+  height: 12px;
+}
+.player__framing-edge--top { top: -6px; }
+.player__framing-edge--bottom { bottom: -6px; }
+.player__framing-edge--left,
+.player__framing-edge--right {
+  top: 14px;
+  bottom: 14px;
+  width: 12px;
+}
+.player__framing-edge--left { left: -6px; }
+.player__framing-edge--right { right: -6px; }
+
+.player__framing-corner {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--dark);
+  border-radius: 2px;
+  background: var(--acid);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.62);
+}
+.player__framing-corner--nw { top: -7px; left: -7px; cursor: nwse-resize; }
+.player__framing-corner--ne { top: -7px; right: -7px; cursor: nesw-resize; }
+.player__framing-corner--se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.player__framing-corner--sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
+
+.player__framing-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 7px;
+  padding: 3px 6px 2px;
+  border: 1px solid rgba(8, 10, 9, 0.5);
+  border-radius: 2px;
+  background: rgba(222, 239, 89, 0.9);
+  color: var(--dark);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
 
 /* Over the top, muted: the base element below still carries the sound. */
 .player__video--cover { z-index: 3; }
@@ -4242,9 +4416,11 @@ input[type='range']::-webkit-slider-thumb {
 /* --- The Player's controls --------------------------------------------- */
 
 .player__transport {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 6px;
+  min-height: 42px;
 }
 
 .player__transport .icon-button {
@@ -4253,27 +4429,161 @@ input[type='range']::-webkit-slider-thumb {
   flex-basis: 30px;
 }
 
-.player__clock {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
+.player__primary-controls {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
-.icon-button--play { color: var(--dark); }
+.player__primary-action {
+  width: 36px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.player__primary-action:hover:not(:disabled) {
+  border-color: #89928c;
+  color: var(--dark);
+  transform: translateY(-1px);
+}
+
+.player__primary-action--play {
+  width: 42px;
+  height: 42px;
+  border-color: var(--dark);
+  background: var(--dark);
+  color: var(--acid);
+}
+
+.player__primary-action--play:hover:not(:disabled) {
+  border-color: #252b27;
+  background: #252b27;
+  color: var(--acid);
+}
+
+.player__primary-action--text {
+  border-color: #b3bad8;
+  background: #f0f2fa;
+  color: #5263a5;
+}
+
+.player__primary-action--text:hover:not(:disabled) {
+  border-color: #6f7fd6;
+  background: #e7eaf8;
+  color: #35468b;
+}
+
+.player__clock {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 12;
+  padding: 3px 6px;
+  border: 1px solid rgba(75, 84, 78, 0.18);
+  border-radius: 3px;
+  background: rgba(247, 249, 247, 0.9);
+  color: #515a54;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.player__text-action {
+  position: relative;
+  grid-column: 1;
+  display: inline-flex;
+  justify-self: start;
+}
+
+.player__text-action:hover .control-tooltip,
+.player__text-action:focus-within .control-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+}
+
 .icon-button.is-off { color: var(--coral); }
+
+.player__more {
+  position: relative;
+  grid-column: 3;
+  justify-self: end;
+}
+
+.player__more-trigger { border-radius: 50%; }
+
+.player__more-trigger.is-active {
+  border-color: var(--dark);
+  background: var(--dark);
+  color: var(--acid);
+}
+
+.player__more-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: min(310px, calc(100vw - 36px));
+  max-height: min(560px, 70vh);
+  padding: 8px;
+  overflow-y: auto;
+  border: 1px solid #aeb6b0;
+  border-radius: 6px;
+  background: rgba(248, 249, 246, 0.98);
+  box-shadow: 0 14px 34px rgba(8, 10, 9, 0.18);
+  backdrop-filter: blur(10px);
+}
+
+.player__more-section {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px;
+}
+
+.player__more-section + .player__more-section {
+  border-top: 1px solid var(--line);
+}
+
+.player__more-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.player__more-row--wrap { flex-wrap: wrap; }
+.player__more-row--sound .player__volume { flex: 1; width: auto; }
+.player__more-panel .player__views { margin-left: 0; }
+.player__more-panel .player__rates { align-self: flex-start; }
+
+.player__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .player__volume {
   width: 62px;
   accent-color: var(--dark);
-}
-
-/* One row per group of tools, so the transport stays legible at this width. */
-.player__tools {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .player__tools-label {
@@ -4352,39 +4662,9 @@ input[type='range']::-webkit-slider-thumb {
 .player__views button + button { border-left: 1px solid var(--line); }
 .player__views button.is-active { background: var(--dark); color: var(--acid); }
 
-/* What is playing, in the middle of the transport: it takes the slack, and
-   gives it back by ellipsis when the controls need the width. */
-.player__now {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 7px;
-  margin: 0;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.player__now strong {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.player__now small,
 .player__caveat {
   font-size: 11px;
   color: var(--muted);
-}
-
-.player__now small {
-  flex: 0 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Kept in the layout even when it says nothing, so the stage above it does
@@ -4450,6 +4730,49 @@ input[type='range']::-webkit-slider-thumb {
   color: var(--ink);
 }
 
+.shot-inspector__framing {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+.shot-inspector__frame-field {
+  display: grid;
+  grid-template-columns: auto 76px 34px;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.shot-inspector__frame-field span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.shot-inspector__frame-field input {
+  width: 76px;
+  accent-color: var(--blue);
+}
+
+.shot-inspector__frame-field output {
+  color: var(--ink);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.shot-inspector__frame-reset {
+  width: 27px;
+  height: 27px;
+  flex-basis: 27px;
+}
+
 .shot-inspector__actions {
   display: flex;
   align-items: center;
@@ -4479,115 +4802,113 @@ input[type='range']::-webkit-slider-thumb {
 
 /* --- Asking for the finished video ------------------------------------ */
 
-/*
- * One strip in the top bar. Exporting is a button pressed once, at the end;
- * it used to hold a panel's worth of the screen for the whole session.
- */
-.export-bar {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-.export-bar__summary {
-  flex: 0 0 auto;
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.export-bar__total {
-  color: var(--muted);
-  font-weight: 400;
-  font-variant-numeric: tabular-nums;
-}
-
-.export-bar__progress {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.export-bar__track {
-  width: 110px;
-  flex: 0 0 110px;
-  height: 4px;
-  border-radius: 3px;
-  background: #e4e8e5;
-  overflow: hidden;
-}
-
-.export-bar__progress-bar {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--blue);
-  transition: width 220ms ease;
-}
-
-.export-bar__progress small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 11px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.export-bar__error {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  overflow: hidden;
-  color: var(--coral);
-  font-size: 11.5px;
-}
-
-.export-bar__done {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.export-bar__done small {
-  color: var(--muted);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.export-bar__stale {
-  max-width: 26ch;
-  color: var(--coral) !important;
-  white-space: normal !important;
-  line-height: 1.35;
-}
-
-.export-bar__go {
-  min-height: 34px;
-  flex: 0 0 auto;
+.export-control,
+.export-control__action {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 14px;
-  border: 1px solid #9fad37;
-  border-radius: 4px;
-  background: var(--acid);
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: transform 160ms ease;
 }
 
-.export-bar__go:hover:not(:disabled) { transform: translateY(-1px); }
+.export-control { gap: 5px; }
+.export-control__action { position: relative; }
+
+.export-control__button,
+.export-control__download {
+  width: 36px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #99a8de;
+  border-radius: 50%;
+  background: #edf0fb;
+  color: var(--blue);
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.export-control__button:hover:not(:disabled),
+.export-control__download:hover {
+  border-color: var(--blue);
+  background: #e1e6fa;
+  transform: translateY(-1px);
+}
+
+.export-control__button.is-failed {
+  border-color: #d99488;
+  background: #fff0ed;
+  color: #a43120;
+}
+
+.export-control__download {
+  width: 32px;
+  height: 32px;
+  border-color: #9fad37;
+  background: #f7fadf;
+  color: #4e6b25;
+}
+
+.export-control__download.is-stale::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--surface);
+  border-radius: 50%;
+  background: var(--coral);
+  content: '';
+}
+
+.export-control__progress {
+  min-width: 32px;
+  padding: 2px 5px;
+  border-radius: 9px;
+  background: #edf0fb;
+  color: var(--blue);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.control-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 9px);
+  z-index: 40;
+  width: max-content;
+  max-width: 260px;
+  padding: 5px 7px;
+  border-radius: 4px;
+  background: var(--dark);
+  color: var(--paper);
+  font-size: 10px;
+  line-height: 1.3;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.export-control__action:hover .control-tooltip,
+.export-control__action:focus-within .control-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+}
+
+.export-control__message {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* Adding a Clip to the Sequence, from the bin. */
 

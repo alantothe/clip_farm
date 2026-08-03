@@ -172,6 +172,9 @@ def add_shot(
         project_id=clip.id,
         trim_start_ms=payload.trim_start_ms,
         trim_end_ms=payload.trim_end_ms,
+        frame_zoom=payload.frame_zoom,
+        frame_center_x=payload.frame_center_x,
+        frame_center_y=payload.frame_center_y,
     )
     # Past the end means the end, as it does when moving a Shot.
     target = len(shots) if payload.position is None else min(payload.position, len(shots))
@@ -205,7 +208,7 @@ def remove_shot(batch_id: str, shot_id: str, session: Session = Depends(get_db))
 def update_shot(
     batch_id: str, shot_id: str, payload: ShotUpdate, session: Session = Depends(get_db)
 ) -> BatchOut:
-    """Move a Shot, trim it on the Timeline, or both.
+    """Move, trim, or frame a Shot on the Timeline.
 
     A trim sent as null resets the Shot to following its Clip's Trim, so absent
     and null mean different things and `model_fields_set` is what tells them
@@ -230,6 +233,10 @@ def update_shot(
         )
         shot.trim_start_ms = start
         shot.trim_end_ms = end
+
+    for field in ("frame_zoom", "frame_center_x", "frame_center_y"):
+        if field in sent and getattr(payload, field) is not None:
+            setattr(shot, field, getattr(payload, field))
 
     if payload.position is not None:
         # Past the end means the end, rather than an error the UI would have to
@@ -325,6 +332,9 @@ def add_cutaway(
             offset_ms=payload.offset_ms,
             trim_start_ms=payload.trim_start_ms,
             trim_end_ms=payload.trim_end_ms,
+            frame_zoom=payload.frame_zoom,
+            frame_center_x=payload.frame_center_x,
+            frame_center_y=payload.frame_center_y,
         )
     )
     return _touch(session, batch)
@@ -337,7 +347,7 @@ def add_cutaway(
 def update_cutaway(
     batch_id: str, cutaway_id: str, payload: CutawayUpdate, session: Session = Depends(get_db)
 ) -> BatchOut:
-    """Move a Cutaway along its Base Shot, onto another one, or trim it."""
+    """Move, re-anchor, trim, or frame a Cutaway."""
     batch = get_batch_or_404(session, batch_id)
     cutaway = _get_cutaway_or_404(session, batch, cutaway_id)
 
@@ -352,6 +362,10 @@ def update_cutaway(
         )
         cutaway.trim_start_ms = start
         cutaway.trim_end_ms = end
+
+    for field in ("frame_zoom", "frame_center_x", "frame_center_y"):
+        if field in sent and getattr(payload, field) is not None:
+            setattr(cutaway, field, getattr(payload, field))
 
     base = (
         _get_base_shot_or_404(session, batch, payload.base_shot_id)

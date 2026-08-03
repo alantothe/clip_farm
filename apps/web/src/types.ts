@@ -116,8 +116,15 @@ export interface Job {
   completed_at: string | null
 }
 
+/** A Shot's picture placement inside the finished Format. */
+export interface ShotFraming {
+  frame_zoom: number
+  frame_center_x: number
+  frame_center_y: number
+}
+
 /** One Clip's placement in a Sequence. The Clip itself is in `Batch.clips`. */
-export interface Shot {
+export interface Shot extends ShotFraming {
   id: string
   clip_id: string
   position: number
@@ -132,7 +139,7 @@ export interface Shot {
  * way — but it sits at an offset into its Base Shot rather than in the running
  * order, which is why it travels apart from `shots`.
  */
-export interface Cutaway {
+export interface Cutaway extends ShotFraming {
   id: string
   clip_id: string
   base_shot_id: string

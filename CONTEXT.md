@@ -19,7 +19,7 @@ The ordered arrangement of Clips in a Batch that renders as one video. One per B
 _Avoid_: timeline, edit, montage
 
 **Shot**:
-One Clip's placement in a Sequence, at a position. The span that plays is the Shot's own Trim, or its Clip's Trim when the Shot has none of its own. One Clip can have several Shots.
+One Clip's placement in a Sequence, at a position. The span that plays is the Shot's own Trim, or its Clip's Trim when the Shot has none of its own. Its framing zoom and position also belong to this placement, so the same Clip can be wide once and tight later. One Clip can have several Shots.
 _Avoid_: item, entry, segment, clip instance
 
 **Cutaway**:
@@ -101,7 +101,7 @@ The span of the Source Video that survives into the Render.
 _Avoid_: cut, range, in/out
 
 **Layout**:
-How the source frame is fitted into the Format — cropped to fill, or fitted whole against a background.
+How the source frame is first fitted into the Format — cropped to fill, or fitted whole against a background. A Shot's framing can then zoom and position that picture without changing the Layout.
 _Avoid_: crop mode, fit, framing
 
 ### Output
