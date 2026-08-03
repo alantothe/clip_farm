@@ -225,6 +225,12 @@ const shot: Shot = { id: 'shot-1', clip_id: 'clip-a', position: 0, trim_start_ms
 
 const styles: TitleStyle[] = [
   { ...look(), id: 'builtin:hook', name: 'Hook', builtin: true } as unknown as TitleStyle,
+  {
+    ...look({ font_family: 'inter', font_weight: 700, background: 'box', center_y: 78 }),
+    id: 'builtin:caption-bar',
+    name: 'Caption bar',
+    builtin: true,
+  } as unknown as TitleStyle,
 ]
 
 const summary: BatchSummary = {
@@ -350,27 +356,90 @@ test('selecting a title opens its inspector', async () => {
   fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
 
   expect(await screen.findByLabelText('Title text')).toHaveValue('WAIT FOR IT')
-  // Every family in the catalog is offered, grouped by the kind of face it is.
-  const font = screen.getByLabelText(/Font/) as HTMLSelectElement
-  expect(within(font).getByRole('option', { name: 'Anton' })).toBeInTheDocument()
-  expect(within(font).getByRole('option', { name: 'Inter' })).toBeInTheDocument()
+  // The look is chosen from ready-made ones rather than assembled, so the
+  // swatches are what the panel opens on.
+  const looks = screen.getByRole('group', { name: 'Look' })
+  expect(within(looks).getByRole('button', { name: 'Hook' })).toBeVisible()
+  expect(within(looks).getByRole('button', { name: 'Caption bar' })).toBeVisible()
+  // Size and place are the adjustments a look leaves open, and are not behind
+  // anything.
+  expect(screen.getByRole('group', { name: 'Place' })).toBeVisible()
+  expect(screen.getByLabelText(/Size/)).toBeVisible()
 })
 
-test('the inspector offers only the weights a family was vendored at', async () => {
-  stubApi(makeBatch([look({ id: 'title-1', font_family: 'inter', font_weight: 900 })]))
+test('the swatch lit is the one the title still looks like', async () => {
+  // A built-in leaves no id behind on the Title — the server keeps `style_id`
+  // for saved profiles only — so the match is made on the look itself.
+  stubApi(makeBatch([look({ id: 'title-1', style_id: null })]))
 
   renderBatch(newClient())
 
   const track = await screen.findByRole('list', { name: 'Titles' })
   fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
 
+  const looks = await screen.findByRole('group', { name: 'Look' })
+  expect(within(looks).getByRole('button', { name: 'Hook' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(within(looks).getByRole('button', { name: 'Caption bar' })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+})
+
+test('picking a look sends the whole of it, not only its name', async () => {
+  const batch = makeBatch([look({ id: 'title-1' })])
+  const fetchMock = stubApi(batch, { 'PATCH /api/batches/batch-1/titles/title-1': batch })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
+  const looks = await screen.findByRole('group', { name: 'Look' })
+
+  fireEvent.click(within(looks).getByRole('button', { name: 'Caption bar' }))
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(([path]) => String(path).endsWith('/titles/title-1'))
+    const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+    // The values travel with the id so the stage changes on the click rather
+    // than on the reply. The server would reach the same look from the id.
+    expect(sent.style_id).toBe('builtin:caption-bar')
+    expect(sent.font_family).toBe('inter')
+    expect(sent.background).toBe('box')
+    // The words and the timing are the Title's, and a look does not carry them.
+    expect(sent).not.toHaveProperty('text')
+    expect(sent).not.toHaveProperty('start_ms')
+  })
+})
+
+test('the rest of the controls are there, behind fine-tune', async () => {
+  stubApi(makeBatch([look({ id: 'title-1', font_family: 'inter', font_weight: 900 })]))
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
   await screen.findByLabelText('Title text')
+
+  // Shut, so the panel is a look and four adjustments until it is asked for.
   const weights = screen.getByRole('group', { name: 'Weight' })
+  expect(within(weights).getByRole('button', { name: 'Bold' })).not.toBeVisible()
+
+  fireEvent.click(screen.getByText(/Fine-tune/))
+
+  // Only the weights this family was vendored at, so the picker offers no
+  // near misses.
   expect(within(weights).getByRole('button', { name: 'Black' })).toHaveAttribute(
     'aria-pressed',
     'true',
   )
   expect(within(weights).getByRole('button', { name: 'Bold' })).toBeVisible()
+  // Every family in the catalog is offered, grouped by the kind of face it is.
+  const font = screen.getByLabelText(/Font/) as HTMLSelectElement
+  expect(within(font).getByRole('option', { name: 'Anton' })).toBeInTheDocument()
+  expect(within(font).getByRole('option', { name: 'Inter' })).toBeInTheDocument()
 })
 
 test('changing the font sends only what changed', async () => {
@@ -384,6 +453,7 @@ test('changing the font sends only what changed', async () => {
   const track = await screen.findByRole('list', { name: 'Titles' })
   fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
   await screen.findByLabelText('Title text')
+  fireEvent.click(screen.getByText(/Fine-tune/))
 
   fireEvent.change(screen.getByLabelText(/Font/), { target: { value: 'inter' } })
 
@@ -409,6 +479,7 @@ test('saving a look as a profile names it and keeps it for the next batch', asyn
   fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
   await screen.findByLabelText('Title text')
 
+  fireEvent.click(screen.getByText(/Fine-tune/))
   fireEvent.click(screen.getByRole('button', { name: /Save as profile/ }))
   fireEvent.change(screen.getByLabelText(/Profile name/), { target: { value: 'My hook' } })
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -447,4 +518,46 @@ test('the stage draws a title that is playing', async () => {
   await screen.findByRole('list', { name: 'Titles' })
   const stage = screen.getByLabelText('Player')
   expect(within(stage).getByText('FROM THE TOP')).toBeVisible()
+})
+
+test('opening a title that is not on screen moves the playhead onto it', async () => {
+  // The stage draws only what the export would burn in at this instant
+  // (ADR 0007), so the way to make typing visible is to go to the Title rather
+  // than to draw it out of its span.
+  stubApi(makeBatch([look({ id: 'title-1', text: 'ONLY LATER', start_ms: 2000, end_ms: 4000 })]))
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  const stage = screen.getByLabelText('Player')
+  expect(within(stage).queryByText('ONLY LATER')).not.toBeInTheDocument()
+
+  fireEvent.focus(within(track).getByRole('button', { name: /ONLY LATER/ }))
+
+  expect(await within(stage).findByText('ONLY LATER')).toBeVisible()
+})
+
+test('typing lands on the picture before it lands on the server', async () => {
+  const batch = makeBatch([look({ id: 'title-1', text: 'WAIT FOR IT' })])
+  const fetchMock = stubApi(batch, { 'PATCH /api/batches/batch-1/titles/title-1': batch })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
+  await screen.findByLabelText('Title text')
+
+  fireEvent.change(screen.getByLabelText('Title text'), { target: { value: 'WAIT FOR THIS' } })
+
+  // On the stage on the keystroke: the preview is local, so there is nothing
+  // to wait for.
+  const stage = screen.getByLabelText('Player')
+  expect(within(stage).getByText('WAIT FOR THIS')).toBeVisible()
+  // And sent once the typing stops, without needing the box to be left first.
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(([path]) => String(path).endsWith('/titles/title-1'))
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      text: 'WAIT FOR THIS',
+    })
+  })
 })

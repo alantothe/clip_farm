@@ -3538,11 +3538,12 @@ input[type='range']::-webkit-slider-thumb {
 /*
  * Everything about the selected Title.
  *
- * There are a lot of controls, and the room they take comes out of the stage:
- * the editor is a fixed-height shell, so every pixel this panel is tall is a
- * pixel the Player is not (ADR 0007). So they run in as many narrow columns as
- * fit rather than in a few wide ones — the same controls, a third of the
- * height, and no scrolling to reach the placement sliders at the end.
+ * One column, in the order the work is done: the words, the look, then the
+ * four adjustments that follow a look. The room this takes comes out of the
+ * stage — the editor is a fixed-height shell, so every pixel here is a pixel
+ * the Player is not (ADR 0007) — which is what the swatch grid's own scroll is
+ * for: twenty looks in the height of five, and the size and place controls
+ * still on screen underneath them.
  */
 .title-inspector {
   flex: 0 0 268px;
@@ -3555,13 +3556,8 @@ input[type='range']::-webkit-slider-thumb {
   overflow-y: auto;
 }
 
-/* Narrow enough that it wants two columns when the window is wide. */
 @media (min-width: 1500px) {
-  .title-inspector {
-    flex-basis: 400px;
-    columns: 180px 2;
-    column-gap: 14px;
-  }
+  .title-inspector { flex-basis: 300px; }
 }
 
 .title-inspector__head {
@@ -3623,6 +3619,111 @@ input[type='range']::-webkit-slider-thumb {
   margin: 0 0 6px;
   font-size: 10px;
   color: var(--muted);
+}
+
+.title-inspector__label {
+  margin: 0 0 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+/*
+ * The looks, each drawn in itself.
+ *
+ * Two to a row, because a sample narrower than a word tells you nothing about
+ * the face it is set in. The grid scrolls rather than growing so the controls
+ * below it stay where they are whether there are five profiles saved or none.
+ */
+.title-swatches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  max-height: 218px;
+  margin-bottom: 8px;
+  padding-right: 2px;
+  overflow-y: auto;
+}
+
+.title-swatch {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.title-swatch:hover { border-color: var(--muted); }
+
+.title-swatch.is-active {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 1px var(--blue);
+}
+
+/*
+ * The sample sits on a dark panel because a Title sits on a picture: white text
+ * with a black outline is the commonest look there is, and on the panel's own
+ * background it would be invisible.
+ */
+.title-swatch__sample {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 4px;
+  background: #1b1b1f;
+  font-size: 13px;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.title-swatch__tilt { display: inline-block; }
+
+.title-swatch__name {
+  padding: 2px 4px 3px;
+  font-size: 9px;
+  color: var(--muted);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.title-swatch__name em {
+  font-style: normal;
+  opacity: 0.7;
+}
+
+/* Everything the swatches have already decided, for when one of them is wrong. */
+.title-inspector__more {
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.title-inspector__more > summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.title-inspector__more > summary:hover { color: var(--ink); }
+
+/* The first group inside carries the summary's rule, not another of its own. */
+.title-inspector__more .title-inspector__group:first-of-type {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .title-field {

@@ -5,6 +5,7 @@ import { Check, Layers, LoaderCircle, Pencil } from 'lucide-react'
 import { api } from '../../api'
 import { DeleteDialog } from '../../components/DeleteDialog'
 import { formatDefinition } from '../../formats/registry'
+import { titleIsVisible } from '../../lib/titles'
 import type { DeleteIntent } from '../../components/DeleteDialog'
 import { ProjectRail } from '../../components/ProjectRail'
 import { ClipEditor } from '../editor/ClipEditor'
@@ -537,10 +538,22 @@ export function BatchProcessPage() {
     if (shotId) setSelectedTitleId(null)
   }
 
+  /**
+   * Open a Title for editing, and put the playhead where it can be seen.
+   *
+   * The stage draws only what the export would burn in at this instant
+   * (ADR 0007), so a Title selected from the Title Track while the playhead sits
+   * outside its span is a Title being typed into with nothing on screen. Moving
+   * the playhead onto it is what makes the typing visible without the stage
+   * having to lie about when the text plays.
+   */
   function selectTitle(titleId: string | null) {
     setSelectedTitleId(titleId)
     setTitlePreview(null)
-    if (titleId) setSelectedShotId(null)
+    if (!titleId) return
+    setSelectedShotId(null)
+    const title = titles.find((item) => item.id === titleId)
+    if (title && !titleIsVisible(title, playheadMs)) player.seek(title.start_ms)
   }
 
   // With no batch in the URL, open the most recent one rather than a dead end.

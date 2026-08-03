@@ -89,6 +89,79 @@ export const titleIsVisible = (title: Title, ms: number) =>
 
 export type TitleCss = { box: CSSProperties; text: CSSProperties }
 
+/** The look fields alone, whichever of the two things carrying them it came from. */
+export const LOOK_FIELDS = [
+  'font_family',
+  'font_weight',
+  'italic',
+  'uppercase',
+  'font_size_percent',
+  'letter_spacing',
+  'color',
+  'opacity',
+  'align',
+  'outline_color',
+  'outline_width',
+  'shadow_color',
+  'shadow_offset',
+  'background',
+  'background_color',
+  'background_opacity',
+  'background_padding',
+  'center_x',
+  'center_y',
+  'width_percent',
+  'rotation_deg',
+] as const satisfies readonly (keyof TitleLook)[]
+
+/**
+ * Whether a Title still looks exactly like the Style it was made from.
+ *
+ * Applying a Style copies its values rather than binding them (ADR 0008), and
+ * applying a built-in does not even record which one it was — the server keeps
+ * `style_id` for saved Styles only. So the way to light up the swatch an
+ * operator last pressed is to ask whether the look still matches it, which has
+ * the property the stored id would not: change one thing and it goes out, which
+ * is the truth.
+ */
+export function sameLook(look: TitleLook, other: TitleLook): boolean {
+  return LOOK_FIELDS.every((field) => {
+    const a = look[field]
+    const b = other[field]
+    // Sliders send tenths and hundredths; float noise is not a departure.
+    return typeof a === 'number' && typeof b === 'number'
+      ? Math.abs(a - b) < 0.001
+      : a === b
+  })
+}
+
+/** Just the look fields of a Style, as a Title patch applies them. */
+export function lookOfStyle(style: TitleLook): TitleLook {
+  return Object.fromEntries(LOOK_FIELDS.map((field) => [field, style[field]])) as unknown as TitleLook
+}
+
+/**
+ * A Style drawn as a sample, for the swatch that offers it.
+ *
+ * The size is the swatch's rather than the Style's: at this scale a 3.6% tag
+ * and an 8% hook would differ by more than everything else about them put
+ * together, and the choice being made here is which look it is, not how big.
+ * Everything else — the face, the case, the tracking, the outline, the panel,
+ * the tilt — is the Style's own, because that is what tells them apart.
+ */
+export function swatchCss(look: TitleLook, face: CatalogFace | null): TitleCss {
+  const { text } = titleCss(look, face)
+  return {
+    box: {
+      fontFamily: face ? `"${faceFamily(face.id)}", sans-serif` : 'sans-serif',
+      fontStyle: look.italic ? 'italic' : 'normal',
+      fontWeight: 400,
+      transform: look.rotation_deg ? `rotate(${look.rotation_deg}deg)` : undefined,
+    },
+    text,
+  }
+}
+
 /**
  * A Title as two CSS rules: the box it wraps inside, and the text itself.
  *
