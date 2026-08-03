@@ -34,6 +34,10 @@ _Avoid_: parent, host, underlying clip
 The strip that presents a Sequence for editing — reordering Shots, trimming them, and scrubbing the Sequence. Horizontal space is time: a Shot is as wide as it is long. UI, not a model — as Mode Library is to Mode.
 _Avoid_: track, storyboard, editor
 
+**Player**:
+The screen that plays a Sequence as one video, with its transport and guides. It shares the Timeline's playhead rather than keeping one of its own. UI, not a model — as Timeline is.
+_Avoid_: preview, monitor, viewer, rough cut
+
 **Origin**:
 Where a Clip came from — an X post, or a file uploaded from disk. Some Origins have a URL; uploads do not.
 _Avoid_: source, source post, provenance

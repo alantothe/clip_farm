@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { Clapperboard, Pause, Play, SkipBack } from 'lucide-react'
-import { formatTime } from '../../lib/format'
+import type { RefObject } from 'react'
 import { artifact } from '../../lib/project'
 import type { Cutaway, Project, Shot } from '../../types'
-import { layout, layoutCutaways, shotAt, shotTrim, sourceTimeMs } from './Timeline'
+import {
+  layout,
+  layoutCutaways,
+  shotAt,
+  shotTrim,
+  sourceTimeMs,
+  type Placed,
+  type PlacedCutaway,
+} from './Timeline'
 
 /** The preview Artifact, falling back to the Source Video as ClipEditor does. */
 export function previewUrl(clip: Project): string | null {
@@ -35,19 +42,38 @@ export function shotIsOver(
   return mediaDurationMs !== null && atMs >= mediaDurationMs - BOUNDARY_TOLERANCE_MS
 }
 
+/** Everything the Player renders, and everything that drives it. */
+export interface SequencePlayer {
+  /** Echoed back so the Player reads the playhead from one place. */
+  playheadMs: number
+  playing: boolean
+  setPlaying: (playing: boolean) => void
+  /** Index of the visible element; the other one is holding the next Shot. */
+  slot: number
+  videos: [RefObject<HTMLVideoElement>, RefObject<HTMLVideoElement>]
+  coverRef: RefObject<HTMLVideoElement>
+  placed: Placed[]
+  totalMs: number
+  /** The Shot under the playhead, and how far into it the playhead sits. */
+  current: { item: Placed; intoShotMs: number } | null
+  /** Its position in the running order, or -1 when nothing is placed. */
+  index: number
+  /** Whichever Cutaway is over the playhead, if any. */
+  covering: PlacedCutaway | null
+  /** True when the Shot under the playhead has no preview to play. */
+  missingPreview: boolean
+  onTimeUpdate: () => void
+  advance: () => void
+  restart: () => void
+}
+
 /**
- * The Sequence as one rough cut.
+ * Playing a Sequence as one video.
  *
- * There is otherwise no way to watch a Batch without exporting it, and a
- * playhead you cannot play is not much of an editor. This chains the Clips'
- * existing `preview` Artifacts, switching at Shot boundaries and seeking to
- * each Shot's in-point.
- *
- * Those previews are the Source Video scaled down — **landscape, uncropped and
- * unsubtitled**. So this shows order, timing, and where the cuts fall, and says
- * so; it does not show the finished framing. A server-rendered proxy would be
- * accurate but costs minutes per build and is stale the moment a Shot moves,
- * which makes it the export button with extra steps (ADR 0004).
+ * The arithmetic lives here rather than in the component for two reasons: the
+ * Timeline and a page-level keymap both need to drive the same playhead, and
+ * jsdom implements no media element at all — so anything left inside a
+ * component that renders `<video>` cannot be tested without one.
  *
  * Two elements rather than one: switching `src` on a single element black-
  * flashes and drops audio at every cut, so the next Shot is loaded and seeked
@@ -57,7 +83,7 @@ export function shotIsOver(
  * Shot underneath keeps supplying the sound — which is exactly what the export
  * does, so the rough cut does not mislead about the one thing Cutaways change.
  */
-export function SequencePreview({
+export function useSequencePlayer({
   shots,
   cutaways,
   clips,
@@ -69,10 +95,13 @@ export function SequencePreview({
   clips: Project[]
   playheadMs: number
   onScrub: (ms: number) => void
-}) {
+}): SequencePlayer {
   const [playing, setPlaying] = useState(false)
   const [slot, setSlot] = useState(0)
-  const videos = [useRef<HTMLVideoElement>(null), useRef<HTMLVideoElement>(null)]
+  const videos: [RefObject<HTMLVideoElement>, RefObject<HTMLVideoElement>] = [
+    useRef<HTMLVideoElement>(null),
+    useRef<HTMLVideoElement>(null),
+  ]
   const coverRef = useRef<HTMLVideoElement>(null)
 
   const placed = layout(shots, clips)
@@ -84,7 +113,6 @@ export function SequencePreview({
   const active = videos[slot]
   const idle = videos[1 - slot]
 
-  // Whichever Cutaway is over the playhead, if any.
   const placedCutaways = layoutCutaways(cutaways, placed, clips)
   const covering =
     placedCutaways.find(
@@ -174,91 +202,26 @@ export function SequencePreview({
     onScrub(current.item.startMs + Math.max(0, atMs - start))
   }
 
-  const missingPreview = current ? !previewUrl(current.item.clip) : false
+  function restart() {
+    setPlaying(false)
+    onScrub(0)
+  }
 
-  return (
-    <section className="preview" aria-label="Rough cut">
-      <div className="preview__screen">
-        {placed.length === 0 || missingPreview ? (
-          <span className="preview__placeholder">
-            <Clapperboard size={26} />
-          </span>
-        ) : null}
-        {[0, 1].map((value) => (
-          <video
-            key={value}
-            ref={videos[value]}
-            className={`preview__video ${value === slot ? 'is-active' : ''}`}
-            playsInline
-            preload="auto"
-            muted={value !== slot}
-            onTimeUpdate={value === slot ? onTimeUpdate : undefined}
-            // `timeupdate` stops firing once the media ends, so the last word
-            // on whether a Shot is over belongs to the element itself.
-            onEnded={value === slot ? advance : undefined}
-          />
-        ))}
-        {/* Muted, and over the top: the base element below still has the sound. */}
-        <video
-          ref={coverRef}
-          className={`preview__video preview__video--cover ${covering ? 'is-active' : ''}`}
-          playsInline
-          preload="auto"
-          muted
-        />
-      </div>
-
-      <div className="preview__side">
-        <div className="preview__transport">
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => {
-              setPlaying(false)
-              onScrub(0)
-            }}
-            disabled={!placed.length}
-            aria-label="Back to the start"
-            title="Back to the start"
-          >
-            <SkipBack size={16} />
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => setPlaying((value) => !value)}
-            disabled={!placed.length}
-            aria-label={playing ? 'Pause the rough cut' : 'Play the rough cut'}
-            title={playing ? 'Pause' : 'Play'}
-          >
-            {playing ? <Pause size={16} /> : <Play size={16} />}
-          </button>
-          <span className="preview__clock">
-            {formatTime(Math.min(playheadMs, totalMs))} / {formatTime(totalMs)}
-          </span>
-        </div>
-
-        <p className="preview__now">
-          {covering ? (
-            <>
-              <strong>{covering.clip.title}</strong>
-              <small>covering {current ? current.item.clip.title : 'a shot'}, its sound playing</small>
-            </>
-          ) : current ? (
-            <>
-              <strong>{current.item.clip.title}</strong>
-              <small>shot {index + 1} of {placed.length}</small>
-            </>
-          ) : (
-            <small>Nothing placed yet.</small>
-          )}
-        </p>
-
-        <p className="preview__caveat">
-          Rough cut — this plays the source videos, so framing and subtitles
-          apply on export, not here.
-        </p>
-      </div>
-    </section>
-  )
+  return {
+    playheadMs,
+    playing,
+    setPlaying,
+    slot,
+    videos,
+    coverRef,
+    placed,
+    totalMs,
+    current,
+    index,
+    covering,
+    missingPreview: current ? !previewUrl(current.item.clip) : false,
+    onTimeUpdate,
+    advance,
+    restart,
+  }
 }
