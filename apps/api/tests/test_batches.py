@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers, UploadFile
@@ -245,4 +246,45 @@ def test_a_batch_can_be_renamed(tmp_path, monkeypatch) -> None:
     renamed = batches_router.rename_batch(batch.id, BatchUpdate(name="  Client cuts  "), session)
 
     assert renamed.name == "Client cuts"
+    session.close()
+
+
+def test_a_new_batch_carries_the_format_it_was_created_with(tmp_path, monkeypatch) -> None:
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+
+    batch = batches_router.create_batch(BatchCreate(format="vertical"), session)
+
+    assert batch.format == "vertical"
+    assert batches_router.get_batch(batch.id, session).format == "vertical"
+    session.close()
+
+
+def test_a_batch_defaults_to_vertical(tmp_path, monkeypatch) -> None:
+    """Vertical is the only Format today, so it is what an unstated one means."""
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+
+    assert batches_router.create_batch(BatchCreate(), session).format == "vertical"
+    session.close()
+
+
+def test_an_unknown_format_is_refused() -> None:
+    with pytest.raises(ValidationError):
+        BatchCreate(format="instagram_vertical")
+
+
+def test_renaming_a_batch_cannot_change_its_format() -> None:
+    """The Format is fixed at creation, so BatchUpdate has no field for it."""
+    assert "format" not in BatchUpdate.model_fields
+
+
+def test_the_batch_list_reports_each_format(tmp_path, monkeypatch) -> None:
+    session = make_session(tmp_path)
+    use_projects_dir(monkeypatch, tmp_path)
+    batches_router.create_batch(BatchCreate(name="Monday"), session)
+
+    listed = batches_router.list_batches(session)
+
+    assert [batch.format for batch in listed] == ["vertical"]
     session.close()

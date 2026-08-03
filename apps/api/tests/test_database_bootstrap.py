@@ -184,3 +184,21 @@ def test_a_rebuilt_shots_table_accepts_a_repeated_clip(tmp_path, monkeypatch):
             text("SELECT count(*) FROM shots WHERE project_id='legacy-0'")
         ).scalar()
     assert placements == 2
+
+
+def test_init_db_backfills_format_on_a_pre_format_batches_table(tmp_path, monkeypatch):
+    """ADR 0006: every Batch that predates the Format rendered 1080x1920."""
+    engine = _legacy_sequence_database(tmp_path, name="legacy-batches.db")
+    assert "format" not in {
+        column["name"] for column in inspect(engine).get_columns("batches")
+    }
+
+    monkeypatch.setattr(database, "engine", engine)
+    database.init_db()
+
+    assert "format" in {column["name"] for column in inspect(engine).get_columns("batches")}
+    with engine.connect() as connection:
+        formats = connection.execute(text("SELECT format FROM batches")).scalars().all()
+    # The Batch created before the column existed is vertical, which is what it
+    # always rendered as.
+    assert formats == ["vertical"]

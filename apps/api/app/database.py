@@ -150,6 +150,13 @@ def init_db() -> None:
             "ALTER TABLE renders ADD COLUMN caption_position VARCHAR NOT NULL DEFAULT 'bottom'"
         ),
     }
+    batch_columns = {column["name"] for column in inspect(engine).get_columns("batches")}
+    batch_additions = {
+        # Every Batch that predates ADR 0006 rendered 1080x1920, so vertical is
+        # both the default and the honest backfill. Additive, so `batches` needs
+        # none of the table rebuild ADR 0004 did to `shots`.
+        "format": "ALTER TABLE batches ADD COLUMN format VARCHAR NOT NULL DEFAULT 'vertical'",
+    }
     with engine.begin() as connection:
         for name, statement in overlay_additions.items():
             if name not in overlay_columns:
@@ -162,4 +169,7 @@ def init_db() -> None:
                 connection.exec_driver_sql(statement)
         for name, statement in render_additions.items():
             if name not in render_columns:
+                connection.exec_driver_sql(statement)
+        for name, statement in batch_additions.items():
+            if name not in batch_columns:
                 connection.exec_driver_sql(statement)

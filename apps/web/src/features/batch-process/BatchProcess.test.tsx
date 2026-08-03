@@ -60,6 +60,7 @@ function makeClip(overrides: Partial<Project> & { id: string; title: string }): 
 const summary: BatchSummary = {
   id: 'batch-1',
   name: 'Tuesday pulls',
+  format: 'vertical',
   created_at: '2026-08-02T12:00:00Z',
   updated_at: '2026-08-02T12:00:00Z',
   clip_count: 2,
@@ -92,6 +93,7 @@ const importingClip = makeClip({
 const batch: Batch = {
   id: 'batch-1',
   name: 'Tuesday pulls',
+  format: 'vertical',
   created_at: '2026-08-02T12:00:00Z',
   updated_at: '2026-08-02T12:00:00Z',
   clips: [makeClip({ id: 'clip-ready', title: 'first' }), importingClip],
@@ -234,6 +236,11 @@ test('starts a new batch so several can run in parallel', async () => {
   renderApp(newClient(), '/modes/batch-process/batches/batch-1')
 
   fireEvent.click(await screen.findByRole('button', { name: /New batch/ }))
+  // The batch is not made on that click: the Format has to be settled first,
+  // and it can never be changed afterwards (ADR 0006).
+  expect(fetchMock).not.toHaveBeenCalledWith('/api/batches', expect.objectContaining({ method: 'POST' }))
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Create batch' }))
 
   await waitFor(() =>
     expect(fetchMock).toHaveBeenCalledWith('/api/batches', expect.objectContaining({ method: 'POST' })),
@@ -241,6 +248,49 @@ test('starts a new batch so several can run in parallel', async () => {
   await waitFor(() =>
     expect(screen.getByTestId('location')).toHaveTextContent('/modes/batch-process/batches/batch-2'),
   )
+})
+
+test('a new batch is created in the format the operator picked', async () => {
+  const created: Batch = { ...batch, id: 'batch-2', name: 'Reels drop', clips: [] }
+  const fetchMock = stubApi({
+    'POST /api/batches': created,
+    'GET /api/batches/batch-2': created,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: /New batch/ }))
+
+  const dialog = await screen.findByRole('dialog', { name: /What are you making/ })
+  // Vertical is the only Format today, and it is already the chosen one.
+  expect(within(dialog).getByRole('button', { name: /Instagram/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Reels drop' } })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create batch' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ name: 'Reels drop', format: 'vertical' }),
+      }),
+    ),
+  )
+})
+
+test('the new batch dialog can be dismissed without making one', async () => {
+  const fetchMock = stubApi({})
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: /New batch/ }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: /What are you making/ })).not.toBeInTheDocument(),
+  )
+  expect(fetchMock).not.toHaveBeenCalledWith('/api/batches', expect.objectContaining({ method: 'POST' }))
 })
 
 test('deletes a batch after confirmation, once nothing in it is importing', async () => {

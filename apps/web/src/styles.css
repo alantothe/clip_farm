@@ -2294,6 +2294,135 @@ input[type='range']::-webkit-slider-thumb {
   margin-top: 24px;
 }
 
+/* --- Starting a Batch, and settling its Format ------------------------- */
+
+.new-batch-dialog {
+  width: min(470px, 100%);
+  border: 1px solid #242925;
+  padding: 28px;
+  background: var(--paper);
+  box-shadow: 8px 8px 0 rgba(223, 243, 79, 0.6);
+}
+
+.new-batch-dialog .eyebrow { margin: 0 0 10px; color: var(--muted); }
+
+.new-batch-dialog h2 {
+  margin: 0 0 20px;
+  font: 600 34px/1 'Barlow Condensed', sans-serif;
+  text-transform: uppercase;
+}
+
+.new-batch-dialog__name {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.new-batch-dialog__name input {
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  font-size: 14px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.new-batch-dialog__name input:focus-visible {
+  outline: 2px solid var(--dark);
+  outline-offset: -1px;
+}
+
+.new-batch-dialog__formats {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.new-batch-dialog__formats legend {
+  padding: 0;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.format-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.format-card:hover { border-color: #9aa39c; }
+
+.format-card.is-selected {
+  border-color: var(--dark);
+  box-shadow: inset 0 0 0 1px var(--dark);
+}
+
+/* A miniature of the shape being chosen, sized by the Format's own ratio. */
+.format-card__frame {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+}
+
+.format-card__frame i {
+  display: block;
+  height: 100%;
+  border: 1px solid #7d857f;
+  background: var(--dark);
+}
+
+.format-card__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.format-card__copy strong { font-size: 14px; font-weight: 600; }
+.format-card__copy small { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+
+.format-card__tick {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--dark);
+  color: var(--acid);
+}
+
+.new-batch-dialog__note {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.new-batch-dialog > .form-error { margin: 12px 0 0; color: #a43120; font-size: 13px; }
+
 .settings-page {
   min-height: calc(100vh - 58px);
   overflow: hidden;

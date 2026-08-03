@@ -1,14 +1,28 @@
-import type { Batch, BatchSummary, BatchUploadResult, SequenceRender, ShotTrim } from '../types'
+import type {
+  Batch,
+  BatchSummary,
+  BatchUploadResult,
+  Format,
+  SequenceRender,
+  ShotTrim,
+} from '../types'
 import { request } from './client'
 
 export const listBatches = () => request<BatchSummary[]>('/api/batches')
 
 export const getBatch = (id: string) => request<Batch>(`/api/batches/${id}`)
 
-export const createBatch = (name?: string) =>
+/**
+ * Start a Batch.
+ *
+ * The Format is settled here and never again — a Sequence joins its Shots into
+ * one file, so the shape has to hold for the whole Batch, and `renameBatch`
+ * deliberately cannot change it (ADR 0006).
+ */
+export const createBatch = (batch: { name?: string; format: Format }) =>
   request<Batch>('/api/batches', {
     method: 'POST',
-    body: JSON.stringify(name ? { name } : {}),
+    body: JSON.stringify(batch.name ? batch : { format: batch.format }),
   })
 
 export const renameBatch = (id: string, name: string) =>
