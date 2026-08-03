@@ -15,15 +15,15 @@ A named set of Clips imported and worked on together, which renders as one video
 _Avoid_: project, group, folder, run
 
 **Sequence**:
-The ordered arrangement of Clips in a Batch that renders as one video. One per Batch. A Clip can sit in a Batch without being in its Sequence.
+The ordered arrangement of Clips in a Batch that renders as one video. One per Batch. A Clip can sit in a Batch without being in its Sequence, and can appear in it more than once.
 _Avoid_: timeline, edit, montage
 
 **Shot**:
-One Clip's placement in a Sequence, at a position. The span that plays is the Clip's own Trim.
+One Clip's placement in a Sequence, at a position. The span that plays is the Shot's own Trim, or its Clip's Trim when the Shot has none of its own. One Clip can have several Shots.
 _Avoid_: item, entry, segment, clip instance
 
 **Timeline**:
-The strip that presents a Sequence for reordering. UI, not a model — as Mode Library is to Mode.
+The strip that presents a Sequence for editing — reordering Shots, trimming them, and scrubbing the Sequence. Horizontal space is time: a Shot is as wide as it is long. UI, not a model — as Mode Library is to Mode.
 _Avoid_: track, storyboard, editor
 
 **Origin**:
