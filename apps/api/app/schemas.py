@@ -229,11 +229,65 @@ class ProjectOut(BaseModel):
 
 
 class ShotCreate(BaseModel):
+    """Place a Clip in the Sequence.
+
+    `position` and the trim override are here so undoing a removal can put a
+    Shot back exactly as it was, rather than appending a fresh one.
+    """
+
     clip_id: str
+    position: int | None = Field(default=None, ge=0)
+    trim_start_ms: int | None = Field(default=None, ge=0)
+    trim_end_ms: int | None = Field(default=None, ge=0)
 
 
-class ShotMove(BaseModel):
-    position: int = Field(ge=0)
+class ShotUpdate(BaseModel):
+    """Move a Shot, trim it, or both.
+
+    Every field is optional, and a null trim is meaningful — it resets the Shot
+    to following its Clip. Absent and null are told apart by `model_fields_set`,
+    so callers must omit what they do not mean to change.
+    """
+
+    position: int | None = Field(default=None, ge=0)
+    trim_start_ms: int | None = Field(default=None, ge=0)
+    trim_end_ms: int | None = Field(default=None, ge=0)
+
+
+class CutawayCreate(BaseModel):
+    """Place a Clip over a Shot for a span."""
+
+    clip_id: str
+    base_shot_id: str
+    offset_ms: int = Field(ge=0)
+    trim_start_ms: int | None = Field(default=None, ge=0)
+    trim_end_ms: int | None = Field(default=None, ge=0)
+
+
+class CutawayUpdate(BaseModel):
+    """Move a Cutaway, re-anchor it to another Base Shot, or trim it.
+
+    Same absent-versus-null rule as `ShotUpdate`: a null trim resets that edge
+    to following the Clip, and an omitted one leaves it alone.
+    """
+
+    base_shot_id: str | None = None
+    offset_ms: int | None = Field(default=None, ge=0)
+    trim_start_ms: int | None = Field(default=None, ge=0)
+    trim_end_ms: int | None = Field(default=None, ge=0)
+
+
+class CutawayOut(BaseModel):
+    """One Cutaway: which Clip covers which Base Shot, and where."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: str
+    clip_id: str = Field(validation_alias="project_id")
+    base_shot_id: str = Field(validation_alias="parent_shot_id")
+    offset_ms: int
+    trim_start_ms: int | None = None
+    trim_end_ms: int | None = None
 
 
 class ShotOut(BaseModel):
@@ -246,6 +300,10 @@ class ShotOut(BaseModel):
     # the API boundary speaks the glossary.
     clip_id: str = Field(validation_alias="project_id")
     position: int
+    # Null means this Shot follows its Clip's Trim; the web draws the
+    # difference, so it needs the override rather than only the result.
+    trim_start_ms: int | None = None
+    trim_end_ms: int | None = None
 
 
 class SequenceRenderOut(BaseModel):
@@ -273,8 +331,10 @@ class BatchOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     clips: list[ProjectOut] = []
-    # The Sequence, in play order.
+    # The Sequence, in play order. Cutaways are not in it — each one sits on a
+    # Base Shot at an offset rather than in the running order (ADR 0005).
     shots: list[ShotOut] = []
+    cutaways: list[CutawayOut] = []
     # The most recent export, if this Batch has ever been rendered.
     sequence_render: SequenceRenderOut | None = None
 

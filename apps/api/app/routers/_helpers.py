@@ -12,9 +12,11 @@ from app.models import Batch, ImageOverlay, Project, Render, SequenceRender, Sho
 from app.schemas import (
     BatchOut,
     BatchSummaryOut,
+    CutawayOut,
     JobOut,
     ProjectOut,
     SequenceRenderOut,
+    ShotOut,
 )
 
 
@@ -58,12 +60,28 @@ def batch_clips(session: Session, batch_id: str) -> list[Project]:
 
 
 def batch_shots(session: Session, batch_id: str) -> list[Shot]:
-    """A Batch's Sequence, in play order."""
+    """A Batch's Sequence, in play order.
+
+    Cutaways are excluded: they are Shots too, but they sit on a Base Shot at
+    an offset rather than in the running order, so a `position` means nothing
+    for them (ADR 0005).
+    """
     return list(
         session.scalars(
             select(Shot)
-            .where(Shot.batch_id == batch_id)
+            .where(Shot.batch_id == batch_id, Shot.parent_shot_id.is_(None))
             .order_by(Shot.position, Shot.created_at)
+        ).all()
+    )
+
+
+def batch_cutaways(session: Session, batch_id: str) -> list[Shot]:
+    """Every Cutaway in a Batch, whichever Base Shot each one covers."""
+    return list(
+        session.scalars(
+            select(Shot)
+            .where(Shot.batch_id == batch_id, Shot.parent_shot_id.is_not(None))
+            .order_by(Shot.offset_ms, Shot.created_at)
         ).all()
     )
 
@@ -91,8 +109,14 @@ def serialize_sequence_render(sequence_render: SequenceRender) -> SequenceRender
 
 
 def serialize_batch(session: Session, batch: Batch) -> BatchOut:
-    # `shots` come straight off the relationship, which is ordered by position.
     output = BatchOut.model_validate(batch)
+    # The relationship holds Cutaways too, and they have no place in the
+    # running order, so both lists are filled deliberately rather than by
+    # whatever `shots` happens to contain.
+    output.shots = [ShotOut.model_validate(shot) for shot in batch_shots(session, batch.id)]
+    output.cutaways = [
+        CutawayOut.model_validate(cutaway) for cutaway in batch_cutaways(session, batch.id)
+    ]
     output.clips = [serialize_project(clip) for clip in batch_clips(session, batch.id)]
     newest = latest_sequence_render(batch)
     output.sequence_render = serialize_sequence_render(newest) if newest else None
@@ -104,7 +128,8 @@ def summarize_batch(batch: Batch, clips: list[Project]) -> BatchSummaryOut:
     output.clip_count = len(clips)
     output.importing_count = sum(1 for clip in clips if clip.status in ACTIVE_PROJECT_STATUSES)
     output.failed_count = sum(1 for clip in clips if clip.status == "failed")
-    output.shot_count = len(batch.shots)
+    # Cutaways are not part of the running order, so they are not counted here.
+    output.shot_count = sum(1 for shot in batch.shots if not shot.is_cutaway)
     return output
 
 

@@ -9,7 +9,6 @@ import re
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -31,16 +30,19 @@ from app.schemas import (
     BatchSummaryOut,
     BatchUpdate,
     BatchUploadOut,
+    CutawayCreate,
+    CutawayUpdate,
     DeletionOut,
     SequenceRenderOut,
     ShotCreate,
-    ShotMove,
+    ShotUpdate,
 )
 from app.services.upload import UploadRejected, clip_title, source_suffix, store_source_video
 from app.tasks import import_upload_task, render_sequence_task
 
 from app.routers._helpers import (
     batch_clips,
+    batch_cutaways,
     batch_shots,
     ensure_project_can_be_deleted,
     get_batch_or_404,
@@ -124,6 +126,16 @@ def delete_batch(batch_id: str, session: Session = Depends(get_db)) -> DeletionO
     return DeletionOut(deleted=len(clip_ids))
 
 
+def _reject_inverted_trim(start_ms: int | None, end_ms: int | None) -> None:
+    """A Shot that ends before it starts renders nothing and fails late.
+
+    Caught here rather than at export, where the operator has already waited
+    for every other Shot to render.
+    """
+    if start_ms is not None and end_ms is not None and end_ms <= start_ms:
+        raise HTTPException(status_code=422, detail="A shot has to end after it starts")
+
+
 def _touch(session: Session, batch: Batch) -> BatchOut:
     """Stamp the Batch as edited and hand back its current state."""
     batch.updated_at = datetime.now(timezone.utc)
@@ -139,35 +151,34 @@ def _touch(session: Session, batch: Batch) -> BatchOut:
 def add_shot(
     batch_id: str, payload: ShotCreate, session: Session = Depends(get_db)
 ) -> BatchOut:
-    """Put a Clip at the end of the Sequence.
+    """Put a Clip in the Sequence, at the end unless told where.
 
     Being in a Batch and being in its Sequence are different things: uploading
-    a video is not the same act as deciding it makes the cut.
+    a video is not the same act as deciding it makes the cut. A Clip can be
+    placed more than once (ADR 0004), so placing one is never a conflict.
     """
     batch = get_batch_or_404(session, batch_id)
     clip = session.get(Project, payload.clip_id)
     if not clip or clip.batch_id != batch.id:
         raise HTTPException(status_code=404, detail="That clip is not in this batch")
-    if clip.shot:
-        raise HTTPException(
-            status_code=409, detail="That clip is already in the sequence"
-        )
+    _reject_inverted_trim(payload.trim_start_ms, payload.trim_end_ms)
     # Close any gap first. Deleting a Clip elsewhere leaves its position behind,
     # and appending at len() would then land on top of a Shot that is still
     # there — positions 0 and 2 make the next Shot a second 2.
     shots = batch_shots(session, batch.id)
     renumber_shots(shots)
-    session.add(Shot(batch_id=batch.id, project_id=clip.id, position=len(shots)))
-    try:
-        return _touch(session, batch)
-    except IntegrityError:
-        # The check above is not atomic with the insert, so a double-submitted
-        # add races past it. The unique constraint is the real guard; without
-        # this the loser of the race gets a 500.
-        session.rollback()
-        raise HTTPException(
-            status_code=409, detail="That clip is already in the sequence"
-        ) from None
+    shot = Shot(
+        batch_id=batch.id,
+        project_id=clip.id,
+        trim_start_ms=payload.trim_start_ms,
+        trim_end_ms=payload.trim_end_ms,
+    )
+    # Past the end means the end, as it does when moving a Shot.
+    target = len(shots) if payload.position is None else min(payload.position, len(shots))
+    shots.insert(target, shot)
+    session.add(shot)
+    renumber_shots(shots)
+    return _touch(session, batch)
 
 
 @router.delete(
@@ -191,21 +202,186 @@ def remove_shot(batch_id: str, shot_id: str, session: Session = Depends(get_db))
     f"{settings.api_prefix}/batches/{{batch_id}}/shots/{{shot_id}}",
     response_model=BatchOut,
 )
-def move_shot(
-    batch_id: str, shot_id: str, payload: ShotMove, session: Session = Depends(get_db)
+def update_shot(
+    batch_id: str, shot_id: str, payload: ShotUpdate, session: Session = Depends(get_db)
 ) -> BatchOut:
-    """Move a Shot to a position, sliding everything between it and there."""
+    """Move a Shot, trim it on the Timeline, or both.
+
+    A trim sent as null resets the Shot to following its Clip's Trim, so absent
+    and null mean different things and `model_fields_set` is what tells them
+    apart.
+    """
     batch = get_batch_or_404(session, batch_id)
     shots = batch_shots(session, batch.id)
     shot = next((item for item in shots if item.id == shot_id), None)
     if not shot:
         raise HTTPException(status_code=404, detail="Shot not found")
-    # Past the end means the end, rather than an error the UI would have to
-    # pre-empt by knowing the length.
-    target = min(payload.position, len(shots) - 1)
-    shots.remove(shot)
-    shots.insert(target, shot)
-    renumber_shots(shots)
+
+    sent = payload.model_fields_set
+    start = payload.trim_start_ms if "trim_start_ms" in sent else shot.trim_start_ms
+    end = payload.trim_end_ms if "trim_end_ms" in sent else shot.trim_end_ms
+    if "trim_start_ms" in sent or "trim_end_ms" in sent:
+        # Compare what the Shot will actually play, since half an override
+        # falls back to the Clip for the other half.
+        clip = shot.clip
+        _reject_inverted_trim(
+            start if start is not None else clip.trim_start_ms,
+            end if end is not None else (clip.trim_end_ms or clip.duration_ms),
+        )
+        shot.trim_start_ms = start
+        shot.trim_end_ms = end
+
+    if payload.position is not None:
+        # Past the end means the end, rather than an error the UI would have to
+        # pre-empt by knowing the length.
+        target = min(payload.position, len(shots) - 1)
+        shots.remove(shot)
+        shots.insert(target, shot)
+        renumber_shots(shots)
+    return _touch(session, batch)
+
+
+def _get_cutaway_or_404(session: Session, batch: Batch, cutaway_id: str) -> Shot:
+    cutaway = session.get(Shot, cutaway_id)
+    if not cutaway or cutaway.batch_id != batch.id or not cutaway.is_cutaway:
+        raise HTTPException(status_code=404, detail="Cutaway not found")
+    return cutaway
+
+
+def _get_base_shot_or_404(session: Session, batch: Batch, base_shot_id: str) -> Shot:
+    base = session.get(Shot, base_shot_id)
+    if not base or base.batch_id != batch.id:
+        raise HTTPException(status_code=404, detail="That shot is not in this batch")
+    if base.is_cutaway:
+        # Nesting would make "what is on screen here" have two answers.
+        raise HTTPException(status_code=422, detail="A cutaway cannot cover another cutaway")
+    return base
+
+
+def _span_ms(clip: Project, trim_start_ms: int | None, trim_end_ms: int | None) -> int:
+    """How long a Shot of this Clip would play, before it exists to be asked."""
+    start = trim_start_ms if trim_start_ms is not None else clip.trim_start_ms
+    end = trim_end_ms if trim_end_ms is not None else (clip.trim_end_ms or clip.duration_ms)
+    if end is None or end <= start:
+        return 0
+    return end - start
+
+
+def _reject_overlap(
+    base: Shot, *, offset_ms: int, length_ms: int, ignore_id: str | None = None
+) -> None:
+    """Two Cutaways on one Base Shot cannot claim the same stretch.
+
+    Overlapping would leave the flattening in `plan_segments` with no defined
+    answer for which picture wins. Touching is fine — one ending exactly where
+    the next begins covers no millisecond twice.
+    """
+    for other in base.cutaways:
+        if other.id == ignore_id:
+            continue
+        other_start, other_end = other.span()
+        if other_end is None or other_end <= other_start:
+            continue
+        other_offset = other.offset_ms or 0
+        starts_before_other_ends = offset_ms < other_offset + (other_end - other_start)
+        if starts_before_other_ends and other_offset < offset_ms + length_ms:
+            raise HTTPException(
+                status_code=409,
+                detail=f"“{other.clip.title}” already covers that part of this shot",
+            )
+
+
+@router.post(
+    f"{settings.api_prefix}/batches/{{batch_id}}/cutaways",
+    response_model=BatchOut,
+    status_code=201,
+)
+def add_cutaway(
+    batch_id: str, payload: CutawayCreate, session: Session = Depends(get_db)
+) -> BatchOut:
+    """Cover a Shot with a Clip for a span.
+
+    A Cutaway is anchored to the Shot it covers rather than to a clock time, so
+    reordering the Sequence carries it along with the moment it was placed over
+    (ADR 0005).
+    """
+    batch = get_batch_or_404(session, batch_id)
+    clip = session.get(Project, payload.clip_id)
+    if not clip or clip.batch_id != batch.id:
+        raise HTTPException(status_code=404, detail="That clip is not in this batch")
+    base = _get_base_shot_or_404(session, batch, payload.base_shot_id)
+    _reject_inverted_trim(payload.trim_start_ms, payload.trim_end_ms)
+
+    _reject_overlap(
+        base,
+        offset_ms=payload.offset_ms,
+        length_ms=_span_ms(clip, payload.trim_start_ms, payload.trim_end_ms),
+    )
+    session.add(
+        Shot(
+            batch_id=batch.id,
+            project_id=clip.id,
+            parent_shot_id=base.id,
+            offset_ms=payload.offset_ms,
+            trim_start_ms=payload.trim_start_ms,
+            trim_end_ms=payload.trim_end_ms,
+        )
+    )
+    return _touch(session, batch)
+
+
+@router.patch(
+    f"{settings.api_prefix}/batches/{{batch_id}}/cutaways/{{cutaway_id}}",
+    response_model=BatchOut,
+)
+def update_cutaway(
+    batch_id: str, cutaway_id: str, payload: CutawayUpdate, session: Session = Depends(get_db)
+) -> BatchOut:
+    """Move a Cutaway along its Base Shot, onto another one, or trim it."""
+    batch = get_batch_or_404(session, batch_id)
+    cutaway = _get_cutaway_or_404(session, batch, cutaway_id)
+
+    sent = payload.model_fields_set
+    if "trim_start_ms" in sent or "trim_end_ms" in sent:
+        start = payload.trim_start_ms if "trim_start_ms" in sent else cutaway.trim_start_ms
+        end = payload.trim_end_ms if "trim_end_ms" in sent else cutaway.trim_end_ms
+        clip = cutaway.clip
+        _reject_inverted_trim(
+            start if start is not None else clip.trim_start_ms,
+            end if end is not None else (clip.trim_end_ms or clip.duration_ms),
+        )
+        cutaway.trim_start_ms = start
+        cutaway.trim_end_ms = end
+
+    base = (
+        _get_base_shot_or_404(session, batch, payload.base_shot_id)
+        if payload.base_shot_id is not None
+        else cutaway.base_shot
+    )
+    offset = payload.offset_ms if payload.offset_ms is not None else (cutaway.offset_ms or 0)
+    if base is not None:
+        _reject_overlap(
+            base,
+            offset_ms=offset,
+            length_ms=_span_ms(cutaway.clip, cutaway.trim_start_ms, cutaway.trim_end_ms),
+            ignore_id=cutaway.id,
+        )
+        cutaway.parent_shot_id = base.id
+    cutaway.offset_ms = offset
+    return _touch(session, batch)
+
+
+@router.delete(
+    f"{settings.api_prefix}/batches/{{batch_id}}/cutaways/{{cutaway_id}}",
+    response_model=BatchOut,
+)
+def remove_cutaway(
+    batch_id: str, cutaway_id: str, session: Session = Depends(get_db)
+) -> BatchOut:
+    """Uncover the Shot. The Clip stays in the Batch."""
+    batch = get_batch_or_404(session, batch_id)
+    cutaway = _get_cutaway_or_404(session, batch, cutaway_id)
+    session.delete(cutaway)
     return _touch(session, batch)
 
 
@@ -229,7 +405,10 @@ def render_sequence(batch_id: str, session: Session = Depends(get_db)) -> Sequen
     existing = latest_sequence_render(batch)
     if existing and existing.status in ACTIVE_SEQUENCE_STATUSES:
         raise HTTPException(status_code=409, detail="This batch is already exporting")
-    unready = [shot.clip for shot in shots if shot.clip.status != "ready"]
+    # A Cutaway's Clip has to be ready too — it is rendered like any other, just
+    # as part of the Shot it covers rather than on its own.
+    placed = shots + batch_cutaways(session, batch.id)
+    unready = [shot.clip for shot in placed if shot.clip.status != "ready"]
     if unready:
         raise HTTPException(
             status_code=409,

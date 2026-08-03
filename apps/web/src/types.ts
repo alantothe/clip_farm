@@ -116,7 +116,31 @@ export interface Shot {
   id: string
   clip_id: string
   position: number
+  /** Null means this Shot plays its Clip's Trim rather than one of its own. */
+  trim_start_ms: number | null
+  trim_end_ms: number | null
 }
+
+/**
+ * A Shot that covers another for a span, showing its picture while the covered
+ * Shot's audio keeps playing. It is a Shot too, so it carries a Trim the same
+ * way — but it sits at an offset into its Base Shot rather than in the running
+ * order, which is why it travels apart from `shots`.
+ */
+export interface Cutaway {
+  id: string
+  clip_id: string
+  base_shot_id: string
+  offset_ms: number
+  trim_start_ms: number | null
+  trim_end_ms: number | null
+}
+
+/** What a trim drag sends: only the edge that moved, so the other stays as it was. */
+export type ShotTrim = Partial<{
+  trim_start_ms: number | null
+  trim_end_ms: number | null
+}>
 
 /** The finished video a Sequence produces: every Shot in order, joined. */
 export interface SequenceRender {
@@ -143,6 +167,8 @@ export interface Batch {
   clips: Project[]
   /** The Sequence, in play order. A Clip can be in a Batch without a Shot. */
   shots: Shot[]
+  /** Cutaways are not in the running order — each covers a Shot at an offset. */
+  cutaways: Cutaway[]
   sequence_render: SequenceRender | null
 }
 

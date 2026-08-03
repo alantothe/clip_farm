@@ -28,8 +28,10 @@ from app.services.media import (
     inspect_media,
     join_shots,
     render_vertical,
+    replace_audio,
     sha256_file,
 )
+from app.services.sequence import plan_sequence
 from app.services.transcription import TranscriptionError, transcribe_audio
 from app.services.x_download import download_x_video, extract_post_caption
 from app.publishers import (
@@ -384,8 +386,10 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
     """Render every Shot in a Batch's Sequence, then join them into one video.
 
     Each Shot renders through the same `render_vertical` a lone Clip uses, with
-    that Clip's own trim, layout, Subtitles, and Overlays — a Batch holds no
-    edit settings of its own (ADR 0002). Joining is where the Sequence exists.
+    that Clip's layout, Subtitles, and Overlays — a Batch holds no edit settings
+    of its own (ADR 0002). The trim is the exception: a Shot can carry its own,
+    which is what lets one Clip appear twice at different in/out points (ADR
+    0004). Joining is where the Sequence exists.
     """
     with SessionLocal() as session:
         batch = session.get(Batch, batch_id)
@@ -395,7 +399,12 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
 
         render_dir = settings.batches_dir / batch.id / "sequences" / sequence_render.id
         try:
-            shots = sorted(batch.shots, key=lambda shot: shot.position)
+            # The relationship holds Cutaways too. They are rendered as part of
+            # the Base Shot they cover, never as entries in the running order.
+            shots = sorted(
+                (shot for shot in batch.shots if not shot.is_cutaway),
+                key=lambda shot: shot.position,
+            )
             if not shots:
                 raise RuntimeError("This batch has no clips in its sequence")
 
@@ -405,17 +414,22 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
             session.commit()
 
             render_dir.mkdir(parents=True, exist_ok=True)
+            # A Cutaway covers the whole frame, so a covered Shot is just
+            # shorter stretches in a row and the Sequence stays a concatenation
+            # (ADR 0005).
+            segments = plan_sequence(shots)
+            if not segments:
+                unusable = next((shot.clip.title for shot in shots), "A clip")
+                raise RuntimeError(f"“{unusable}” has no usable trim range")
+
             rendered: list[Path] = []
-            # Shots are the bulk of the work; the join is comparatively quick.
-            for index, shot in enumerate(shots):
-                clip = shot.clip
-                end_ms = clip.trim_end_ms or clip.duration_ms
-                if end_ms is None or end_ms <= clip.trim_start_ms:
-                    raise RuntimeError(f"“{clip.title}” has no usable trim range")
+            # Segments are the bulk of the work; the join is comparatively quick.
+            for index, segment in enumerate(segments):
+                clip = segment.picture.clip
                 _update_sequence(
                     sequence_render,
-                    progress=5 + round(index / len(shots) * 80),
-                    message=f"Rendering clip {index + 1} of {len(shots)}",
+                    progress=5 + round(index / len(segments) * 80),
+                    message=f"Rendering clip {index + 1} of {len(segments)}",
                 )
                 session.commit()
 
@@ -425,15 +439,30 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
                     output=shot_output,
                     temp_dir=render_dir,
                     layout=clip.layout,
-                    start_ms=clip.trim_start_ms,
-                    end_ms=end_ms,
+                    start_ms=segment.picture_start_ms,
+                    end_ms=segment.picture_end_ms,
                     crop_center_x=clip.crop_center_x,
                     caption_segments=clip.captions,
-                    captions_enabled=clip.captions_enabled,
+                    # A Cutaway's Subtitles transcribe audio that is not
+                    # playing under it, so they are not burned in (ADR 0005).
+                    captions_enabled=clip.captions_enabled and not segment.is_covered,
                     caption_style=clip.caption_style,
                     caption_position=clip.caption_position,
                     image_overlays=clip.image_overlays,
                 )
+
+                if segment.audio is not None:
+                    covered = render_dir / f"shot-{index:03d}-covered.mp4"
+                    replace_audio(
+                        video=shot_output,
+                        audio_source=Path(_source_artifact(segment.audio.clip).path),
+                        audio_start_ms=segment.audio_start_ms,
+                        audio_end_ms=segment.audio_end_ms,
+                        output=covered,
+                    )
+                    shot_output.unlink(missing_ok=True)
+                    shot_output = covered
+
                 rendered.append(shot_output)
 
             _update_sequence(sequence_render, progress=88, message="Joining clips")

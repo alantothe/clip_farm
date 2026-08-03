@@ -2869,70 +2869,349 @@ input[type='range']::-webkit-slider-thumb {
   line-height: 1.6;
 }
 
-.timeline {
-  display: flex;
-  gap: 10px;
+.sequence {
   margin: 22px 0 0;
-  padding: 0 0 6px;
-  list-style: none;
-  overflow-x: auto;
-}
-
-.timeline__shot {
-  position: relative;
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 10px;
-  width: 244px;
-  padding: 10px;
   border: 1px solid var(--line);
   border-radius: 5px;
   background: var(--surface);
+  /* Pointer gestures, so a drag must not select text or pan the page. */
+  user-select: none;
+  touch-action: none;
 }
 
-.timeline__index {
-  position: absolute;
-  top: -8px;
-  left: -8px;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--ink);
-  color: var(--paper);
+.sequence__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sequence__total {
   font-size: 11px;
-  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.timeline__thumb {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 44px;
-  height: 58px;
-  border-radius: 4px;
+.sequence__zoom {
+  display: flex;
+  gap: 4px;
+}
+
+.sequence__scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.sequence__inner {
+  position: relative;
+  min-width: 100%;
+  padding: 0 0 10px;
+}
+
+.sequence__ruler {
+  position: relative;
+  height: 20px;
+  border-bottom: 1px solid var(--line);
   background: var(--paper);
+  cursor: ew-resize;
+}
+
+.sequence__ruler span {
+  position: absolute;
+  top: 4px;
+  height: 16px;
+  padding-left: 4px;
+  border-left: 1px solid var(--line);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
+  white-space: nowrap;
+}
+
+/* The cover lane: Cutaways sit above the Shots they cover. */
+.sequence__cover {
+  position: relative;
+  height: 26px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  background: repeating-linear-gradient(
+    -45deg,
+    #f1f4f1,
+    #f1f4f1 5px,
+    #e9ede9 5px,
+    #e9ede9 10px
+  );
+}
+
+.sequence__cover-hint {
+  position: absolute;
+  left: 8px;
+  top: 7px;
+  font-size: 10px;
+  color: #8a938d;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.sequence__cutaway {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  border-left: 3px solid var(--blue);
   overflow: hidden;
 }
 
-.timeline__thumb img {
+.sequence__cutaway.is-selected {
+  box-shadow: inset 0 0 0 2px var(--ink);
+  z-index: 2;
+}
+
+/* Clipped by a Base Shot trimmed shorter than it: an ordinary edit, but the
+   operator should be able to see that not all of it will play. */
+.sequence__cutaway.is-clipped {
+  border-right: 3px dashed var(--coral);
+}
+
+.sequence__cutaway-body {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 7px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.sequence__cutaway-body:active { cursor: grabbing; }
+
+.sequence__cutaway-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.sequence__track {
+  position: relative;
+  height: 62px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  background: #eef1ee;
+}
+
+.sequence__shot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+
+.sequence__shot.is-selected {
+  box-shadow: inset 0 0 0 2px var(--ink);
+  z-index: 2;
+}
+
+.sequence__shot-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.sequence__shot-body:active { cursor: grabbing; }
+
+.sequence__shot-thumb {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 40px;
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--muted);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sequence__shot-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.timeline__body {
+.sequence__shot-text {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
-  flex: 1;
+  pointer-events: none;
 }
 
-.timeline__body strong {
+.sequence__shot-text strong {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sequence__shot-text small {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Same grab affordance as the Overlay handles in the per-clip editor. */
+.sequence__handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: ew-resize;
+  z-index: 3;
+}
+
+.sequence__handle::after {
+  content: '';
+  position: absolute;
+  top: 32%;
+  bottom: 32%;
+  left: 3px;
+  width: 2px;
+  border-radius: 2px;
+  background: rgba(11, 14, 12, 0.32);
+}
+
+.sequence__shot:hover .sequence__handle::after,
+.sequence__shot.is-selected .sequence__handle::after {
+  background: rgba(11, 14, 12, 0.62);
+}
+
+.sequence__handle--start { left: 0; }
+.sequence__handle--end { right: 0; }
+
+.sequence__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 10px;
+  width: 1px;
+  background: var(--coral);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.sequence__playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  border-left: 4.5px solid transparent;
+  border-right: 4.5px solid transparent;
+  border-top: 7px solid var(--coral);
+}
+
+.sequence__drop {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--coral);
+  z-index: 4;
+}
+
+/* --- The rough cut ----------------------------------------------------- */
+
+.preview {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  margin: 22px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+.preview__screen {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 4px;
+  background: var(--dark);
+  overflow: hidden;
+}
+
+.preview__placeholder { color: #4a5350; }
+
+/* Both elements are mounted so the next Shot can load while this one plays. */
+.preview__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+}
+
+.preview__video.is-active { opacity: 1; }
+
+/* Over the top, muted: the base element below still carries the sound. */
+.preview__video--cover { z-index: 2; }
+
+.preview__side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.preview__transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview__clock {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.preview__now {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+}
+
+.preview__now strong {
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
@@ -2940,15 +3219,96 @@ input[type='range']::-webkit-slider-thumb {
   text-overflow: ellipsis;
 }
 
-.timeline__body small {
-  color: var(--muted);
+.preview__now small,
+.preview__caveat {
   font-size: 11px;
+  color: var(--muted);
 }
 
-.timeline__actions {
+.preview__caveat {
+  margin: auto 0 0;
+  max-width: 44ch;
+  line-height: 1.5;
+}
+
+/* --- The selected Shot's controls -------------------------------------- */
+
+.shot-inspector {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+.shot-inspector__title {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.shot-inspector__title strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.shot-inspector__title small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.shot-inspector__field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.shot-inspector__field input {
+  width: 74px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.shot-inspector__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.undo-toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border-radius: 5px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 12px;
+}
+
+.undo-toast .text-button {
+  color: var(--paper);
+  border-color: rgba(247, 249, 247, 0.4);
+}
+
+.undo-toast .text-button:hover {
+  color: var(--acid);
+  border-color: var(--acid);
 }
 
 /* --- Asking for the finished video ------------------------------------ */
@@ -3033,17 +3393,22 @@ input[type='range']::-webkit-slider-thumb {
 
 /* Adding a Clip to the Sequence, from the grid. */
 
-.clip-card__add,
-.clip-card__placed {
+.clip-card__place {
+  display: block;
+  margin: 6px 0 0;
+}
+
+.clip-card__add {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   width: 100%;
-  margin: 6px 0 0;
   padding: 6px;
   border-radius: 4px;
   font-size: 12px;
+  /* Also the drag handle onto the timeline. */
+  touch-action: none;
 }
 
 .clip-card__add {
@@ -3064,6 +3429,34 @@ input[type='range']::-webkit-slider-thumb {
 }
 
 .clip-card__placed {
-  border: 1px solid transparent;
+  display: block;
+  margin: 4px 0 0;
+  text-align: center;
   color: var(--muted);
+  font-size: 10px;
+}
+
+/* A button that reads as a label: used where an icon alone would not say
+   enough but a filled button would shout. */
+.text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 160ms ease;
+}
+
+.text-button:hover:not(:disabled) { border-color: var(--ink); }
+
+.text-button:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
 }

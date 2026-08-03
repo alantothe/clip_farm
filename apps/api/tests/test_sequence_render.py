@@ -19,7 +19,12 @@ from app.routers import _helpers, batches as batches_router
 from app.database import Base
 from app.models import Batch, Project, SequenceRender
 from app.schemas import ShotCreate
-from app.services.media import MediaProcessingError, inspect_media, join_shots
+from app.services.media import (
+    MediaProcessingError,
+    inspect_media,
+    join_shots,
+    replace_audio,
+)
 
 
 needs_ffmpeg = pytest.mark.skipif(
@@ -326,3 +331,351 @@ def test_a_batch_name_becomes_a_safe_download_filename() -> None:
     assert batches_router._download_name("Monday pulls") == "Monday-pulls"
     assert batches_router._download_name("../../etc/passwd") == "etc-passwd"
     assert batches_router._download_name("///") == "clip-farm-sequence"
+
+
+def test_the_worker_renders_each_shots_own_span(tmp_path, monkeypatch) -> None:
+    """A Shot's Trim is what reaches render_vertical, not always its Clip's.
+
+    This is the seam ADR 0004 moves: the same Clip appears twice, once
+    following its Clip's Trim and once trimmed on the Timeline.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app import tasks
+    from app.models import Artifact, Shot
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'worker.db'}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"not really a video")
+    with factory() as session:
+        batch = Batch(name="Monday")
+        session.add(batch)
+        session.flush()
+        clip = Project(
+            batch_id=batch.id,
+            origin_kind="upload",
+            title="Clip",
+            status="ready",
+            trim_start_ms=1_000,
+            trim_end_ms=9_000,
+        )
+        session.add(clip)
+        session.flush()
+        session.add(
+            Artifact(
+                project_id=clip.id, kind="source", path=str(source), mime_type="video/mp4"
+            )
+        )
+        # Same Clip twice: the second one trimmed on the Timeline.
+        session.add(Shot(batch_id=batch.id, project_id=clip.id, position=0))
+        session.add(
+            Shot(
+                batch_id=batch.id,
+                project_id=clip.id,
+                position=1,
+                trim_start_ms=3_000,
+                trim_end_ms=4_500,
+            )
+        )
+        sequence_render = SequenceRender(batch_id=batch.id, shot_count=2)
+        session.add(sequence_render)
+        session.commit()
+        batch_id, render_id = batch.id, sequence_render.id
+
+    spans: list[tuple[int, int]] = []
+
+    def fake_render_vertical(**kwargs):
+        spans.append((kwargs["start_ms"], kwargs["end_ms"]))
+        Path(kwargs["output"]).write_bytes(b"rendered")
+
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+    monkeypatch.setattr(tasks, "settings", SimpleNamespace(batches_dir=tmp_path / "batches"))
+    monkeypatch.setattr(tasks, "render_vertical", fake_render_vertical)
+    monkeypatch.setattr(
+        tasks, "join_shots", lambda **kwargs: Path(kwargs["output"]).write_bytes(b"joined")
+    )
+    monkeypatch.setattr(
+        tasks, "inspect_media", lambda _path: {"width": 1080, "height": 1920, "duration_ms": 9_500}
+    )
+    monkeypatch.setattr(tasks, "sha256_file", lambda _path: "checksum")
+
+    # `render_sequence_task` is a huey task, so calling it would only enqueue.
+    tasks.render_sequence_task.call_local(batch_id, render_id)
+
+    assert spans == [(1_000, 9_000), (3_000, 4_500)]
+    with factory() as session:
+        assert session.get(SequenceRender, render_id).status == "complete"
+
+
+def test_a_cutaway_renders_as_three_stretches_with_the_base_audio(tmp_path, monkeypatch) -> None:
+    """A covered Shot flattens into base, cutaway, base — still a concatenation.
+
+    That is what keeps ADR 0003's join applying unchanged: nothing is
+    composited, and the video is never encoded twice.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app import tasks
+    from app.models import Artifact, Shot
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'cutaway.db'}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    base_source = tmp_path / "base.mp4"
+    cutaway_source = tmp_path / "cutaway.mp4"
+    for path in (base_source, cutaway_source):
+        path.write_bytes(b"not really a video")
+
+    with factory() as session:
+        batch = Batch(name="Monday")
+        session.add(batch)
+        session.flush()
+        clips = {}
+        for name, path in (("base", base_source), ("cover", cutaway_source)):
+            clip = Project(
+                batch_id=batch.id,
+                origin_kind="upload",
+                title=name,
+                status="ready",
+                trim_start_ms=1_000,
+                trim_end_ms=9_000,
+                captions_enabled=True,
+            )
+            session.add(clip)
+            session.flush()
+            session.add(
+                Artifact(project_id=clip.id, kind="source", path=str(path), mime_type="video/mp4")
+            )
+            clips[name] = clip
+        base_shot = Shot(batch_id=batch.id, project_id=clips["base"].id, position=0)
+        session.add(base_shot)
+        session.flush()
+        session.add(
+            Shot(
+                batch_id=batch.id,
+                project_id=clips["cover"].id,
+                parent_shot_id=base_shot.id,
+                offset_ms=3_000,
+                trim_start_ms=0,
+                trim_end_ms=2_000,
+            )
+        )
+        sequence_render = SequenceRender(batch_id=batch.id, shot_count=1)
+        session.add(sequence_render)
+        session.commit()
+        batch_id, render_id = batch.id, sequence_render.id
+
+    rendered: list[dict] = []
+    muxed: list[dict] = []
+
+    def fake_render_vertical(**kwargs):
+        rendered.append(kwargs)
+        Path(kwargs["output"]).write_bytes(b"rendered")
+
+    def fake_replace_audio(**kwargs):
+        muxed.append(kwargs)
+        Path(kwargs["output"]).write_bytes(b"muxed")
+
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+    monkeypatch.setattr(tasks, "settings", SimpleNamespace(batches_dir=tmp_path / "batches"))
+    monkeypatch.setattr(tasks, "render_vertical", fake_render_vertical)
+    monkeypatch.setattr(tasks, "replace_audio", fake_replace_audio)
+    monkeypatch.setattr(
+        tasks, "join_shots", lambda **kwargs: Path(kwargs["output"]).write_bytes(b"joined")
+    )
+    monkeypatch.setattr(
+        tasks, "inspect_media", lambda _path: {"width": 1080, "height": 1920, "duration_ms": 8_000}
+    )
+    monkeypatch.setattr(tasks, "sha256_file", lambda _path: "checksum")
+
+    tasks.render_sequence_task.call_local(batch_id, render_id)
+
+    # 1.0s–4.0s of the base, the cutaway's own 0–2.0s, then 6.0s–9.0s.
+    assert [(item["start_ms"], item["end_ms"]) for item in rendered] == [
+        (1_000, 4_000),
+        (0, 2_000),
+        (6_000, 9_000),
+    ]
+    # The cutaway's subtitles transcribe audio nobody hears under it.
+    assert [item["captions_enabled"] for item in rendered] == [True, False, True]
+    # Only the covered stretch swaps its audio, and it takes the base's.
+    assert len(muxed) == 1
+    assert muxed[0]["audio_source"] == base_source
+    assert (muxed[0]["audio_start_ms"], muxed[0]["audio_end_ms"]) == (4_000, 6_000)
+
+    with factory() as session:
+        assert session.get(SequenceRender, render_id).status == "complete"
+
+
+# --- covering a Shot, against real files ---------------------------------
+
+
+@needs_ffmpeg
+def test_replace_audio_keeps_the_cutaways_picture_and_the_bases_sound(tmp_path) -> None:
+    """The one new ffmpeg call a Cutaway adds (ADR 0005).
+
+    The cutaway is rendered with no audio stream at all, so any audio in the
+    output can only have come from the base — which is the property that
+    matters and the one a mocked test cannot check.
+    """
+    cutaway = make_shot_video(tmp_path / "cutaway.mp4", tone_hz=0, seconds=2.0, audio="none")
+    base = make_shot_video(tmp_path / "base.mp4", tone_hz=440, seconds=8.0)
+    output = tmp_path / "covered.mp4"
+
+    replace_audio(
+        video=cutaway,
+        audio_source=base,
+        audio_start_ms=3_000,
+        audio_end_ms=5_000,
+        output=output,
+    )
+
+    metadata = inspect_media(output)
+    assert metadata["has_audio"]
+    assert abs(metadata["duration_ms"] - 2_000) < 100
+    # Audio as long as the picture, so the join does not have to paper over it.
+    assert abs(audio_seconds(output) - metadata["duration_ms"] / 1000) < 0.05
+    # The picture was copied, not re-encoded: ADR 0003's "never twice" holds.
+    assert metadata["video_codec"] == inspect_media(cutaway)["video_codec"]
+
+
+@needs_ffmpeg
+def test_a_silent_base_leaves_the_covered_stretch_silent(tmp_path) -> None:
+    """Rather than failing. `normalize_for_join` generates the silence."""
+    cutaway = make_shot_video(tmp_path / "cutaway.mp4", tone_hz=660, seconds=1.0)
+    base = make_shot_video(tmp_path / "base.mp4", tone_hz=0, seconds=4.0, audio="none")
+    output = tmp_path / "covered.mp4"
+
+    replace_audio(
+        video=cutaway, audio_source=base, audio_start_ms=0, audio_end_ms=1_000, output=output
+    )
+
+    assert output.is_file()
+    assert abs(inspect_media(output)["duration_ms"] - 1_000) < 100
+
+
+@needs_ffmpeg
+def test_a_covered_stretch_joins_without_drifting(tmp_path) -> None:
+    """The whole point of flattening: a covered Shot is still just shots to join."""
+    covered = tmp_path / "covered.mp4"
+    replace_audio(
+        video=make_shot_video(tmp_path / "cover.mp4", tone_hz=0, seconds=1.0, audio="none"),
+        audio_source=make_shot_video(tmp_path / "src.mp4", tone_hz=440, seconds=6.0),
+        audio_start_ms=1_000,
+        audio_end_ms=2_000,
+        output=covered,
+    )
+    shots = [
+        make_shot_video(tmp_path / "before.mp4", tone_hz=440, seconds=1.0),
+        covered,
+        make_shot_video(tmp_path / "after.mp4", tone_hz=550, seconds=1.0),
+    ]
+    output = tmp_path / "sequence.mp4"
+
+    join_shots(shots=shots, output=output, temp_dir=tmp_path)
+
+    video_seconds = inspect_media(output)["duration_ms"] / 1000
+    assert 2.9 < video_seconds < 3.1
+    assert abs(audio_seconds(output) - video_seconds) < 0.04
+
+
+@needs_ffmpeg
+def test_exporting_a_covered_sequence_produces_one_playable_video(tmp_path) -> None:
+    """The whole path, against real files: render, cover, join, validate.
+
+    Everything else about Cutaways is checked with ffmpeg stubbed out, which
+    cannot catch a covered stretch that renders to something the join refuses
+    or that comes out the wrong length.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app import tasks
+    from app.models import Artifact, Shot
+
+    def landscape(path: Path, *, tone_hz: int, seconds: float) -> Path:
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error",
+             "-f", "lavfi", "-i", f"testsrc=size=1280x720:rate=30:duration={seconds}",
+             "-f", "lavfi", "-i",
+             f"sine=frequency={tone_hz}:sample_rate=48000:duration={seconds}",
+             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-b:a", "96k", "-ar", "48000", "-t", str(seconds), str(path)],
+            check=True,
+            capture_output=True,
+        )
+        return path
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'real.db'}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    sources = {
+        "base": landscape(tmp_path / "base-src.mp4", tone_hz=440, seconds=4.0),
+        "cover": landscape(tmp_path / "cover-src.mp4", tone_hz=880, seconds=2.0),
+    }
+
+    with factory() as session:
+        batch = Batch(name="Monday")
+        session.add(batch)
+        session.flush()
+        clips = {}
+        for name, source in sources.items():
+            clip = Project(
+                batch_id=batch.id,
+                origin_kind="upload",
+                title=name,
+                status="ready",
+                layout="fit_background",
+                trim_start_ms=0,
+                trim_end_ms=4_000 if name == "base" else 1_000,
+                duration_ms=4_000 if name == "base" else 2_000,
+                # Subtitles need a transcript this clip does not have.
+                captions_enabled=False,
+            )
+            session.add(clip)
+            session.flush()
+            session.add(
+                Artifact(
+                    project_id=clip.id, kind="source", path=str(source), mime_type="video/mp4"
+                )
+            )
+            clips[name] = clip
+        base_shot = Shot(batch_id=batch.id, project_id=clips["base"].id, position=0)
+        session.add(base_shot)
+        session.flush()
+        session.add(
+            Shot(
+                batch_id=batch.id,
+                project_id=clips["cover"].id,
+                parent_shot_id=base_shot.id,
+                offset_ms=1_000,
+            )
+        )
+        sequence_render = SequenceRender(batch_id=batch.id, shot_count=1)
+        session.add(sequence_render)
+        session.commit()
+        batch_id, render_id = batch.id, sequence_render.id
+
+    settings = SimpleNamespace(batches_dir=tmp_path / "batches")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(tasks, "SessionLocal", factory)
+        patch.setattr(tasks, "settings", settings)
+        tasks.render_sequence_task.call_local(batch_id, render_id)
+
+    with factory() as session:
+        finished = session.get(SequenceRender, render_id)
+        assert finished.status == "complete", finished.error_message
+
+    output = Path(finished.path)
+    metadata = inspect_media(output)
+    assert (metadata["width"], metadata["height"]) == (1080, 1920)
+    # Covering does not change how long the sequence runs: 1s base, 1s cover,
+    # 2s base.
+    assert abs(metadata["duration_ms"] - 4_000) < 150
+    assert abs(audio_seconds(output) - metadata["duration_ms"] / 1000) < 0.05
+    # The per-segment renders were only ever inputs to the join.
+    assert sorted(item.name for item in output.parent.iterdir()) == ["clip-farm-sequence.mp4"]

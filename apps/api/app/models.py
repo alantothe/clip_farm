@@ -63,9 +63,14 @@ class Batch(Base):
 class Shot(Base):
     """One Clip's placement in a Batch's Sequence.
 
-    The span that plays is the Clip's own Trim, so a Clip earns at most one
-    Shot: a second placement would play identically twice. Per-Shot trim is the
-    change that would make repeats useful, and this row is where it would go.
+    A Shot carries its own Trim, nullable, which overrides its Clip's. That is
+    what lets one Clip earn several Shots: the same source at two different
+    in/out points is an ordinary edit (ADR 0004).
+
+    A Shot with a `parent_shot_id` is a Cutaway: it covers that Shot for a span
+    starting `offset_ms` into it, showing its picture while the covered Shot's
+    audio keeps playing (ADR 0005). A Shot without one is in the Sequence, and
+    `position` is where.
 
     Positions are renumbered to 0..n-1 whenever the Sequence is edited. A gap
     left by deleting a Clip elsewhere is harmless — order is what is read, not
@@ -73,7 +78,6 @@ class Shot(Base):
     """
 
     __tablename__ = "shots"
-    __table_args__ = (UniqueConstraint("project_id", name="uq_shots_project"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     batch_id: Mapped[str] = mapped_column(
@@ -83,10 +87,49 @@ class Shot(Base):
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # Null is the Shot following its Clip's Trim, not an absent value.
+    trim_start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    trim_end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Set on a Cutaway: the Shot it covers, and how far into that Shot it lands.
+    parent_shot_id: Mapped[str | None] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    offset_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     batch: Mapped[Batch] = relationship(back_populates="shots")
-    clip: Mapped["Project"] = relationship(back_populates="shot")
+    clip: Mapped["Project"] = relationship(back_populates="shots")
+    # Removing a Base Shot takes the Cutaways covering it with it.
+    cutaways: Mapped[list["Shot"]] = relationship(
+        back_populates="base_shot",
+        cascade="all, delete-orphan",
+        order_by="Shot.offset_ms",
+        remote_side=None,
+    )
+    base_shot: Mapped["Shot | None"] = relationship(
+        back_populates="cutaways", remote_side="Shot.id"
+    )
+
+    @property
+    def is_cutaway(self) -> bool:
+        return self.parent_shot_id is not None
+
+    def span(self) -> tuple[int, int | None]:
+        """The span this Shot plays: its own Trim, falling back to its Clip's.
+
+        The one place that rule lives, so the API and the worker cannot drift.
+        A null override means the Shot follows its Clip, so editing the Clip's
+        Trim moves it; a set one means it was trimmed on the Timeline, and the
+        Clip no longer affects it.
+
+        The end can still be None when a Clip never finished importing and has
+        neither a Trim end nor a known duration. Callers decide what to do.
+        """
+        clip = self.clip
+        start = self.trim_start_ms if self.trim_start_ms is not None else clip.trim_start_ms
+        if self.trim_end_ms is not None:
+            return start, self.trim_end_ms
+        return start, clip.trim_end_ms or clip.duration_ms
 
 
 class SequenceRender(Base):
@@ -175,9 +218,9 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     batch: Mapped["Batch | None"] = relationship(back_populates="clips")
-    # Deleting a Clip takes its Shot out of the Sequence with it.
-    shot: Mapped["Shot | None"] = relationship(
-        back_populates="clip", cascade="all, delete-orphan", uselist=False
+    # Deleting a Clip takes its Shots out of the Sequence with it.
+    shots: Mapped[list["Shot"]] = relationship(
+        back_populates="clip", cascade="all, delete-orphan"
     )
 
 
