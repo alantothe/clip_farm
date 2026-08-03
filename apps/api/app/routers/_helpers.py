@@ -8,7 +8,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
-from app.models import Batch, ImageOverlay, Project, Render, SequenceRender, Shot, Title
+from app.models import (
+    Batch,
+    BatchMedia,
+    ImageOverlay,
+    Project,
+    Render,
+    SequenceRender,
+    Shot,
+    StoredImage,
+    Title,
+)
 from app.schemas import (
     BatchOut,
     BatchSummaryOut,
@@ -18,6 +28,7 @@ from app.schemas import (
     SequenceRenderOut,
     ShotOut,
     TitleOut,
+    BatchMediaOut,
 )
 
 
@@ -108,6 +119,17 @@ def batch_titles(session: Session, batch_id: str) -> list[Title]:
     )
 
 
+def batch_media(session: Session, batch_id: str) -> list[BatchMedia]:
+    """Every Sequence-level still image, in draw order."""
+    return list(
+        session.scalars(
+            select(BatchMedia)
+            .where(BatchMedia.batch_id == batch_id)
+            .order_by(BatchMedia.start_ms, BatchMedia.created_at)
+        ).all()
+    )
+
+
 def renumber_shots(shots: list[Shot]) -> None:
     """Close any gaps so positions read 0..n-1 after an edit."""
     for position, shot in enumerate(shots):
@@ -143,6 +165,11 @@ def serialize_batch(session: Session, batch: Batch) -> BatchOut:
     output.titles = [
         TitleOut.model_validate(title) for title in batch_titles(session, batch.id)
     ]
+    output.media = []
+    for item in batch_media(session, batch.id):
+        serialized = BatchMediaOut.model_validate(item)
+        serialized.url = f"{settings.api_prefix}/batches/{batch.id}/media/{item.id}/file"
+        output.media.append(serialized)
     newest = latest_sequence_render(batch)
     output.sequence_render = serialize_sequence_render(newest) if newest else None
     return output
@@ -180,6 +207,13 @@ def image_overlay_or_404(session: Session, project_id: str, overlay_id: str) -> 
     if not overlay or overlay.project_id != project_id:
         raise HTTPException(status_code=404, detail="Image overlay not found")
     return overlay
+
+
+def stored_image_or_404(session: Session, image_id: str) -> StoredImage:
+    image = session.get(StoredImage, image_id)
+    if not image:
+        raise HTTPException(status_code=404, detail="Stored image not found")
+    return image
 
 
 def ensure_project_can_be_deleted(project: Project) -> None:

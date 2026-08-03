@@ -8,6 +8,7 @@ import {
   ChevronsRight,
   Crop,
   Frame,
+  ImagePlus,
   Layers,
   Maximize,
   MoreHorizontal,
@@ -27,6 +28,8 @@ import { formatTime, formatTimecode } from '../../lib/format'
 import { artifact } from '../../lib/project'
 import type {
   FontCatalog,
+  BatchMedia,
+  BatchMediaPatch,
   Format,
   Project,
   Cutaway,
@@ -36,6 +39,7 @@ import type {
   TitlePatch,
 } from '../../types'
 import { ScrubBar } from './ScrubBar'
+import { MediaStage } from './MediaStage'
 import { TitleStage } from './TitleStage'
 import { usePlayerKeys } from './usePlayerKeys'
 import type { SequencePlayer } from './useSequencePlayer'
@@ -353,13 +357,17 @@ export function Player({
   player,
   format,
   titles = [],
+  media = [],
   fontCatalog = null,
   selectedTitleId = null,
+  selectedMediaId = null,
   selectedShotId = null,
   titlePreview = null,
   framingPreview = null,
   onSelectTitle,
   onEditTitle,
+  onSelectMedia,
+  onEditMedia,
   onPreviewFraming,
   onCommitFraming,
   onTrimToPlayhead,
@@ -367,13 +375,18 @@ export function Player({
   exportControl = null,
   onAddText,
   canAddText = false,
+  onAddMedia,
+  canAddMedia = false,
 }: {
   player: SequencePlayer
   format: Format
   /** The Batch's Titles, timed against the Sequence like the playhead itself. */
   titles?: Title[]
+  /** Still images timed against the assembled Sequence. */
+  media?: BatchMedia[]
   fontCatalog?: FontCatalog | null
   selectedTitleId?: string | null
+  selectedMediaId?: string | null
   selectedShotId?: string | null
   /** An in-flight inspector edit, drawn but not yet sent. */
   titlePreview?: ({ titleId: string } & TitlePatch) | null
@@ -381,6 +394,8 @@ export function Player({
   framingPreview?: ({ shotId: string } & ShotFraming) | null
   onSelectTitle?: (titleId: string) => void
   onEditTitle?: (title: Title, patch: TitlePatch) => void
+  onSelectMedia?: (mediaId: string) => void
+  onEditMedia?: (media: BatchMedia, patch: BatchMediaPatch) => void
   onPreviewFraming?: (framing: ShotFraming | null) => void
   onCommitFraming?: (framing: ShotFraming) => void
   /** Set the selected Shot's Trim to the playhead. Absent when nothing can. */
@@ -391,6 +406,9 @@ export function Player({
   /** Add a full-length text layer without putting a large action on the Timeline. */
   onAddText?: () => void
   canAddText?: boolean
+  /** Open the full-length Sequence image uploader. */
+  onAddMedia?: () => void
+  canAddMedia?: boolean
 }) {
   const [view, setView] = useState<View>('format')
   const [guides, setGuides] = useState(false)
@@ -405,6 +423,9 @@ export function Player({
     : canAddText
       ? 'Add text for the full video'
       : 'All three text layers are already occupied'
+  const addMediaTooltip = dead
+    ? 'Add a video before adding media'
+    : 'Add an image for the full video'
 
   /**
    * Fullscreen the stage, not the video.
@@ -618,6 +639,17 @@ export function Player({
                 </div>
               ))}
 
+          {framed && (
+            <MediaStage
+              media={media}
+              playheadMs={player.playheadMs}
+              selectedMediaId={selectedMediaId}
+              onSelect={(mediaId) => onSelectMedia?.(mediaId)}
+              onEdit={(item, patch) => onEditMedia?.(item, patch)}
+              editable={Boolean(onEditMedia)}
+            />
+          )}
+
           {/*
            * Subtitles, and only where the export burns them.
            *
@@ -692,22 +724,44 @@ export function Player({
       />
 
       <div className="player__transport">
-        {onAddText && (
-          <span className="player__text-action">
-            <button
-              className="player__primary-action player__primary-action--text"
-              type="button"
-              onClick={onAddText}
-              disabled={dead || !canAddText}
-              aria-label="Add text"
-              aria-describedby="add-text-tooltip"
-              title={addTextTooltip}
-            >
-              <Type size={16} />
-            </button>
-            <span className="control-tooltip" id="add-text-tooltip" role="tooltip">
-              {addTextTooltip}
-            </span>
+        {(onAddText || onAddMedia) && (
+          <span className="player__layer-actions">
+            {onAddText && (
+              <span className="player__layer-action">
+                <button
+                  className="player__primary-action player__primary-action--text"
+                  type="button"
+                  onClick={onAddText}
+                  disabled={dead || !canAddText}
+                  aria-label="Add text"
+                  aria-describedby="add-text-tooltip"
+                  title={addTextTooltip}
+                >
+                  <Type size={16} />
+                </button>
+                <span className="control-tooltip" id="add-text-tooltip" role="tooltip">
+                  {addTextTooltip}
+                </span>
+              </span>
+            )}
+            {onAddMedia && (
+              <span className="player__layer-action">
+                <button
+                  className="player__primary-action player__primary-action--media"
+                  type="button"
+                  onClick={onAddMedia}
+                  disabled={dead || !canAddMedia}
+                  aria-label="Add media"
+                  aria-describedby="add-media-tooltip"
+                  title={addMediaTooltip}
+                >
+                  <ImagePlus size={16} />
+                </button>
+                <span className="control-tooltip" id="add-media-tooltip" role="tooltip">
+                  {addMediaTooltip}
+                </span>
+              </span>
+            )}
           </span>
         )}
 

@@ -39,6 +39,47 @@ export interface ImageOverlay {
   url: string
 }
 
+/** One reusable image in the operator's global Storage. */
+export interface StoredImage {
+  id: string
+  name: string
+  mime_type: string
+  size_bytes: number
+  created_at: string
+  updated_at: string
+  url: string
+}
+
+/** A still image timed against the assembled Batch Sequence. */
+export interface BatchMedia {
+  id: string
+  batch_id: string
+  name: string
+  start_ms: number
+  end_ms: number
+  center_x: number
+  center_y: number
+  width_percent: number
+  rotation_deg: number
+  opacity: number
+  mime_type: string
+  size_bytes: number
+  url: string
+}
+
+export type BatchMediaPatch = Partial<
+  Pick<
+    BatchMedia,
+    | 'start_ms'
+    | 'end_ms'
+    | 'center_x'
+    | 'center_y'
+    | 'width_percent'
+    | 'rotation_deg'
+    | 'opacity'
+  >
+>
+
 export interface Render {
   id: string
   status: string
@@ -288,6 +329,8 @@ export interface Batch {
   cutaways: Cutaway[]
   /** Timed against the Sequence, and owned by the Batch rather than a Clip. */
   titles: Title[]
+  /** Still images timed against the Sequence rather than any one Clip. */
+  media: BatchMedia[]
   sequence_render: SequenceRender | null
 }
 

@@ -11,6 +11,7 @@ import type { DeleteIntent } from '../../components/DeleteDialog'
 import { ProjectRail } from '../../components/ProjectRail'
 import { ClipEditor } from '../editor/ClipEditor'
 import { BatchRail } from './BatchRail'
+import { AddMediaDialog } from './AddMediaDialog'
 import { ClipDropZone } from './ClipDropZone'
 import { ClipGrid } from './ClipGrid'
 import { ExportPanel } from './ExportPanel'
@@ -23,6 +24,8 @@ import { hasTitleSlot, type TitleSpan } from './TitleTrack'
 import { useSequencePlayer } from './useSequencePlayer'
 import type {
   Batch,
+  BatchMedia,
+  BatchMediaPatch,
   BatchSummary,
   Cutaway,
   Format,
@@ -31,6 +34,7 @@ import type {
   Shot,
   ShotFraming,
   ShotTrim,
+  StoredImage,
   Title,
   TitlePatch,
   TitleStyle,
@@ -47,6 +51,11 @@ type TitleEdit =
   | { kind: 'add' }
   | { kind: 'patch'; titleId: string; patch: TitlePatch }
   | { kind: 'remove'; titleId: string }
+
+type MediaEdit =
+  | { kind: 'add'; image: StoredImage }
+  | { kind: 'patch'; mediaId: string; patch: BatchMediaPatch }
+  | { kind: 'remove'; mediaId: string }
 
 /** Saving the selected Title's look under a name, or maintaining one saved. */
 type StyleAction =
@@ -266,6 +275,8 @@ export function BatchProcessPage() {
   // A Title's selection is its own: a Title is not a Shot, and selecting one
   // should not make the Shot inspector's buttons act on something else.
   const [selectedTitleId, setSelectedTitleId] = useState<string | null>(null)
+  const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null)
+  const [addMediaOpen, setAddMediaOpen] = useState(false)
   // An inspector control still under the operator's finger. Local only, so the
   // stage follows a slider without a request per pixel.
   const [titlePreview, setTitlePreview] = useState<({ titleId: string } & TitlePatch) | null>(
@@ -315,6 +326,7 @@ export function BatchProcessPage() {
   const shots = batch?.shots ?? []
   const cutaways = batch?.cutaways ?? []
   const titles = batch?.titles ?? []
+  const media = batch?.media ?? []
   const selectedTitle = titles.find((title) => title.id === selectedTitleId) ?? null
   // The playhead is shared: the Player and the Timeline both drive it, so the
   // hook lives here rather than inside either of them.
@@ -492,6 +504,51 @@ export function BatchProcessPage() {
     },
   })
 
+  const mediaMutation = useMutation({
+    mutationFn: (edit: MediaEdit) => {
+      if (edit.kind === 'add') {
+        return api.addStoredBatchMedia(batchId!, edit.image.id, player.totalMs)
+      }
+      if (edit.kind === 'remove') return api.removeBatchMedia(batchId!, edit.mediaId)
+      return api.updateBatchMedia(batchId!, edit.mediaId, edit.patch)
+    },
+    onMutate: async (edit) => {
+      await queryClient.cancelQueries({ queryKey: batchKey(batchId!) })
+      const previous = queryClient.getQueryData<Batch>(batchKey(batchId!))
+      if (previous && edit.kind !== 'add') {
+        queryClient.setQueryData<Batch>(batchKey(batchId!), {
+          ...previous,
+          media:
+            edit.kind === 'remove'
+              ? previous.media.filter((item) => item.id !== edit.mediaId)
+              : previous.media.map((item) =>
+                  item.id === edit.mediaId ? { ...item, ...edit.patch } : item,
+                ),
+        })
+      }
+      return { previous }
+    },
+    onError: (_error, _edit, context) => {
+      if (context?.previous) queryClient.setQueryData(batchKey(batchId!), context.previous)
+    },
+    onSuccess: (updated, edit, context) => {
+      queryClient.setQueryData(batchKey(updated.id), updated)
+      if (edit.kind === 'add') {
+        const previousIds = new Set(context?.previous?.media.map((item) => item.id) ?? [])
+        const added = updated.media.find((item) => !previousIds.has(item.id))
+        setAddMediaOpen(false)
+        if (added) {
+          setSelectedMediaId(added.id)
+          setSelectedShotId(null)
+          setSelectedTitleId(null)
+          setTitlePreview(null)
+        }
+      } else if (edit.kind === 'remove') {
+        setSelectedMediaId((current) => (current === edit.mediaId ? null : current))
+      }
+    },
+  })
+
   const styleMutation = useMutation<TitleStyle | { deleted: number }, Error, StyleAction>({
     mutationFn: (action) => {
       if (action.kind === 'save') return api.createTitleStyle({ name: action.name, ...action.look })
@@ -565,6 +622,8 @@ export function BatchProcessPage() {
     setRejected([])
     setSelectedShotId(null)
     setSelectedTitleId(null)
+    setSelectedMediaId(null)
+    setAddMediaOpen(false)
     setTitlePreview(null)
     setFramingPreview(null)
     setUndoRemoval(null)
@@ -578,6 +637,7 @@ export function BatchProcessPage() {
     setFramingPreview(null)
     if (!shotId) return
     setSelectedTitleId(null)
+    setSelectedMediaId(null)
   }
 
   function previewSelectedFraming(framing: ShotFraming | null) {
@@ -609,8 +669,21 @@ export function BatchProcessPage() {
     setTitlePreview(null)
     if (!titleId) return
     setSelectedShotId(null)
+    setSelectedMediaId(null)
     const title = titles.find((item) => item.id === titleId)
     if (title && !titleIsVisible(title, playheadMs)) player.seek(title.start_ms)
+  }
+
+  function selectMedia(mediaId: string | null) {
+    setSelectedMediaId(mediaId)
+    if (!mediaId) return
+    setSelectedShotId(null)
+    setSelectedTitleId(null)
+    setTitlePreview(null)
+    const item = media.find((entry) => entry.id === mediaId)
+    if (item && (playheadMs < item.start_ms || playheadMs >= item.end_ms)) {
+      player.seek(item.start_ms)
+    }
   }
 
   // With no batch in the URL, open the most recent one rather than a dead end.
@@ -772,14 +845,20 @@ export function BatchProcessPage() {
                 player={player}
                 format={batch.format}
                 titles={titles}
+                media={media}
                 fontCatalog={fontsQuery.data ?? null}
                 selectedTitleId={selectedTitleId}
+                selectedMediaId={selectedMediaId}
                 selectedShotId={selectedShotId}
                 titlePreview={titlePreview}
                 framingPreview={framingPreview}
                 onSelectTitle={selectTitle}
                 onEditTitle={(title, patch) =>
                   titleMutation.mutate({ kind: 'patch', titleId: title.id, patch })
+                }
+                onSelectMedia={selectMedia}
+                onEditMedia={(item, patch) =>
+                  mediaMutation.mutate({ kind: 'patch', mediaId: item.id, patch })
                 }
                 onPreviewFraming={previewSelectedFraming}
                 onCommitFraming={commitSelectedFraming}
@@ -798,6 +877,11 @@ export function BatchProcessPage() {
                 canAddText={
                   player.totalMs > 0 && hasTitleSlot(titles, 0, player.totalMs)
                 }
+                onAddMedia={() => {
+                  mediaMutation.reset()
+                  setAddMediaOpen(true)
+                }}
+                canAddMedia={player.totalMs > 0}
               />
 
               {/*
@@ -930,23 +1014,35 @@ export function BatchProcessPage() {
             {sequenceMutation.error && (
               <div className="toast-error" role="alert">{sequenceMutation.error.message}</div>
             )}
+            {mediaMutation.error && !addMediaOpen && (
+              <div className="toast-error" role="alert">{mediaMutation.error.message}</div>
+            )}
             <Timeline
               shots={shots}
               cutaways={cutaways}
               clips={clips}
               titles={titles}
+              media={media}
               selectedShotId={selectedShotId}
               selectedTitleId={selectedTitleId}
+              selectedMediaId={selectedMediaId}
               placingClipId={placingClipId}
               playheadMs={playheadMs}
               onScrub={setPlayheadMs}
               onSelect={selectShot}
               onSelectTitle={selectTitle}
+              onSelectMedia={selectMedia}
               onMoveTitle={(title, span) =>
                 titleMutation.mutate({ kind: 'patch', titleId: title.id, patch: span })
               }
               onTrimTitle={(title, span: TitleSpan) =>
                 titleMutation.mutate({ kind: 'patch', titleId: title.id, patch: span })
+              }
+              onChangeMedia={(item: BatchMedia, patch: BatchMediaPatch) =>
+                mediaMutation.mutate({ kind: 'patch', mediaId: item.id, patch })
+              }
+              onRemoveMedia={(item: BatchMedia) =>
+                mediaMutation.mutate({ kind: 'remove', mediaId: item.id })
               }
               onMove={(shot, position) =>
                 sequenceMutation.mutate({ kind: 'move', shotId: shot.id, position })
@@ -973,7 +1069,7 @@ export function BatchProcessPage() {
                 sequenceMutation.mutate({ kind: 'cover', clipId, baseShotId, offsetMs })
               }
               onPlaceEnd={() => setPlacingClipId(null)}
-              busy={sequenceMutation.isPending}
+              busy={sequenceMutation.isPending || mediaMutation.isPending}
             />
           </div>
         </main>
@@ -1005,6 +1101,17 @@ export function BatchProcessPage() {
             setNewBatchOpen(false)
           }}
           onCreate={(created) => createMutation.mutate(created)}
+        />
+      )}
+      {addMediaOpen && (
+        <AddMediaDialog
+          pending={mediaMutation.isPending}
+          error={mediaMutation.error}
+          onCancel={() => {
+            mediaMutation.reset()
+            setAddMediaOpen(false)
+          }}
+          onChoose={(image) => mediaMutation.mutate({ kind: 'add', image })}
         />
       )}
     </>

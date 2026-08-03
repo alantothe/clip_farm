@@ -97,3 +97,41 @@ def test_fitted_video_zoom_and_position_are_built_into_the_filter(tmp_path, monk
     filters = command[command.index("-filter_complex") + 1]
     assert "[fg]scale=1620:2880" in filters
     assert "overlay=x='(W-w)*0.2000':y='(H-h)*0.8000'" in filters
+
+
+def test_sequence_image_uses_the_render_segments_local_clock(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    image = tmp_path / "brand.png"
+    image.write_bytes(b"image")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(media, "run_command", lambda command: commands.append(command))
+    overlay = SimpleNamespace(
+        path=str(image),
+        width_percent=65,
+        center_x=50,
+        center_y=50,
+        rotation_deg=0,
+        opacity=1,
+    )
+
+    media.render_vertical(
+        source=source,
+        output=tmp_path / "output.mp4",
+        temp_dir=tmp_path,
+        layout="fit_background",
+        start_ms=2000,
+        end_ms=4000,
+        crop_center_x=50,
+        caption_segments=[],
+        captions_enabled=False,
+        caption_style="bold",
+        caption_position="bottom",
+        image_overlays=[],
+        sequence_images=[(overlay, 500, 1500)],
+    )
+
+    command = commands[0]
+    assert command[command.index("-i", command.index("-i") + 1) + 1] == str(image)
+    filters = command[command.index("-filter_complex") + 1]
+    assert "enable='between(t,0.500,1.500)'" in filters

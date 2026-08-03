@@ -469,6 +469,7 @@ def render_vertical(
     caption_style: str,
     caption_position: str,
     image_overlays: list,
+    sequence_images: list[tuple] | None = None,
     titles: list[tuple] | None = None,
     progress: Callable[[int], None] | None = None,
 ) -> None:
@@ -512,31 +513,42 @@ def render_vertical(
         str(output),
     ]
 
-    active_overlays = [
-        overlay
-        for overlay in image_overlays
-        if overlay.end_ms > start_ms
-        and overlay.start_ms < end_ms
-        and Path(overlay.artifact.path).is_file()
-    ]
+    # Clip overlays use Source Video time; Sequence images have already been
+    # sliced and rebased to this segment, just like Titles. Normalize both to
+    # local milliseconds before building one ffmpeg overlay chain.
+    active_overlays: list[tuple[object, Path, int, int]] = []
+    for overlay in image_overlays:
+        path = Path(overlay.artifact.path)
+        if overlay.end_ms > start_ms and overlay.start_ms < end_ms and path.is_file():
+            active_overlays.append(
+                (
+                    overlay,
+                    path,
+                    max(0, overlay.start_ms - start_ms),
+                    min(end_ms, overlay.end_ms) - start_ms,
+                )
+            )
+    for overlay, local_start_ms, local_end_ms in sequence_images or []:
+        path = Path(overlay.path)
+        if local_end_ms > local_start_ms and path.is_file():
+            active_overlays.append((overlay, path, local_start_ms, local_end_ms))
 
     def add_overlay_inputs(command: list[str]) -> None:
-        for overlay in active_overlays:
-            command.extend(["-loop", "1", "-i", str(overlay.artifact.path)])
+        for _overlay, path, _starts_at, _ends_at in active_overlays:
+            command.extend(["-loop", "1", "-i", str(path)])
 
     def add_overlay_filters(
         filters: list[str], base_label: str, first_input: int
     ) -> str:
         current = base_label
-        for sequence, overlay in enumerate(active_overlays):
+        for sequence, (overlay, _path, local_start_ms, local_end_ms) in enumerate(active_overlays):
             image_label = f"image{sequence}"
             output_label = f"overlay{sequence}"
             width = max(2, round(1080 * overlay.width_percent / 100))
             if width % 2:
                 width += 1
-            starts_at = max(0, overlay.start_ms - start_ms) / 1000
-            ends_at = min(end_ms, overlay.end_ms) - start_ms
-            ends_at /= 1000
+            starts_at = local_start_ms / 1000
+            ends_at = local_end_ms / 1000
             x = f"W*{overlay.center_x / 100:.4f}-w/2"
             y = f"H*{overlay.center_y / 100:.4f}-h/2"
             filters.append(

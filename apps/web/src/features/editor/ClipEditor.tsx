@@ -36,12 +36,13 @@ import {
   X,
 } from 'lucide-react'
 import { api } from '../../api'
+import { ImagePickerDialog } from '../../components/ImagePickerDialog'
 import { JobBanner } from '../../components/JobBanner'
 import { Segmented } from '../../components/Segmented'
 import { Status } from '../../components/Status'
 import { formatBytes, formatTime } from '../../lib/format'
 import { artifact } from '../../lib/project'
-import type { CaptionPosition, CaptionSegment, CaptionStyle, ImageOverlay, Layout, Project, ProjectSettings } from '../../types'
+import type { CaptionPosition, CaptionSegment, CaptionStyle, ImageOverlay, Layout, Project, ProjectSettings, StoredImage } from '../../types'
 
 function getSettings(project: Project): ProjectSettings {
   return {
@@ -85,8 +86,8 @@ function VideoStage({
   selectedOverlayId,
   onSelectOverlay,
   onChangeOverlay,
-  onUploadImage,
-  uploadingImage,
+  onAddImage,
+  addingImage,
 }: {
   project: Project
   settings: ProjectSettings
@@ -98,8 +99,8 @@ function VideoStage({
   selectedOverlayId: string | null
   onSelectOverlay: (id: string) => void
   onChangeOverlay: (id: string, update: Partial<ImageOverlay>) => void
-  onUploadImage: (file: File, startMs: number) => void
-  uploadingImage: boolean
+  onAddImage: (startMs: number) => void
+  addingImage: boolean
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
@@ -299,20 +300,15 @@ function VideoStage({
             <strong>Mini timeline</strong>
             <span>{formatTime(timeMs)} / {formatTime(duration)}</span>
           </div>
-          <label className={`add-image-button ${uploadingImage ? 'is-busy' : ''}`}>
-            {uploadingImage ? <LoaderCircle className="spin" size={15} /> : <ImagePlus size={15} />}
-            {uploadingImage ? 'Adding…' : 'Add image here'}
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              disabled={uploadingImage || previewMode === 'output'}
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file) onUploadImage(file, timeMs)
-                event.target.value = ''
-              }}
-            />
-          </label>
+          <button
+            className={`add-image-button ${addingImage ? 'is-busy' : ''}`}
+            type="button"
+            disabled={addingImage || previewMode === 'output'}
+            onClick={() => onAddImage(timeMs)}
+          >
+            {addingImage ? <LoaderCircle className="spin" size={15} /> : <ImagePlus size={15} />}
+            {addingImage ? 'Adding…' : 'Add image here'}
+          </button>
         </div>
         <div className="edit-timeline__ruler" aria-hidden="true">
           {[0, 25, 50, 75, 100].map((percent) => (
@@ -862,6 +858,7 @@ export function ClipEditor({ clip: project, rail, collectionKey, ownRender = tru
   const [previewMode, setPreviewMode] = useState<'source' | 'output'>('source')
   const [jobId, setJobId] = useState<string | null>(null)
   const [shareToFeed, setShareToFeed] = useState(true)
+  const [imagePickerStartMs, setImagePickerStartMs] = useState<number | null>(null)
 
   const connectionsQuery = useQuery({
     queryKey: ['platform-connections'],
@@ -875,6 +872,7 @@ export function ClipEditor({ clip: project, rail, collectionKey, ownRender = tru
     setCaptions(project.captions)
     setSocialCaption(project.social_caption ?? project.source_caption ?? '')
     setImageOverlays(project.image_overlays)
+    setImagePickerStartMs(null)
     setSelectedOverlayId((current) => project.image_overlays.some((overlay) => overlay.id === current)
       ? current
       : null)
@@ -915,11 +913,13 @@ export function ClipEditor({ clip: project, rail, collectionKey, ownRender = tru
     },
     onSuccess: (job) => setJobId(job.id),
   })
-  const uploadImageMutation = useMutation({
-    mutationFn: ({ file, startMs }: { file: File; startMs: number }) => api.uploadImageOverlay(project.id, file, startMs),
+  const addImageMutation = useMutation({
+    mutationFn: ({ image, startMs }: { image: StoredImage; startMs: number }) =>
+      api.addStoredImageOverlay(project.id, image.id, startMs),
     onSuccess: (overlay) => {
       setImageOverlays((current) => [...current, overlay])
       setSelectedOverlayId(overlay.id)
+      setImagePickerStartMs(null)
       void queryClient.invalidateQueries({ queryKey: collectionKey })
     },
   })
@@ -1017,8 +1017,11 @@ export function ClipEditor({ clip: project, rail, collectionKey, ownRender = tru
               onChangeOverlay={(id, update) => setImageOverlays((current) => current.map((overlay) => (
                 overlay.id === id ? { ...overlay, ...update } : overlay
               )))}
-              onUploadImage={(file, startMs) => uploadImageMutation.mutate({ file, startMs })}
-              uploadingImage={uploadImageMutation.isPending}
+              onAddImage={(startMs) => {
+                addImageMutation.reset()
+                setImagePickerStartMs(startMs)
+              }}
+              addingImage={addImageMutation.isPending}
             />
             <EditorPanel
               project={project}
@@ -1049,10 +1052,28 @@ export function ClipEditor({ clip: project, rail, collectionKey, ownRender = tru
         {jobQuery.data && <JobBanner job={jobQuery.data} />}
         {renderMutation.error && <div className="toast-error">{renderMutation.error.message}</div>}
         {publishMutation.error && <div className="toast-error">{publishMutation.error.message}</div>}
-        {uploadImageMutation.error && <div className="toast-error">{uploadImageMutation.error.message}</div>}
+        {addImageMutation.error && imagePickerStartMs === null && <div className="toast-error">{addImageMutation.error.message}</div>}
         {deleteImageMutation.error && <div className="toast-error">{deleteImageMutation.error.message}</div>}
         {rewriteCaptionMutation.error && <div className="toast-error">{rewriteCaptionMutation.error.message}</div>}
       </main>
+      {imagePickerStartMs !== null && (
+        <ImagePickerDialog
+          eyebrow="Clip overlay"
+          title="Add an Overlay"
+          description="Upload a new image or reuse one from Storage. It will start at the current playhead."
+          confirmLabel="Add to Clip"
+          pendingLabel="Adding Overlay…"
+          pending={addImageMutation.isPending}
+          error={addImageMutation.error}
+          onCancel={() => {
+            addImageMutation.reset()
+            setImagePickerStartMs(null)
+          }}
+          onChoose={(image) =>
+            addImageMutation.mutate({ image, startMs: imagePickerStartMs })
+          }
+        />
+      )}
     </div>
   )
 }

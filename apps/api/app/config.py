@@ -73,6 +73,11 @@ class Settings(BaseSettings):
         return self.data_dir / "batches"
 
     @property
+    def storage_dir(self) -> Path:
+        """Images kept for reuse across every Clip and Batch."""
+        return self.data_dir / "storage" / "images"
+
+    @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
@@ -102,6 +107,7 @@ class Settings(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.batches_dir.mkdir(parents=True, exist_ok=True)
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

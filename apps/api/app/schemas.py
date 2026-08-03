@@ -20,6 +20,28 @@ class DeletionOut(BaseModel):
     deleted: int
 
 
+class StoredImageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    mime_type: str
+    size_bytes: int
+    created_at: datetime
+    updated_at: datetime
+    url: str = ""
+
+
+class OverlayFromStorageCreate(BaseModel):
+    storage_image_id: str
+    start_ms: int = Field(default=0, ge=0)
+
+
+class BatchMediaFromStorageCreate(BaseModel):
+    storage_image_id: str
+    end_ms: int | None = Field(default=None, gt=0)
+
+
 class BatchCreate(BaseModel):
     name: str = Field(default="Untitled batch", max_length=120)
     # The Format is fixed at creation and never edited, so it is accepted here
@@ -276,6 +298,42 @@ class TitleOut(TitleLookOut):
     end_ms: int
     #: Where this Title's look came from, for its label. Not a live link.
     style_id: str | None = None
+
+
+class BatchMediaUpdate(BaseModel):
+    """Retime or place a still image over the finished Sequence."""
+
+    start_ms: int | None = Field(default=None, ge=0)
+    end_ms: int | None = Field(default=None, gt=0)
+    center_x: float | None = Field(default=None, ge=0, le=100)
+    center_y: float | None = Field(default=None, ge=0, le=100)
+    width_percent: float | None = Field(default=None, ge=10, le=100)
+    rotation_deg: float | None = Field(default=None, ge=-180, le=180)
+    opacity: float | None = Field(default=None, ge=0.1, le=1)
+
+    @model_validator(mode="after")
+    def validate_span(self):
+        if self.start_ms is not None and self.end_ms is not None and self.end_ms <= self.start_ms:
+            raise ValueError("An image has to end after it starts")
+        return self
+
+
+class BatchMediaOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    batch_id: str
+    name: str
+    mime_type: str
+    size_bytes: int
+    start_ms: int
+    end_ms: int
+    center_x: float
+    center_y: float
+    width_percent: float
+    rotation_deg: float
+    opacity: float
+    url: str = ""
 
 
 class TitleStyleWrite(TitleLookPatch):
@@ -579,6 +637,8 @@ class BatchOut(BaseModel):
     # Timed in Sequence milliseconds and owned by the Batch, so they travel
     # here rather than on any Clip (ADR 0008).
     titles: list[TitleOut] = []
+    # Still images timed against the finished Sequence, across Shot boundaries.
+    media: list[BatchMediaOut] = []
     # The most recent export, if this Batch has ever been rendered.
     sequence_render: SequenceRenderOut | None = None
 

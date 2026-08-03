@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Clapperboard, ZoomIn, ZoomOut } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import { artifact } from '../../lib/project'
-import type { Cutaway, Project, Shot, ShotTrim, Title } from '../../types'
+import type { BatchMedia, BatchMediaPatch, Cutaway, Project, Shot, ShotTrim, Title } from '../../types'
+import { MediaTrack } from './MediaTrack'
 import { TitleTrack } from './TitleTrack'
 import type { TitleSpan } from './TitleTrack'
 
@@ -202,13 +203,16 @@ export function Timeline({
   cutaways,
   clips,
   titles,
+  media,
   selectedShotId,
   selectedTitleId,
+  selectedMediaId,
   placingClipId,
   playheadMs,
   onScrub,
   onSelect,
   onSelectTitle,
+  onSelectMedia,
   onMove,
   onTrim,
   onPlace,
@@ -218,19 +222,24 @@ export function Timeline({
   onPlaceEnd,
   onMoveTitle,
   onTrimTitle,
+  onChangeMedia,
+  onRemoveMedia,
   busy,
 }: {
   shots: Shot[]
   cutaways: Cutaway[]
   clips: Project[]
   titles: Title[]
+  media: BatchMedia[]
   selectedShotId: string | null
   selectedTitleId: string | null
+  selectedMediaId: string | null
   placingClipId: string | null
   playheadMs: number
   onScrub: (ms: number) => void
   onSelect: (shotId: string | null) => void
   onSelectTitle: (titleId: string | null) => void
+  onSelectMedia: (mediaId: string | null) => void
   onMove: (shot: Shot, position: number) => void
   onTrim: (shot: Shot, trim: ShotTrim) => void
   onPlace: (clipId: string, position: number) => void
@@ -240,6 +249,8 @@ export function Timeline({
   onPlaceEnd: () => void
   onMoveTitle: (title: Title, span: TitleSpan) => void
   onTrimTitle: (title: Title, span: TitleSpan) => void
+  onChangeMedia: (media: BatchMedia, patch: BatchMediaPatch) => void
+  onRemoveMedia: (media: BatchMedia) => void
   busy: boolean
 }) {
   const [pxPerSec, setPxPerSec] = useState(24)
@@ -588,86 +599,98 @@ export function Timeline({
             busy={busy}
           />
 
-          <ol className="sequence__cover" aria-label="Cutaways" ref={coverRef}>
-            {placedCutaways.map((item) => {
-              const selected = item.cutaway.id === selectedShotId
-              const width = pxOf(item.spanMs)
-              return (
-                <li
-                  className={`sequence__cutaway ${selected ? 'is-selected' : ''} ${
-                    item.overflows ? 'is-clipped' : ''
-                  }`}
-                  key={item.cutaway.id}
-                  style={{
-                    left:
-                      pxOf(item.startMs) + shiftOf(item.cutaway.base_shot_id, item.cutaway.id),
-                    width,
-                  }}
-                >
-                  <button
-                    className="sequence__cutaway-body"
-                    type="button"
-                    onPointerDown={(event) =>
-                      begin(event, {
-                        kind: 'cutaway-move',
-                        shotId: item.cutaway.id,
-                        originX: event.clientX,
-                        grabMs: msAtX(event.clientX) - item.startMs,
-                      })
-                    }
-                    onPointerMove={onPointerMove}
-                    onPointerUp={onPointerUp}
-                    onFocus={() => onSelect(item.cutaway.id)}
-                    aria-label={`${item.clip.title}, cutaway covering ${
-                      formatTime(item.spanMs)
-                    }${item.overflows ? ', clipped to the shot it covers' : ''}`}
+          {media.length > 0 && (
+            <MediaTrack
+              media={media}
+              selectedMediaId={selectedMediaId}
+              pxPerSec={pxPerSec}
+              totalMs={totalMs}
+              onSelect={onSelectMedia}
+              onChange={onChangeMedia}
+              onRemove={onRemoveMedia}
+              busy={busy}
+            />
+          )}
+
+          {placedCutaways.length > 0 && (
+            <ol className="sequence__cover" aria-label="Cutaways" ref={coverRef}>
+              {placedCutaways.map((item) => {
+                const selected = item.cutaway.id === selectedShotId
+                const width = pxOf(item.spanMs)
+                return (
+                  <li
+                    className={`sequence__cutaway ${selected ? 'is-selected' : ''} ${
+                      item.overflows ? 'is-clipped' : ''
+                    }`}
+                    key={item.cutaway.id}
+                    style={{
+                      left:
+                        pxOf(item.startMs) + shiftOf(item.cutaway.base_shot_id, item.cutaway.id),
+                      width,
+                    }}
                   >
-                    {width > 72 && <span className="sequence__cutaway-text">{item.clip.title}</span>}
-                  </button>
-                  <span
-                    className="sequence__handle sequence__handle--start"
-                    aria-hidden="true"
-                    onPointerDown={(event) => {
-                      const { start, end } = shotTrim(item.cutaway, item.clip)
-                      begin(event, {
-                        kind: 'trim',
-                        shotId: item.cutaway.id,
-                        edge: 'start',
-                        originX: event.clientX,
-                        from: { start, end },
-                      })
-                    }}
-                    onPointerMove={onPointerMove}
-                    onPointerUp={onPointerUp}
-                  />
-                  <span
-                    className="sequence__handle sequence__handle--end"
-                    aria-hidden="true"
-                    onPointerDown={(event) => {
-                      const { start, end } = shotTrim(item.cutaway, item.clip)
-                      begin(event, {
-                        kind: 'trim',
-                        shotId: item.cutaway.id,
-                        edge: 'end',
-                        originX: event.clientX,
-                        from: { start, end },
-                      })
-                    }}
-                    onPointerMove={onPointerMove}
-                    onPointerUp={onPointerUp}
-                  />
-                </li>
-              )
-            })}
-            {!placedCutaways.length && (
-              <span className="sequence__cover-hint">
-                Drop a clip here to cover a shot while its sound keeps playing.
-              </span>
-            )}
-            {coverDrop !== null && (
-              <i className="sequence__drop" style={{ left: pxOf(coverDrop) }} aria-hidden="true" />
-            )}
-          </ol>
+                    <button
+                      className="sequence__cutaway-body"
+                      type="button"
+                      onPointerDown={(event) =>
+                        begin(event, {
+                          kind: 'cutaway-move',
+                          shotId: item.cutaway.id,
+                          originX: event.clientX,
+                          grabMs: msAtX(event.clientX) - item.startMs,
+                        })
+                      }
+                      onPointerMove={onPointerMove}
+                      onPointerUp={onPointerUp}
+                      onFocus={() => onSelect(item.cutaway.id)}
+                      aria-label={`${item.clip.title}, cutaway covering ${
+                        formatTime(item.spanMs)
+                      }${item.overflows ? ', clipped to the shot it covers' : ''}`}
+                    >
+                      {width > 72 && (
+                        <span className="sequence__cutaway-text">{item.clip.title}</span>
+                      )}
+                    </button>
+                    <span
+                      className="sequence__handle sequence__handle--start"
+                      aria-hidden="true"
+                      onPointerDown={(event) => {
+                        const { start, end } = shotTrim(item.cutaway, item.clip)
+                        begin(event, {
+                          kind: 'trim',
+                          shotId: item.cutaway.id,
+                          edge: 'start',
+                          originX: event.clientX,
+                          from: { start, end },
+                        })
+                      }}
+                      onPointerMove={onPointerMove}
+                      onPointerUp={onPointerUp}
+                    />
+                    <span
+                      className="sequence__handle sequence__handle--end"
+                      aria-hidden="true"
+                      onPointerDown={(event) => {
+                        const { start, end } = shotTrim(item.cutaway, item.clip)
+                        begin(event, {
+                          kind: 'trim',
+                          shotId: item.cutaway.id,
+                          edge: 'end',
+                          originX: event.clientX,
+                          from: { start, end },
+                        })
+                      }}
+                      onPointerMove={onPointerMove}
+                      onPointerUp={onPointerUp}
+                    />
+                  </li>
+                )
+              })}
+              {coverDrop !== null && (
+                <i className="sequence__drop" style={{ left: pxOf(coverDrop) }} aria-hidden="true" />
+              )}
+            </ol>
+          )}
 
           <ol className="sequence__track" aria-label="Timeline" ref={trackRef}>
             {placed.map((item, index) => {

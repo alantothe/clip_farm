@@ -46,6 +46,20 @@ TITLE_BACKGROUNDS = (TITLE_BACKGROUND_NONE, TITLE_BACKGROUND_BOX)
 TITLE_ALIGNMENTS = ("left", "center", "right")
 
 
+class StoredImage(Base):
+    """One reusable image in the operator's global Storage."""
+
+    __tablename__ = "stored_images"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String)
+    path: Mapped[str] = mapped_column(String)
+    mime_type: Mapped[str] = mapped_column(String)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
 class Batch(Base):
     """A named set of Clips imported and worked on together.
 
@@ -91,6 +105,13 @@ class Batch(Base):
         back_populates="batch",
         cascade="all, delete-orphan",
         order_by="Title.start_ms, Title.created_at",
+    )
+    # Still images timed against the assembled Sequence. Unlike a Clip's image
+    # overlays, these keep playing across Shot boundaries and Cutaways.
+    media: Mapped[list["BatchMedia"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        order_by="BatchMedia.start_ms, BatchMedia.created_at",
     )
 
 
@@ -336,6 +357,32 @@ class Title(TitleLook, Base):
     @property
     def duration_ms(self) -> int:
         return max(0, self.end_ms - self.start_ms)
+
+
+class BatchMedia(Base):
+    """A still image drawn over a span of a Batch's finished Sequence."""
+
+    __tablename__ = "batch_media"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String)
+    path: Mapped[str] = mapped_column(String)
+    mime_type: Mapped[str] = mapped_column(String)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    start_ms: Mapped[int] = mapped_column(Integer, default=0)
+    end_ms: Mapped[int] = mapped_column(Integer)
+    center_x: Mapped[float] = mapped_column(Float, default=50.0)
+    center_y: Mapped[float] = mapped_column(Float, default=50.0)
+    width_percent: Mapped[float] = mapped_column(Float, default=65.0)
+    rotation_deg: Mapped[float] = mapped_column(Float, default=0.0)
+    opacity: Mapped[float] = mapped_column(Float, default=1.0)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    batch: Mapped["Batch"] = relationship(back_populates="media")
 
 
 class Project(Base):

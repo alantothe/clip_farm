@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+import shutil
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
@@ -22,6 +23,7 @@ from app.schemas import (
     ImageOverlayOut,
     ImageOverlayUpdate,
     ImportRequest,
+    OverlayFromStorageCreate,
     ProjectOut,
     ProjectUpdate,
     SocialCaptionOut,
@@ -40,6 +42,7 @@ from app.routers._helpers import (
     project_query,
     remove_project_files,
     serialize_project,
+    stored_image_or_404,
 )
 
 
@@ -261,6 +264,67 @@ async def upload_image_overlay(
             project_id=project.id,
             artifact_id=artifact.id,
             name=Path(image.filename or "Image").name[:120],
+            start_ms=start,
+            end_ms=end,
+        )
+        session.add(overlay)
+        project.updated_at = datetime.now(timezone.utc)
+        session.commit()
+    except Exception:
+        image_path.unlink(missing_ok=True)
+        session.rollback()
+        raise
+    output = ImageOverlayOut.model_validate(overlay)
+    output.url = f"{settings.api_prefix}/artifacts/{artifact.id}"
+    return output
+
+
+@router.post(
+    f"{settings.api_prefix}/projects/{{project_id}}/image-overlays/from-storage",
+    response_model=ImageOverlayOut,
+    status_code=201,
+)
+def add_image_overlay_from_storage(
+    project_id: str,
+    payload: OverlayFromStorageCreate,
+    session: Session = Depends(get_db),
+) -> ImageOverlayOut:
+    """Copy one reusable image into a Clip as an independent Overlay."""
+    project = get_project_or_404(session, project_id)
+    duration = project.duration_ms or 0
+    if duration < 100:
+        raise HTTPException(status_code=409, detail="The source video is not ready")
+    stored = stored_image_or_404(session, payload.storage_image_id)
+    source_path = Path(stored.path)
+    if not source_path.is_file():
+        raise HTTPException(status_code=404, detail="Stored image file not found")
+
+    start = min(max(0, payload.start_ms), duration - 100)
+    end = min(duration, start + 3000)
+    artifact = Artifact(
+        project_id=project.id,
+        kind="overlay_image",
+        path="",
+        mime_type=stored.mime_type,
+        size_bytes=stored.size_bytes,
+    )
+    session.add(artifact)
+    session.flush()
+    project_dir = settings.projects_dir / project.id / "overlays"
+    project_dir.mkdir(parents=True, exist_ok=True)
+    suffix = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }.get(stored.mime_type) or source_path.suffix
+    image_path = project_dir / f"{artifact.id}{suffix}"
+    try:
+        shutil.copy2(source_path, image_path)
+        artifact.path = str(image_path)
+        overlay = ImageOverlay(
+            project_id=project.id,
+            artifact_id=artifact.id,
+            name=stored.name,
             start_ms=start,
             end_ms=end,
         )

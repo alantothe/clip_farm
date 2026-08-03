@@ -9,8 +9,8 @@ from starlette.datastructures import Headers, UploadFile
 
 from app.routers import projects as projects_router
 from app.database import Base
-from app.models import ImageOverlay, Project
-from app.schemas import ImageOverlayUpdate
+from app.models import ImageOverlay, Project, StoredImage
+from app.schemas import ImageOverlayUpdate, OverlayFromStorageCreate
 
 
 def make_session(tmp_path) -> Session:
@@ -74,4 +74,37 @@ def test_image_overlay_upload_update_and_delete(tmp_path, monkeypatch) -> None:
     assert projects_router.delete_image_overlay("project", created.id, session).deleted == 1
     assert session.get(ImageOverlay, created.id) is None
     assert not image_path.exists()
+    session.close()
+
+
+def test_stored_image_is_copied_into_a_clip_overlay(tmp_path, monkeypatch) -> None:
+    session = make_session(tmp_path)
+    project = Project(id="project", title="Video", status="ready", duration_ms=5000)
+    source = tmp_path / "stored.png"
+    source.write_bytes(b"stored image")
+    stored = StoredImage(
+        name="logo.png",
+        path=str(source),
+        mime_type="image/png",
+        size_bytes=source.stat().st_size,
+    )
+    session.add_all([project, stored])
+    session.commit()
+    monkeypatch.setattr(
+        projects_router,
+        "settings",
+        SimpleNamespace(projects_dir=tmp_path / "projects", api_prefix="/api"),
+    )
+
+    created = projects_router.add_image_overlay_from_storage(
+        project.id,
+        OverlayFromStorageCreate(storage_image_id=stored.id, start_ms=900),
+        session,
+    )
+
+    overlay = session.get(ImageOverlay, created.id)
+    assert overlay is not None
+    copied = tmp_path / "projects" / project.id / "overlays" / f"{overlay.artifact_id}.png"
+    assert copied.read_bytes() == source.read_bytes()
+    assert (created.name, created.start_ms, created.end_ms) == ("logo.png", 900, 3900)
     session.close()

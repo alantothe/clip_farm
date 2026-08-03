@@ -192,6 +192,95 @@ test('previews caption presets and unsaved caption edits', async () => {
   expect(screen.getByRole('button', { name: 'Reset' })).toBeVisible()
 })
 
+test('adds a Clip Overlay from the same global Storage picker', async () => {
+  const project: Project = {
+    id: 'project-storage',
+    mode: 'x-to-vertical',
+    origin_kind: 'x',
+    batch_id: null,
+    source_url: 'https://x.com/i/status/777',
+    source_post_id: '777',
+    title: 'Storage clip',
+    source_caption: null,
+    social_caption: null,
+    status: 'ready',
+    transcription_status: 'complete',
+    error_message: null,
+    duration_ms: 5000,
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    trim_start_ms: 0,
+    trim_end_ms: 5000,
+    layout: 'fit_background',
+    crop_center_x: 50,
+    captions_enabled: false,
+    caption_style: 'bold',
+    caption_position: 'bottom',
+    created_at: '2026-08-03T12:00:00Z',
+    updated_at: '2026-08-03T12:00:00Z',
+    artifacts: [],
+    captions: [],
+    image_overlays: [],
+    renders: [],
+    latest_job: null,
+  }
+  const stored = {
+    id: 'stored-1',
+    name: 'logo.png',
+    mime_type: 'image/png',
+    size_bytes: 2048,
+    created_at: '2026-08-03T12:00:00Z',
+    updated_at: '2026-08-03T12:00:00Z',
+    url: '/api/storage/images/stored-1/file',
+  }
+  const overlay = {
+    id: 'overlay-1',
+    name: stored.name,
+    start_ms: 0,
+    end_ms: 3000,
+    center_x: 50,
+    center_y: 50,
+    width_percent: 65,
+    rotation_deg: 0,
+    opacity: 1,
+    mime_type: stored.mime_type,
+    size_bytes: stored.size_bytes,
+    url: '/api/artifacts/overlay-1',
+  }
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const path = String(input)
+    if (path === '/api/projects') return { ok: true, json: async () => [project] }
+    if (path === '/api/platforms') return { ok: true, json: async () => [] }
+    if (path === '/api/storage/images') return { ok: true, json: async () => [stored] }
+    if (path.endsWith('/image-overlays/from-storage')) {
+      return { ok: true, json: async () => overlay }
+    }
+    return { ok: true, json: async () => [] }
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+  renderApp(client, '/modes/x-to-vertical/projects/project-storage')
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Add image here' }))
+  expect(screen.getByRole('dialog', { name: 'Add an Overlay' })).toBeVisible()
+  fireEvent.click(screen.getByRole('tab', { name: /Storage/ }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Use logo.png' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Add to Clip' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/project-storage/image-overlays/from-storage',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ storage_image_id: 'stored-1', start_ms: 0 }),
+      }),
+    ),
+  )
+  expect(await screen.findByLabelText('Move logo.png')).toBeVisible()
+})
+
 test('deletes one video or clears the full video library after confirmation', async () => {
   const makeProject = (id: string, title: string): Project => ({
     id,

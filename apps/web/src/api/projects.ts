@@ -58,6 +58,19 @@ export const uploadImageOverlay = (id: string, image: File, startMs: number) => 
   })
 }
 
+export const addStoredImageOverlay = (
+  projectId: string,
+  storageImageId: string,
+  startMs: number,
+) =>
+  request<ImageOverlay>(`/api/projects/${projectId}/image-overlays/from-storage`, {
+    method: 'POST',
+    body: JSON.stringify({
+      storage_image_id: storageImageId,
+      start_ms: Math.round(startMs),
+    }),
+  })
+
 export const updateImageOverlay = (projectId: string, overlay: ImageOverlay) =>
   request<ImageOverlay>(`/api/projects/${projectId}/image-overlays/${overlay.id}`, {
     method: 'PATCH',

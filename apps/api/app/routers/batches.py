@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import logging
 import re
+import shutil
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -117,12 +118,16 @@ def delete_batch(batch_id: str, session: Session = Depends(get_db)) -> DeletionO
     for clip in clips:
         ensure_project_can_be_deleted(clip)
     clip_ids = [clip.id for clip in clips]
+    batches_dir = getattr(settings, "batches_dir", None)
+    batch_dir = batches_dir / batch.id if batches_dir is not None else None
     for clip in clips:
         session.delete(clip)
     session.delete(batch)
     session.commit()
     for clip_id in clip_ids:
         remove_project_files(clip_id)
+    if batch_dir is not None:
+        shutil.rmtree(batch_dir, ignore_errors=True)
     return DeletionOut(deleted=len(clip_ids))
 
 

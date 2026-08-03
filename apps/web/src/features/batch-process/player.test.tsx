@@ -101,6 +101,7 @@ function makeBatch(overrides: Partial<Batch> = {}): Batch {
     ],
     cutaways: [],
     titles: [],
+    media: [],
     sequence_render: null,
     ...overrides,
   }
@@ -175,18 +176,22 @@ function openPlaybackOptions(player: HTMLElement) {
   fireEvent.click(within(player).getByRole('button', { name: 'More playback options' }))
 }
 
-test('Text starts the row while Pause, Play, Export stay centered and ordered', async () => {
+test('Text and media start the row while Pause, Play, Export stay centered and ordered', async () => {
   const player = await openPlayer(makeBatch())
   const controls = player.querySelector<HTMLElement>('.player__primary-controls')!
   const [pause, play, exportButton] = within(controls).getAllByRole('button')
   const addText = within(player).getByRole('button', { name: 'Add text' })
+  const addMedia = within(player).getByRole('button', { name: 'Add media' })
 
   expect(pause).toHaveAccessibleName('Pause the rough cut')
   expect(play).toHaveAccessibleName('Play the rough cut')
   expect(exportButton).toHaveAccessibleName('Export video')
   expect(addText).toHaveAccessibleName('Add text')
+  expect(addMedia).toHaveAccessibleName('Add media')
   expect(controls).not.toContainElement(addText)
-  expect(addText.parentElement).toHaveClass('player__text-action')
+  expect(addText.parentElement).toHaveClass('player__layer-action')
+  expect(addMedia.parentElement?.parentElement).toBe(addText.parentElement?.parentElement)
+  expect(addText.parentElement?.parentElement).toHaveClass('player__layer-actions')
   const clock = within(player).getByLabelText(/Playhead and duration/)
   expect(clock.parentElement).toHaveClass('player__frame')
   expect(player.querySelector('.player__stage')).not.toContainElement(clock)

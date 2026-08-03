@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { vi } from 'vitest'
 import { App } from '../../App'
-import type { Batch, BatchSummary, Project, SequenceRender, Shot } from '../../types'
+import type { Batch, BatchMedia, BatchSummary, Project, SequenceRender, Shot } from '../../types'
 
 function LocationDisplay() {
   return <output data-testid="location">{useLocation().pathname}</output>
@@ -100,6 +100,7 @@ const batch: Batch = {
   shots: [],
   cutaways: [],
   titles: [],
+  media: [],
   sequence_render: null,
 }
 
@@ -391,6 +392,32 @@ const placed: Batch = sequencedBatch({
   ],
 })
 
+const sequenceImage: BatchMedia = {
+  id: 'media-1',
+  batch_id: 'batch-1',
+  name: 'brand-mark.png',
+  start_ms: 0,
+  end_ms: 8000,
+  center_x: 50,
+  center_y: 50,
+  width_percent: 65,
+  rotation_deg: 0,
+  opacity: 1,
+  mime_type: 'image/png',
+  size_bytes: 2048,
+  url: '/api/batches/batch-1/media/media-1/file',
+}
+
+const storedImage = {
+  id: 'stored-1',
+  name: 'brand-mark.png',
+  mime_type: 'image/png',
+  size_bytes: 2048,
+  created_at: '2026-08-03T12:00:00Z',
+  updated_at: '2026-08-03T12:00:00Z',
+  url: '/api/storage/images/stored-1/file',
+}
+
 test('an imported clip waits off the timeline until it is added', async () => {
   const fetchMock = stubApi({ 'GET /api/batches/batch-1': sequencedBatch() })
 
@@ -451,6 +478,173 @@ test('a clip already on the timeline can be placed again', async () => {
       }),
     ),
   )
+})
+
+test('adds an image beside text and places it across the full timeline', async () => {
+  const withImage = { ...placed, media: [sequenceImage] }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': placed,
+    'POST /api/storage/images': storedImage,
+    'POST /api/batches/batch-1/media/from-storage': withImage,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const addText = await screen.findByRole('button', { name: 'Add text' })
+  const addMedia = screen.getByRole('button', { name: 'Add media' })
+  expect(addMedia.parentElement?.parentElement).toBe(addText.parentElement?.parentElement)
+  fireEvent.click(addMedia)
+
+  const dialog = screen.getByRole('dialog', { name: 'Add an image' })
+  const input = dialog.querySelector('input[type="file"]') as HTMLInputElement
+  const file = new File(['image'], 'brand-mark.png', { type: 'image/png' })
+  fireEvent.change(input, { target: { files: [file] } })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add to timeline' }))
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(([path, init]) =>
+      String(path) === '/api/storage/images' && init?.method === 'POST')
+    expect(call).toBeDefined()
+    const body = call?.[1]?.body as FormData
+    expect((body.get('image') as File).name).toBe('brand-mark.png')
+  })
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/media/from-storage',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ storage_image_id: 'stored-1', end_ms: 8000 }),
+      }),
+    ),
+  )
+
+  const mediaTrack = await screen.findByRole('list', { name: 'Media' })
+  expect(within(mediaTrack).getByRole('button', { name: /brand-mark.png, 00:00.0 to 00:08.0/ }))
+    .toBeVisible()
+  expect(document.querySelector('.player__overlay--sequence img')).toHaveAttribute(
+    'src',
+    '/api/batches/batch-1/media/media-1/file',
+  )
+})
+
+test('reuses and deletes images from global Storage', async () => {
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': placed,
+    'GET /api/storage/images': [storedImage],
+    'POST /api/batches/batch-1/media/from-storage': { ...placed, media: [sequenceImage] },
+    'DELETE /api/storage/images/stored-1': { deleted: 1 },
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Add media' }))
+  fireEvent.click(screen.getByRole('tab', { name: /Storage/ }))
+
+  expect(await screen.findByRole('button', { name: 'Use brand-mark.png' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Add to timeline' }))
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/media/from-storage',
+      expect.objectContaining({ method: 'POST' }),
+    ),
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add media' }))
+  fireEvent.click(screen.getByRole('tab', { name: /Storage/ }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete brand-mark.png from Storage' }))
+  const confirmation = screen.getByRole('alert')
+  fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/storage/images/stored-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: 'Use brand-mark.png' })).not.toBeInTheDocument(),
+  )
+})
+
+test('stretches a sequence image from either timeline edge', async () => {
+  Object.defineProperty(window, 'PointerEvent', {
+    configurable: true,
+    value: MouseEvent,
+  })
+  const updatedImage = { ...sequenceImage, end_ms: 7000 }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': { ...placed, media: [sequenceImage] },
+    'PATCH /api/batches/batch-1/media/media-1': { ...placed, media: [updatedImage] },
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const track = await screen.findByRole('list', { name: 'Media' })
+  const endHandle = track.querySelector('.sequence__handle--end') as HTMLElement
+  fireEvent.pointerDown(endHandle, { pointerId: 1, button: 0, clientX: 192 })
+  fireEvent.pointerMove(endHandle, { pointerId: 1, clientX: 168 })
+  fireEvent.pointerUp(endHandle, { pointerId: 1, clientX: 168 })
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/media/media-1',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ end_ms: 7000 }) }),
+    ),
+  )
+})
+
+test('moves and resizes a sequence image directly in the player', async () => {
+  Object.defineProperty(window, 'PointerEvent', {
+    configurable: true,
+    value: MouseEvent,
+  })
+  const movedImage = { ...sequenceImage, center_x: 70, center_y: 60 }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': { ...placed, media: [sequenceImage] },
+    'PATCH /api/batches/batch-1/media/media-1': { ...placed, media: [movedImage] },
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const image = await screen.findByRole('button', { name: 'Move brand-mark.png' })
+  const mediaStage = document.querySelector<HTMLElement>('.player__media')!
+  vi.spyOn(mediaStage, 'getBoundingClientRect').mockReturnValue({
+    x: 10,
+    y: 20,
+    left: 10,
+    top: 20,
+    right: 210,
+    bottom: 420,
+    width: 200,
+    height: 400,
+    toJSON: () => ({}),
+  })
+
+  // The image starts centred at 110 × 220. Pull it 40px right and down:
+  // that is 20% of the stage width and 10% of its height.
+  fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 110, clientY: 220 })
+  fireEvent.pointerMove(image, { pointerId: 1, clientX: 150, clientY: 260 })
+  fireEvent.pointerUp(image, { pointerId: 1, clientX: 150, clientY: 260 })
+
+  await waitFor(() => {
+    const calls = fetchMock.mock.calls.filter(([path, init]) =>
+      String(path).endsWith('/media/media-1') && init?.method === 'PATCH')
+    expect(calls).toHaveLength(1)
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ center_x: 70, center_y: 60 })
+  })
+
+  const resize = document.querySelector<HTMLElement>('.player__media-grip--se')!
+  expect(resize).not.toBeNull()
+  fireEvent.pointerDown(resize, { pointerId: 2, button: 0, clientX: 175, clientY: 310 })
+  fireEvent.pointerMove(resize, { pointerId: 2, clientX: 180, clientY: 320 })
+  fireEvent.pointerUp(resize, { pointerId: 2, clientX: 180, clientY: 320 })
+
+  await waitFor(() => {
+    const calls = fetchMock.mock.calls.filter(([path, init]) =>
+      String(path).endsWith('/media/media-1') && init?.method === 'PATCH')
+    expect(calls).toHaveLength(2)
+    const resizePatch = JSON.parse(String(calls[1][1]?.body))
+    expect(resizePatch.width_percent).toBeCloseTo(78)
+  })
 })
 
 /** Selecting a Shot is what opens the controls that dragging cannot reach. */

@@ -290,6 +290,7 @@ function makeBatch(titles: Title[]): Batch {
     shots: [shot],
     cutaways: [],
     titles,
+    media: [],
     sequence_render: null,
   }
 }
@@ -330,10 +331,10 @@ test('the timeline gives titles a track of their own', async () => {
   renderBatch(newClient())
 
   const track = await screen.findByRole('list', { name: 'Titles' })
-  // Its own lane, beside the Shots and the Cutaways rather than inside either.
+  // Its own lane, beside the Shots rather than inside one.
   expect(within(track).getByRole('button', { name: /WAIT FOR IT/ })).toBeVisible()
   expect(screen.getByRole('list', { name: 'Timeline' })).toBeVisible()
-  expect(screen.getByRole('list', { name: 'Cutaways' })).toBeVisible()
+  expect(screen.queryByRole('list', { name: 'Cutaways' })).toBeNull()
 })
 
 test('a batch carries three visible title slots at a time', async () => {
