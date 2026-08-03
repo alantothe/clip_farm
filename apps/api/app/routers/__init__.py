@@ -6,6 +6,7 @@ from app.routers.media import router as media_router
 from app.routers.platforms import router as platforms_router
 from app.routers.projects import router as projects_router
 from app.routers.publishing import router as publishing_router
+from app.routers.titles import router as titles_router
 
 __all__ = [
     "batches_router",
@@ -14,4 +15,5 @@ __all__ = [
     "platforms_router",
     "projects_router",
     "publishing_router",
+    "titles_router",
 ]

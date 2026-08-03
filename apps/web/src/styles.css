@@ -3090,6 +3090,105 @@ input[type='range']::-webkit-slider-thumb {
   white-space: nowrap;
 }
 
+/*
+ * The Title Track: a lane of its own, above the Shots.
+ *
+ * It reads as a track rather than as part of the Sequence because that is what
+ * it is — text at a time in the finished video, not a property of whichever
+ * Shot happens to sit underneath (ADR 0008).
+ */
+.sequence__titles {
+  position: relative;
+  height: 24px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  border-radius: 3px;
+  background: #e6e9f5;
+}
+
+.sequence__titles-hint {
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  font-size: 10px;
+  color: #7c85a3;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Pinned to the viewport edge of the strip, so it stays reachable however far
+   the Sequence is scrolled. */
+.sequence__titles-add {
+  position: sticky;
+  float: right;
+  right: 4px;
+  top: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--blue);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--blue);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.sequence__titles-add:hover:not(:disabled) { background: var(--blue); color: var(--surface); }
+.sequence__titles-add:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.sequence__title {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px #b9c1e0;
+  border-left: 3px solid #6f7fd6;
+  overflow: hidden;
+}
+
+.sequence__title.is-selected {
+  box-shadow: inset 0 0 0 2px var(--ink);
+  z-index: 2;
+}
+
+/* Written past the last Shot: it renders as nothing until the Sequence reaches
+   it, which is worth showing rather than silently dropping. */
+.sequence__title.is-orphaned {
+  border-left-color: var(--coral);
+  opacity: 0.6;
+}
+
+.sequence__title-body {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 100%;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.sequence__title-body:active { cursor: grabbing; }
+
+.sequence__title-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 /* The cover lane: Cutaways sit above the Shots they cover. */
 .sequence__cover {
   position: relative;
@@ -3407,6 +3506,148 @@ input[type='range']::-webkit-slider-thumb {
   background: var(--surface);
 }
 
+/* --- The Title inspector ------------------------------------------------ */
+
+/*
+ * Everything about the selected Title.
+ *
+ * There are a lot of controls, and the room they take comes out of the stage:
+ * the editor is a fixed-height shell, so every pixel this panel is tall is a
+ * pixel the Player is not (ADR 0007). So they run in as many narrow columns as
+ * fit rather than in a few wide ones — the same controls, a third of the
+ * height, and no scrolling to reach the placement sliders at the end.
+ */
+.title-inspector {
+  flex: 0 0 268px;
+  min-height: 0;
+  margin-left: 10px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  overflow-y: auto;
+}
+
+/* Narrow enough that it wants two columns when the window is wide. */
+@media (min-width: 1500px) {
+  .title-inspector {
+    flex-basis: 400px;
+    columns: 180px 2;
+    column-gap: 14px;
+  }
+}
+
+.title-inspector__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.title-inspector__head h2 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.title-inspector__time {
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.title-inspector__text {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+
+/* Groups must not be split down the middle by the column flow. */
+.title-inspector__group,
+.title-inspector__row {
+  break-inside: avoid;
+}
+
+.title-inspector__group {
+  margin-bottom: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.title-inspector__row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.title-inspector__hint {
+  margin: 0 0 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.title-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.title-field--grow { flex: 1 1 120px; }
+.title-field--number { flex: 0 0 76px; }
+
+.title-field__label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.title-field__label small {
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.title-field select,
+.title-field input[type='number'],
+.title-field input[type='text'],
+.title-field > input:not([type]) {
+  width: 100%;
+  padding: 3px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 11px;
+}
+
+.title-field input[type='range'] { width: 100%; accent-color: var(--blue); }
+
+.title-field--colour input[type='color'] {
+  width: 40px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
 /* --- The clip bin ------------------------------------------------------- */
 
 /*
@@ -3488,6 +3729,15 @@ input[type='range']::-webkit-slider-thumb {
   border-radius: 4px;
   background: var(--dark);
   overflow: hidden;
+  /*
+   * What makes a Title's size mean the same thing here as in the export.
+   *
+   * Titles are written in container query units — `6cqh` is 6% of this box's
+   * height — which is the same 6% of 1920 the renderer works in. Nothing has to
+   * measure the stage to size a font, so a resized window, a fullscreen stage
+   * and the finished file all put the text in the same place (ADR 0008).
+   */
+  container-type: size;
 }
 
 /* A 9:16 stage is tall, so let height drive and width follow. */
@@ -3509,6 +3759,81 @@ input[type='range']::-webkit-slider-thumb {
 }
 
 .player__placeholder { color: #4a5350; }
+
+/*
+ * Titles on the stage.
+ *
+ * Everything is sized in container units so it tracks the stage rather than the
+ * viewport, and the numbers are the same ones the renderer burns in. The lone
+ * exception is the editing furniture — outlines and grips — which is chrome and
+ * is deliberately a fixed size, because a handle that scaled with the stage
+ * would be untouchable on a small one.
+ */
+.player__titles {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  /* The layer ignores the pointer; each Title takes it back, so a click on
+     empty picture still reaches the stage beneath. */
+  pointer-events: none;
+}
+
+.player__title {
+  position: absolute;
+  line-height: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.player__title.is-editable {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.player__title.is-editable:active { cursor: grabbing; }
+
+/* The wrap box, which is otherwise invisible until the text reaches it. */
+.player__title-frame {
+  position: absolute;
+  inset: -4px;
+  border: 1px dashed rgba(255, 255, 255, 0.6);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.player__title-grip {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--dark);
+  border-radius: 50%;
+  background: var(--acid);
+  pointer-events: auto;
+}
+
+.player__title-grip--size {
+  right: -10px;
+  bottom: -10px;
+  cursor: nwse-resize;
+}
+
+.player__title-grip--width {
+  right: -8px;
+  top: 50%;
+  height: 20px;
+  width: 8px;
+  border-radius: 3px;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+
+/* The background has to hug each line the way libass's opaque box does, which
+   is why it lives on an inline span rather than on the block above it. */
+.player__title-text {
+  display: inline;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
 
 /* The blurred fill a fit renders against, as the export builds it. */
 .player__backdrop {

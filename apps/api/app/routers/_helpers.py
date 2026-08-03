@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
-from app.models import Batch, ImageOverlay, Project, Render, SequenceRender, Shot
+from app.models import Batch, ImageOverlay, Project, Render, SequenceRender, Shot, Title
 from app.schemas import (
     BatchOut,
     BatchSummaryOut,
@@ -17,6 +17,7 @@ from app.schemas import (
     ProjectOut,
     SequenceRenderOut,
     ShotOut,
+    TitleOut,
 )
 
 
@@ -86,6 +87,27 @@ def batch_cutaways(session: Session, batch_id: str) -> list[Shot]:
     )
 
 
+def batch_titles(session: Session, batch_id: str) -> list[Title]:
+    """A Batch's Titles, in the order they are drawn.
+
+    Queried rather than read off `Batch.titles`, for the same reason the Shots
+    are: `SessionLocal` is built with `expire_on_commit=False`, so a collection
+    loaded before an edit stays loaded after the commit and a Title just added
+    would be missing from the response that is supposed to confirm it.
+
+    Later ones sit on top, which is what `start_ms` ordering gives — and ties
+    are broken by `created_at` so two Titles beginning together still stack in a
+    defined order.
+    """
+    return list(
+        session.scalars(
+            select(Title)
+            .where(Title.batch_id == batch_id)
+            .order_by(Title.start_ms, Title.created_at)
+        ).all()
+    )
+
+
 def renumber_shots(shots: list[Shot]) -> None:
     """Close any gaps so positions read 0..n-1 after an edit."""
     for position, shot in enumerate(shots):
@@ -118,6 +140,9 @@ def serialize_batch(session: Session, batch: Batch) -> BatchOut:
         CutawayOut.model_validate(cutaway) for cutaway in batch_cutaways(session, batch.id)
     ]
     output.clips = [serialize_project(clip) for clip in batch_clips(session, batch.id)]
+    output.titles = [
+        TitleOut.model_validate(title) for title in batch_titles(session, batch.id)
+    ]
     newest = latest_sequence_render(batch)
     output.sequence_render = serialize_sequence_render(newest) if newest else None
     return output

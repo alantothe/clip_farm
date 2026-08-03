@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Clapperboard, ZoomIn, ZoomOut } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import { artifact } from '../../lib/project'
-import type { Cutaway, Project, Shot, ShotTrim } from '../../types'
+import type { Cutaway, Project, Shot, ShotTrim, Title } from '../../types'
+import { TitleTrack } from './TitleTrack'
+import type { TitleSpan } from './TitleTrack'
 
 /** Everything with a Trim of its own: a Shot, or a Cutaway. */
 type Trimmed = { trim_start_ms: number | null; trim_end_ms: number | null }
@@ -168,11 +170,14 @@ export function Timeline({
   shots,
   cutaways,
   clips,
+  titles,
   selectedShotId,
+  selectedTitleId,
   placingClipId,
   playheadMs,
   onScrub,
   onSelect,
+  onSelectTitle,
   onMove,
   onTrim,
   onPlace,
@@ -180,16 +185,22 @@ export function Timeline({
   onTrimCutaway,
   onPlaceCutaway,
   onPlaceEnd,
+  onMoveTitle,
+  onTrimTitle,
+  onAddTitle,
   busy,
 }: {
   shots: Shot[]
   cutaways: Cutaway[]
   clips: Project[]
+  titles: Title[]
   selectedShotId: string | null
+  selectedTitleId: string | null
   placingClipId: string | null
   playheadMs: number
   onScrub: (ms: number) => void
   onSelect: (shotId: string | null) => void
+  onSelectTitle: (titleId: string | null) => void
   onMove: (shot: Shot, position: number) => void
   onTrim: (shot: Shot, trim: ShotTrim) => void
   onPlace: (clipId: string, position: number) => void
@@ -197,6 +208,9 @@ export function Timeline({
   onTrimCutaway: (cutaway: Cutaway, trim: ShotTrim) => void
   onPlaceCutaway: (clipId: string, baseShotId: string, offsetMs: number) => void
   onPlaceEnd: () => void
+  onMoveTitle: (title: Title, span: TitleSpan) => void
+  onTrimTitle: (title: Title, span: TitleSpan) => void
+  onAddTitle: (atMs: number) => void
   busy: boolean
 }) {
   const [pxPerSec, setPxPerSec] = useState(24)
@@ -427,10 +441,12 @@ export function Timeline({
     )
   }
 
+  const contentMs = titles.reduce((longest, title) => Math.max(longest, title.end_ms), totalMs)
+
   // Ticks land on a round interval wide enough to read at this zoom.
   const stepSec = [1, 2, 5, 10, 15, 30, 60, 120].find((step) => step * pxPerSec >= 64) ?? 120
   const ticks: number[] = []
-  for (let second = 0; second * 1000 <= totalMs; second += stepSec) ticks.push(second)
+  for (let second = 0; second * 1000 <= contentMs; second += stepSec) ticks.push(second)
 
   return (
     <div className="sequence">
@@ -463,7 +479,10 @@ export function Timeline({
       </div>
 
       <div className="sequence__scroll">
-        <div className="sequence__inner" style={{ width: Math.max(pxOf(totalMs), 240) }}>
+        {/* A Title can be written past the last Shot — the Shots it was meant
+            for may not be placed yet — so the strip is as wide as the longer of
+            the two rather than cutting one off. */}
+        <div className="sequence__inner" style={{ width: Math.max(pxOf(contentMs), 240) }}>
           <div
             className="sequence__ruler"
             onPointerDown={(event) => {
@@ -479,6 +498,22 @@ export function Timeline({
               </span>
             ))}
           </div>
+
+          {/* Titles ride above the Shots, because that is where they are: text
+              at a time in the finished video rather than a property of whatever
+              Shot is underneath (ADR 0008). */}
+          <TitleTrack
+            titles={titles}
+            selectedTitleId={selectedTitleId}
+            pxPerSec={pxPerSec}
+            totalMs={totalMs}
+            playheadMs={playheadMs}
+            onSelect={onSelectTitle}
+            onMove={onMoveTitle}
+            onTrim={onTrimTitle}
+            onAdd={onAddTitle}
+            busy={busy}
+          />
 
           <ol className="sequence__cover" aria-label="Cutaways" ref={coverRef}>
             {placedCutaways.map((item) => {

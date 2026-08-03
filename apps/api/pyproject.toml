@@ -25,6 +25,9 @@ dependencies = [
 dev = [
   "pytest>=8.3,<9",
   "pytest-cov>=6,<7",
+  # Only `tools/vendor_fonts.py` needs it, and only when the vendored Title
+  # faces are rebuilt. The faces themselves are committed.
+  "fonttools>=4.50,<5",
 ]
 ai-local = ["faster-whisper>=1.1,<2"]
 

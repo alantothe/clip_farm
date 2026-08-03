@@ -1,0 +1,444 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { vi } from 'vitest'
+import { App } from '../../App'
+import { resolveFace, rgba, titleCss, titleIsVisible } from '../../lib/titles'
+import type {
+  Batch,
+  BatchSummary,
+  FontCatalog,
+  Project,
+  Shot,
+  Title,
+  TitleStyle,
+} from '../../types'
+import { applyTitleEdit } from './BatchProcessPage'
+import { centreAt } from './TitleStage'
+import { slideTo } from './TitleTrack'
+
+// --- The arithmetic the stage and the renderer share --------------------
+
+const look = (overrides: Partial<Title> = {}): Title => ({
+  id: 'title-1',
+  batch_id: 'batch-1',
+  text: 'WAIT FOR IT',
+  start_ms: 0,
+  end_ms: 3000,
+  style_id: null,
+  font_family: 'anton',
+  font_weight: 400,
+  italic: false,
+  uppercase: false,
+  font_size_percent: 6,
+  letter_spacing: 0,
+  color: '#FFFFFF',
+  opacity: 1,
+  align: 'center',
+  outline_color: '#000000',
+  outline_width: 0.08,
+  shadow_color: '#000000',
+  shadow_offset: 0,
+  background: 'none',
+  background_color: '#000000',
+  background_opacity: 0.7,
+  background_padding: 0.25,
+  center_x: 50,
+  center_y: 30,
+  width_percent: 80,
+  rotation_deg: 0,
+  ...overrides,
+})
+
+const catalog: FontCatalog = {
+  families: [
+    { id: 'anton', name: 'Anton', category: 'display', weights: [400] },
+    { id: 'inter', name: 'Inter', category: 'sans', weights: [400, 700, 900] },
+  ],
+  faces: [
+    { id: 'anton-400', family: 'anton', weight: 400, weight_label: 'Regular', file: 'Anton-Regular.ttf', url: '/api/fonts/Anton-Regular.ttf' },
+    { id: 'inter-400', family: 'inter', weight: 400, weight_label: 'Regular', file: 'Inter-Regular.ttf', url: '/api/fonts/Inter-Regular.ttf' },
+    { id: 'inter-700', family: 'inter', weight: 700, weight_label: 'Bold', file: 'Inter-Bold.ttf', url: '/api/fonts/Inter-Bold.ttf' },
+    { id: 'inter-900', family: 'inter', weight: 900, weight_label: 'Black', file: 'Inter-Black.ttf', url: '/api/fonts/Inter-Black.ttf' },
+  ],
+}
+
+test('a title is sized against the stage, not the viewport', () => {
+  // Container units are what keep the stage and the export agreeing without
+  // either measuring the other (ADR 0008).
+  const { box } = titleCss(look({ font_size_percent: 7.5, width_percent: 60 }), null)
+
+  expect(box.fontSize).toBe('7.5cqh')
+  expect(box.width).toBe('60cqw')
+})
+
+test('a title is centred on its place in the frame', () => {
+  const { box } = titleCss(look({ center_x: 25, center_y: 80, rotation_deg: 12 }), null)
+
+  expect(box.left).toBe('25%')
+  expect(box.top).toBe('80%')
+  expect(box.transform).toBe('translate(-50%, -50%) rotate(12deg)')
+})
+
+test('the outline is doubled and painted behind the fill', () => {
+  // ASS draws its outline outward; a CSS stroke straddles the glyph's path, so
+  // only half of a doubled stroke shows and the two agree.
+  const { text } = titleCss(look({ outline_width: 0.1 }), null)
+
+  expect(text.WebkitTextStrokeWidth).toBe('0.2em')
+  expect(text.paintOrder).toBe('stroke fill')
+})
+
+test('a panel replaces the outline rather than joining it', () => {
+  const { text } = titleCss(
+    look({ background: 'box', background_color: '#FFE500', background_opacity: 1, outline_width: 0.1 }),
+    null,
+  )
+
+  expect(text.background).toBe('rgba(255, 229, 0, 1)')
+  // The same exclusive choice libass's BorderStyle makes.
+  expect(text.WebkitTextStrokeWidth).toBeUndefined()
+  // Cloned so the panel hugs each line, as an opaque box does.
+  expect(text.boxDecorationBreak).toBe('clone')
+})
+
+test('opacity colours the text rather than fading the panel with it', () => {
+  const { text } = titleCss(
+    look({ opacity: 0.5, background: 'box', background_opacity: 1 }),
+    null,
+  )
+
+  expect(text.color).toBe('rgba(255, 255, 255, 0.5)')
+  expect(text.background).toBe('rgba(0, 0, 0, 1)')
+})
+
+test('rgba reads a hex colour at an opacity', () => {
+  expect(rgba('#FFE500', 0.4)).toBe('rgba(255, 229, 0, 0.4)')
+})
+
+test('a weight a family lacks resolves to its nearest', () => {
+  // Anton is a single face, and asking for Black must still draw.
+  expect(resolveFace(catalog, 'anton', 900)?.id).toBe('anton-400')
+  expect(resolveFace(catalog, 'inter', 900)?.id).toBe('inter-900')
+  expect(resolveFace(catalog, 'inter', 700)?.id).toBe('inter-700')
+})
+
+test('an unknown family still draws something', () => {
+  expect(resolveFace(catalog, 'gone', 400)?.family).toBe('inter')
+})
+
+test('a title is on screen only inside its own span', () => {
+  const title = look({ start_ms: 1000, end_ms: 2000 })
+
+  expect(titleIsVisible(title, 999)).toBe(false)
+  expect(titleIsVisible(title, 1000)).toBe(true)
+  // The end is exclusive, so a title never outlives its last millisecond.
+  expect(titleIsVisible(title, 2000)).toBe(false)
+})
+
+test('dragging a title never pushes it off the front of the sequence', () => {
+  expect(slideTo(-500)).toBe(0)
+  // Snapped to a tenth of a second, as a Shot's trim is.
+  expect(slideTo(1234)).toBe(1200)
+})
+
+test('dragging on the stage keeps a title inside the frame', () => {
+  const stage = { left: 100, top: 50, width: 200, height: 400 }
+
+  expect(centreAt({ x: 200, y: 250 }, { x: 0, y: 0 }, stage)).toEqual({
+    center_x: 50,
+    center_y: 50,
+  })
+  // Dragged past the edge, it stops at it rather than leaving the picture.
+  expect(centreAt({ x: 9999, y: -9999 }, { x: 0, y: 0 }, stage)).toEqual({
+    center_x: 100,
+    center_y: 0,
+  })
+})
+
+test('the grab offset stops a title jumping under the cursor', () => {
+  const stage = { left: 0, top: 0, width: 200, height: 400 }
+  // Picked up 20px right of its centre, it stays 20px right of the pointer.
+  expect(centreAt({ x: 120, y: 200 }, { x: 20, y: 0 }, stage).center_x).toBe(50)
+})
+
+test('a title edit lands in the cache before the round trip finishes', () => {
+  const batch = { titles: [look({ id: 'a' }), look({ id: 'b' })] } as Batch
+
+  const moved = applyTitleEdit(batch, {
+    kind: 'patch',
+    titleId: 'b',
+    patch: { start_ms: 4000, end_ms: 7000 },
+  })
+
+  expect(moved.titles.map((title) => [title.id, title.start_ms])).toEqual([
+    ['a', 0],
+    ['b', 4000],
+  ])
+  expect(applyTitleEdit(batch, { kind: 'remove', titleId: 'a' }).titles).toHaveLength(1)
+  // Only the server can name a new Title, so an add is not predicted.
+  expect(applyTitleEdit(batch, { kind: 'add', atMs: 0 }).titles).toHaveLength(2)
+})
+
+// --- The Title Track and the stage, in the page -------------------------
+
+const clip: Project = {
+  id: 'clip-a',
+  mode: 'batch-process',
+  origin_kind: 'upload',
+  batch_id: 'batch-1',
+  source_url: null,
+  source_post_id: null,
+  source_caption: null,
+  social_caption: null,
+  title: 'first',
+  status: 'ready',
+  transcription_status: 'complete',
+  error_message: null,
+  duration_ms: 5000,
+  width: 1920,
+  height: 1080,
+  fps: 30,
+  trim_start_ms: 0,
+  trim_end_ms: 5000,
+  layout: 'fit_background',
+  crop_center_x: 50,
+  captions_enabled: true,
+  caption_style: 'bold',
+  caption_position: 'bottom',
+  created_at: '2026-08-02T12:00:00Z',
+  updated_at: '2026-08-02T12:00:00Z',
+  artifacts: [{ id: 'art-1', kind: 'preview', mime_type: 'video/mp4', size_bytes: 1, url: '/api/artifacts/art-1' }],
+  captions: [],
+  image_overlays: [],
+  renders: [],
+  latest_job: null,
+}
+
+const shot: Shot = { id: 'shot-1', clip_id: 'clip-a', position: 0, trim_start_ms: null, trim_end_ms: null }
+
+const styles: TitleStyle[] = [
+  { ...look(), id: 'builtin:hook', name: 'Hook', builtin: true } as unknown as TitleStyle,
+]
+
+const summary: BatchSummary = {
+  id: 'batch-1',
+  name: 'Tuesday pulls',
+  format: 'vertical',
+  created_at: '2026-08-02T12:00:00Z',
+  updated_at: '2026-08-02T12:00:00Z',
+  clip_count: 1,
+  importing_count: 0,
+  failed_count: 0,
+  shot_count: 1,
+}
+
+function makeBatch(titles: Title[]): Batch {
+  return {
+    id: 'batch-1',
+    name: 'Tuesday pulls',
+    format: 'vertical',
+    created_at: '2026-08-02T12:00:00Z',
+    updated_at: '2026-08-02T12:00:00Z',
+    clips: [clip],
+    shots: [shot],
+    cutaways: [],
+    titles,
+    sequence_render: null,
+  }
+}
+
+function stubApi(batch: Batch, overrides: Record<string, unknown> = {}) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input)
+    const key = `${init?.method ?? 'GET'} ${path}`
+    if (key in overrides) return { ok: true, json: async () => overrides[key] }
+    if (path === '/api/batches') return { ok: true, json: async () => [summary] }
+    if (path === '/api/batches/batch-1') return { ok: true, json: async () => batch }
+    if (path === '/api/title-styles') return { ok: true, json: async () => styles }
+    if (path === '/api/fonts') return { ok: true, json: async () => catalog }
+    return { ok: true, json: async () => [] }
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+function renderBatch(client: QueryClient) {
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter
+        initialEntries={['/modes/batch-process/batches/batch-1']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <App />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+test('the timeline gives titles a track of their own', async () => {
+  stubApi(makeBatch([look({ id: 'title-1', text: 'WAIT FOR IT' })]))
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  // Its own lane, beside the Shots and the Cutaways rather than inside either.
+  expect(within(track).getByRole('button', { name: /WAIT FOR IT/ })).toBeVisible()
+  expect(screen.getByRole('list', { name: 'Timeline' })).toBeVisible()
+  expect(screen.getByRole('list', { name: 'Cutaways' })).toBeVisible()
+})
+
+test('a batch carries more than one title at a time', async () => {
+  stubApi(
+    makeBatch([
+      look({ id: 'title-1', text: 'FIRST', start_ms: 0, end_ms: 2000 }),
+      look({ id: 'title-2', text: 'SECOND', start_ms: 1000, end_ms: 4000 }),
+    ]),
+  )
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  // Overlapping is allowed: unlike two Cutaways, two Titles simply both draw.
+  expect(within(track).getByRole('button', { name: /FIRST/ })).toBeVisible()
+  expect(within(track).getByRole('button', { name: /SECOND/ })).toBeVisible()
+})
+
+test('adding text puts a title at the playhead and opens it for editing', async () => {
+  const added = look({ id: 'title-new', text: 'Your text here' })
+  const fetchMock = stubApi(makeBatch([]), {
+    'POST /api/batches/batch-1/titles': makeBatch([added]),
+  })
+
+  renderBatch(newClient())
+
+  fireEvent.click(await screen.findByRole('button', { name: /Add text/ }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/titles',
+      expect.objectContaining({ method: 'POST' }),
+    ),
+  )
+  const sent = JSON.parse(
+    (fetchMock.mock.calls.find(([path]) => String(path).endsWith('/titles'))?.[1] as RequestInit)
+      .body as string,
+  )
+  expect(sent.start_ms).toBe(0)
+  expect(sent.end_ms).toBe(3000)
+  // Made from a Style, so it arrives looking like something.
+  expect(sent.style_id).toBe('builtin:hook')
+
+  // The new Title is selected, so its inspector is what the operator types into.
+  expect(await screen.findByLabelText('Title text')).toHaveValue('Your text here')
+})
+
+test('selecting a title opens its inspector', async () => {
+  stubApi(makeBatch([look({ id: 'title-1', text: 'WAIT FOR IT' })]))
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
+
+  expect(await screen.findByLabelText('Title text')).toHaveValue('WAIT FOR IT')
+  // Every family in the catalog is offered, grouped by the kind of face it is.
+  const font = screen.getByLabelText(/Font/) as HTMLSelectElement
+  expect(within(font).getByRole('option', { name: 'Anton' })).toBeInTheDocument()
+  expect(within(font).getByRole('option', { name: 'Inter' })).toBeInTheDocument()
+})
+
+test('the inspector offers only the weights a family was vendored at', async () => {
+  stubApi(makeBatch([look({ id: 'title-1', font_family: 'inter', font_weight: 900 })]))
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
+
+  await screen.findByLabelText('Title text')
+  const weights = screen.getByRole('group', { name: 'Weight' })
+  expect(within(weights).getByRole('button', { name: 'Black' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(within(weights).getByRole('button', { name: 'Bold' })).toBeVisible()
+})
+
+test('changing the font sends only what changed', async () => {
+  const batch = makeBatch([look({ id: 'title-1' })])
+  const fetchMock = stubApi(batch, {
+    'PATCH /api/batches/batch-1/titles/title-1': batch,
+  })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
+  await screen.findByLabelText('Title text')
+
+  fireEvent.change(screen.getByLabelText(/Font/), { target: { value: 'inter' } })
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(([path]) =>
+      String(path).endsWith('/titles/title-1'),
+    )
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      font_family: 'inter',
+    })
+  })
+})
+
+test('saving a look as a profile names it and keeps it for the next batch', async () => {
+  const batch = makeBatch([look({ id: 'title-1', font_family: 'anton', color: '#FFE500' })])
+  const fetchMock = stubApi(batch, {
+    'POST /api/title-styles': { ...styles[0], id: 'style-new', name: 'My hook', builtin: false },
+  })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
+  await screen.findByLabelText('Title text')
+
+  fireEvent.click(screen.getByRole('button', { name: /Save as profile/ }))
+  fireEvent.change(screen.getByLabelText(/Profile name/), { target: { value: 'My hook' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+  // The list is fetched on load too, so the write is found by its method.
+  const posted = () =>
+    fetchMock.mock.calls.find(
+      ([path, init]) =>
+        String(path) === '/api/title-styles' && (init as RequestInit)?.method === 'POST',
+    )
+  await waitFor(() => expect(posted()).toBeDefined())
+  const saved = JSON.parse((posted()?.[1] as RequestInit).body as string)
+  expect(saved.name).toBe('My hook')
+  expect(saved.color).toBe('#FFE500')
+  // The words and the timing are the Title's, not the profile's.
+  expect(saved).not.toHaveProperty('text')
+  expect(saved).not.toHaveProperty('start_ms')
+})
+
+test('the stage draws a title only while it is playing', async () => {
+  stubApi(makeBatch([look({ id: 'title-1', text: 'ONLY LATER', start_ms: 2000, end_ms: 4000 })]))
+
+  renderBatch(newClient())
+
+  await screen.findByRole('list', { name: 'Titles' })
+  const stage = screen.getByLabelText('Player')
+  // The playhead starts at zero, before this Title's span.
+  expect(within(stage).queryByText('ONLY LATER')).not.toBeInTheDocument()
+})
+
+test('the stage draws a title that is playing', async () => {
+  stubApi(makeBatch([look({ id: 'title-1', text: 'FROM THE TOP', start_ms: 0, end_ms: 4000 })]))
+
+  renderBatch(newClient())
+
+  await screen.findByRole('list', { name: 'Titles' })
+  const stage = screen.getByLabelText('Player')
+  expect(within(stage).getByText('FROM THE TOP')).toBeVisible()
+})

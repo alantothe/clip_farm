@@ -22,8 +22,9 @@ import { api } from '../../api'
 import { formatDefinition } from '../../formats/registry'
 import { formatTime } from '../../lib/format'
 import { artifact } from '../../lib/project'
-import type { Format, Project } from '../../types'
+import type { FontCatalog, Format, Project, Title, TitlePatch } from '../../types'
 import { ScrubBar } from './ScrubBar'
+import { TitleStage } from './TitleStage'
 import { usePlayerKeys } from './usePlayerKeys'
 import type { SequencePlayer } from './useSequencePlayer'
 
@@ -134,11 +135,25 @@ function useFittedStage(ratio: number) {
 export function Player({
   player,
   format,
+  titles = [],
+  fontCatalog = null,
+  selectedTitleId = null,
+  titlePreview = null,
+  onSelectTitle,
+  onEditTitle,
   onTrimToPlayhead,
   canTrim = false,
 }: {
   player: SequencePlayer
   format: Format
+  /** The Batch's Titles, timed against the Sequence like the playhead itself. */
+  titles?: Title[]
+  fontCatalog?: FontCatalog | null
+  selectedTitleId?: string | null
+  /** An in-flight inspector edit, drawn but not yet sent. */
+  titlePreview?: ({ titleId: string } & TitlePatch) | null
+  onSelectTitle?: (titleId: string) => void
+  onEditTitle?: (title: Title, patch: TitlePatch) => void
   /** Set the selected Shot's Trim to the playhead. Absent when nothing can. */
   onTrimToPlayhead?: (edge: 'in' | 'out') => void
   canTrim?: boolean
@@ -193,6 +208,13 @@ export function Player({
   const subtitle = currentClip?.captions.find(
     (segment) => player.sourceMs >= segment.start_ms && player.sourceMs <= segment.end_ms,
   )
+  // An inspector edit still under the operator's finger is drawn from here
+  // rather than waiting for the round trip, so a size slider moves the text.
+  const drawnTitles = titlePreview
+    ? titles.map((title) =>
+        title.id === titlePreview.titleId ? { ...title, ...titlePreview } : title,
+      )
+    : titles
 
   return (
     <section className="player" aria-label="Player">
@@ -305,6 +327,27 @@ export function Player({
             >
               {subtitle.text}
             </div>
+          )}
+
+          {/*
+           * Titles, over everything the Clip brought with it.
+           *
+           * They belong to the Batch and are timed against the Sequence, so
+           * unlike Subtitles and Overlays they are unaffected by which Clip is
+           * supplying the picture — a Cutaway included (ADR 0008). Drawn only
+           * in the Format view, because the Source view shows the whole frame
+           * and a Title is placed against the finished one.
+           */}
+          {framed && (
+            <TitleStage
+              titles={drawnTitles}
+              catalog={fontCatalog}
+              playheadMs={player.playheadMs}
+              selectedTitleId={selectedTitleId}
+              onSelect={(titleId) => onSelectTitle?.(titleId)}
+              onEdit={(title, patch) => onEditTitle?.(title, patch)}
+              editable={Boolean(onEditTitle)}
+            />
           )}
 
           {/* Where Instagram's own chrome will sit over the picture. */}

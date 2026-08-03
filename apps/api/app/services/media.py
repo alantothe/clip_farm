@@ -10,6 +10,8 @@ import cv2
 import numpy as np
 import pysubs2
 
+from app.services import fonts
+
 
 class MediaProcessingError(RuntimeError):
     pass
@@ -225,6 +227,126 @@ def create_ass_captions(
     return True
 
 
+#: The canvas every Title measurement is anchored to, matching the Subtitles
+#: above and the shape the export is validated against.
+TITLE_CANVAS = (1080, 1920)
+
+
+def _ass_color(hex_color: str, opacity: float = 1.0) -> pysubs2.Color:
+    """`#RRGGBB` plus an opacity, as ASS keeps it.
+
+    ASS stores transparency rather than opacity, and inverted: 0 is fully
+    opaque. Doing the flip in one place is what keeps a Title at 50% from
+    coming out invisible.
+    """
+    value = hex_color.lstrip("#")
+    red, green, blue = (int(value[index : index + 2], 16) for index in (0, 2, 4))
+    return pysubs2.Color(red, green, blue, round((1 - max(0.0, min(1.0, opacity))) * 255))
+
+
+def _ass_text(text: str, *, uppercase: bool) -> str:
+    r"""A Title's words, safe to put in an ASS event.
+
+    Braces open and close an override block, so a Title reading `{sponsored}`
+    would otherwise be parsed as a malformed instruction and vanish. Escaping
+    them is what makes the operator's text the operator's text.
+    """
+    cleaned = text.upper() if uppercase else text
+    cleaned = cleaned.replace("{", r"\{").replace("}", r"\}")
+    return cleaned.replace("\r\n", "\n").replace("\n", r"\N")
+
+
+def create_ass_titles(
+    *,
+    titles: list[tuple],
+    output: Path,
+    canvas: tuple[int, int] = TITLE_CANVAS,
+) -> bool:
+    r"""Draw a segment's Titles into an ASS file.
+
+    `titles` is what `titles_in_span` produces: each Title with its start and
+    end already rebased onto this segment.
+
+    Every Title gets a style of its own, because they share nothing — one may be
+    Anton in a yellow box and the next Playfair outlined in black. Placement is
+    an absolute `\pos` in canvas pixels, so the same Title lands on the same
+    pixels in every segment it crosses and the joins do not show.
+
+    The event's left and right margins are what set the wrap width. libass wraps
+    inside them even under `\pos`, which is what makes a Title's `width_percent`
+    mean the same thing here as the box the operator dragged on the stage.
+    """
+    width, height = canvas
+    subtitles = pysubs2.SSAFile()
+    subtitles.info["PlayResX"] = str(width)
+    subtitles.info["PlayResY"] = str(height)
+    # Greedy, line-by-line wrapping. libass's default balances the lines
+    # instead, which reads better but is not what the browser does — and a
+    # Title that re-wraps between the stage and the export is the one thing
+    # this whole arrangement exists to avoid (ADR 0008).
+    subtitles.info["WrapStyle"] = "1"
+    subtitles.info["ScaledBorderAndShadow"] = "yes"
+
+    for index, (title, start_ms, end_ms) in enumerate(titles):
+        if end_ms <= start_ms:
+            continue
+        face = fonts.resolve_face(title.font_family, title.font_weight)
+        font_px = title.font_size_percent / 100 * height
+        boxed = title.background == "box"
+        name = f"Title{index}"
+
+        subtitles.styles[name] = pysubs2.SSAStyle(
+            fontname=face["face_name"],
+            fontsize=font_px,
+            bold=face["face_bold"],
+            italic=title.italic,
+            primarycolor=_ass_color(title.color, title.opacity),
+            # BorderStyle 3 spends the outline width on the box's padding
+            # instead of on an outline, so the two are one control, not two.
+            borderstyle=3 if boxed else 1,
+            outlinecolor=(
+                _ass_color(title.background_color, title.background_opacity)
+                if boxed
+                else _ass_color(title.outline_color, title.opacity)
+            ),
+            outline=(title.background_padding if boxed else title.outline_width) * font_px,
+            backcolor=_ass_color(title.shadow_color, title.opacity),
+            shadow=title.shadow_offset * font_px,
+            spacing=title.letter_spacing * font_px,
+        )
+
+        box_width = title.width_percent / 100 * width
+        left = title.center_x / 100 * width - box_width / 2
+        # The anchor moves with the alignment so the *box* stays put: text set
+        # left is pinned to the box's left edge, not centred on its middle.
+        anchor, x = {
+            "left": (4, left),
+            "right": (6, left + box_width),
+        }.get(title.align, (5, title.center_x / 100 * width))
+
+        subtitles.events.append(
+            pysubs2.SSAEvent(
+                start=start_ms,
+                end=end_ms,
+                style=name,
+                marginl=max(0, round(left)),
+                marginr=max(0, round(width - left - box_width)),
+                # ASS rotates anticlockwise where CSS rotates clockwise, and
+                # the stage is the one the operator dragged.
+                text=(
+                    rf"{{\an{anchor}\pos({round(x)},{round(title.center_y / 100 * height)})"
+                    rf"\frz{-title.rotation_deg:.2f}}}"
+                    + _ass_text(title.text, uppercase=title.uppercase)
+                ),
+            )
+        )
+
+    if not subtitles.events:
+        return False
+    subtitles.save(str(output))
+    return True
+
+
 def _face_detector():
     try:
         import mediapipe as mp
@@ -344,6 +466,7 @@ def render_vertical(
     caption_style: str,
     caption_position: str,
     image_overlays: list,
+    titles: list[tuple] | None = None,
     progress: Callable[[int], None] | None = None,
 ) -> None:
     duration_seconds = (end_ms - start_ms) / 1000
@@ -356,6 +479,10 @@ def render_vertical(
         position=caption_position,
         output=captions_path,
     )
+    # Already sliced to this stretch and rebased onto it by `titles_in_span`;
+    # a Title is timed against the Sequence and knows nothing of a Shot's trim.
+    titles_path = temp_dir / "titles.ass"
+    has_titles = bool(titles) and create_ass_titles(titles=titles, output=titles_path)
 
     common_output = [
         "-c:v",
@@ -422,6 +549,29 @@ def render_vertical(
             current = output_label
         return current
 
+    def add_text_filters(filters: list[str], base_label: str) -> str:
+        """Burn in Subtitles, then Titles over them.
+
+        Titles go last because they are placed deliberately and Subtitles land
+        wherever the transcript falls; where the two collide, the one the
+        operator positioned by hand is the one that should win.
+
+        `fontsdir` is what points libass at the vendored faces. Without it a
+        Title would fall back to whatever the host has installed — the export
+        quietly disagreeing with the stage, which is the failure the vendored
+        fonts exist to prevent (ADR 0008).
+        """
+        current = base_label
+        if has_captions:
+            filters.append(f"[{current}]ass={captions_path}[captioned]")
+            current = "captioned"
+        if has_titles:
+            filters.append(
+                f"[{current}]ass={titles_path}:fontsdir={fonts.FONTS_DIR}[titled]"
+            )
+            current = "titled"
+        return current
+
     if layout == "smart_crop":
         intermediate = temp_dir / "smart-crop-intermediate.mp4"
         create_smart_crop_video(
@@ -446,10 +596,7 @@ def render_vertical(
         ]
         add_overlay_inputs(command)
         filters = ["[0:v]null[base]"]
-        map_label = add_overlay_filters(filters, "base", 2)
-        if has_captions:
-            filters.append(f"[{map_label}]ass={captions_path}[captioned]")
-            map_label = "captioned"
+        map_label = add_text_filters(filters, add_overlay_filters(filters, "base", 2))
         command.extend([
             "-filter_complex",
             ";".join(filters),
@@ -480,10 +627,7 @@ def render_vertical(
         add_overlay_inputs(command)
         # The composed base filter above contains its own separators, so append
         # timed overlays as additional filter-chain entries.
-        map_label = add_overlay_filters(filters, "composed", 1)
-        if has_captions:
-            filters.append(f"[{map_label}]ass={captions_path}[captioned]")
-            map_label = "captioned"
+        map_label = add_text_filters(filters, add_overlay_filters(filters, "composed", 1))
         command.extend([
             "-filter_complex",
             ";".join(filters),

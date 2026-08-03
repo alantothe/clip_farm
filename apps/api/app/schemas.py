@@ -141,6 +141,199 @@ class ImageOverlayOut(BaseModel):
     url: str
 
 
+TitleAlign = Literal["left", "center", "right"]
+TitleBackground = Literal["none", "box"]
+
+#: `#RRGGBB`, the one colour spelling that crosses the API. The renderer and the
+#: browser both parse it, and neither has to guess about alpha — opacity is its
+#: own field, because libass keeps colour and alpha in separate places anyway.
+HEX_COLOR = r"^#(?:[0-9A-Fa-f]{6})$"
+
+
+def _upper_hex(value: str) -> str:
+    return value.upper()
+
+
+class TitleLookOut(BaseModel):
+    """A Title's look and placement, as it is stored.
+
+    The ranges are the renderer's, not the UI's: a `font_size_percent` of 40 is
+    a Title four-tenths of the frame tall, which is absurd but draws. Anything
+    outside these produces an ASS file libass would read as something else.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    font_family: str = "inter"
+    font_weight: int = Field(default=900, ge=100, le=900)
+    italic: bool = False
+    uppercase: bool = False
+    font_size_percent: float = Field(default=6.0, ge=1, le=40)
+    letter_spacing: float = Field(default=0.0, ge=-0.1, le=0.5)
+    color: str = Field(default="#FFFFFF", pattern=HEX_COLOR)
+    opacity: float = Field(default=1.0, ge=0.05, le=1)
+    align: TitleAlign = "center"
+    outline_color: str = Field(default="#000000", pattern=HEX_COLOR)
+    outline_width: float = Field(default=0.08, ge=0, le=0.4)
+    shadow_color: str = Field(default="#000000", pattern=HEX_COLOR)
+    shadow_offset: float = Field(default=0.0, ge=0, le=0.4)
+    background: TitleBackground = "none"
+    background_color: str = Field(default="#000000", pattern=HEX_COLOR)
+    background_opacity: float = Field(default=0.7, ge=0, le=1)
+    background_padding: float = Field(default=0.25, ge=0, le=1.5)
+    center_x: float = Field(default=50.0, ge=0, le=100)
+    center_y: float = Field(default=30.0, ge=0, le=100)
+    width_percent: float = Field(default=80.0, ge=5, le=100)
+    rotation_deg: float = Field(default=0.0, ge=-180, le=180)
+
+
+class TitleLookPatch(BaseModel):
+    """The same set, all optional: an omitted field is one left alone.
+
+    None is not meaningful for any of these — a Title always has a colour — so
+    unlike `ShotUpdate` there is no absent-versus-null distinction to keep, and
+    `exclude_unset` is enough.
+    """
+
+    font_family: str | None = None
+    font_weight: int | None = Field(default=None, ge=100, le=900)
+    italic: bool | None = None
+    uppercase: bool | None = None
+    font_size_percent: float | None = Field(default=None, ge=1, le=40)
+    letter_spacing: float | None = Field(default=None, ge=-0.1, le=0.5)
+    color: str | None = Field(default=None, pattern=HEX_COLOR)
+    opacity: float | None = Field(default=None, ge=0.05, le=1)
+    align: TitleAlign | None = None
+    outline_color: str | None = Field(default=None, pattern=HEX_COLOR)
+    outline_width: float | None = Field(default=None, ge=0, le=0.4)
+    shadow_color: str | None = Field(default=None, pattern=HEX_COLOR)
+    shadow_offset: float | None = Field(default=None, ge=0, le=0.4)
+    background: TitleBackground | None = None
+    background_color: str | None = Field(default=None, pattern=HEX_COLOR)
+    background_opacity: float | None = Field(default=None, ge=0, le=1)
+    background_padding: float | None = Field(default=None, ge=0, le=1.5)
+    center_x: float | None = Field(default=None, ge=0, le=100)
+    center_y: float | None = Field(default=None, ge=0, le=100)
+    width_percent: float | None = Field(default=None, ge=5, le=100)
+    rotation_deg: float | None = Field(default=None, ge=-180, le=180)
+
+    _normalize_colors = field_validator(
+        "color", "outline_color", "shadow_color", "background_color"
+    )(lambda value: value if value is None else value.upper())
+
+    def look(self) -> dict:
+        """Only the look fields, and only the ones actually sent.
+
+        Restricted to this model's own fields because the subclasses add
+        `text`, `start_ms` and `name`, which are not part of a look and must
+        not be copied onto one.
+        """
+        sent = self.model_dump(exclude_unset=True, exclude_none=True)
+        return {name: sent[name] for name in TitleLookPatch.model_fields if name in sent}
+
+
+class TitleCreate(TitleLookPatch):
+    """Write a Title onto a Batch's Sequence.
+
+    `style_id` is applied first and the look fields sent alongside it win, so
+    one request can both start from a Style and depart from it — which is what
+    duplicating an existing Title is.
+    """
+
+    text: str = Field(default="", max_length=500)
+    start_ms: int = Field(default=0, ge=0)
+    end_ms: int = Field(default=3000, gt=0)
+    style_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_span(self):
+        if self.end_ms <= self.start_ms:
+            raise ValueError("A title has to end after it starts")
+        return self
+
+
+class TitleUpdate(TitleLookPatch):
+    """Retime, rewrite or restyle a Title. Everything is optional."""
+
+    text: str | None = Field(default=None, max_length=500)
+    start_ms: int | None = Field(default=None, ge=0)
+    end_ms: int | None = Field(default=None, gt=0)
+    style_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_span(self):
+        if self.start_ms is not None and self.end_ms is not None and self.end_ms <= self.start_ms:
+            raise ValueError("A title has to end after it starts")
+        return self
+
+
+class TitleOut(TitleLookOut):
+    id: str
+    batch_id: str
+    text: str
+    #: Sequence milliseconds, not an offset into a Shot (ADR 0008).
+    start_ms: int
+    end_ms: int
+    #: Where this Title's look came from, for its label. Not a live link.
+    style_id: str | None = None
+
+
+class TitleStyleWrite(TitleLookPatch):
+    """Save a look under a name. Anything unsent takes the stored default."""
+
+    name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("name")
+    @classmethod
+    def name_is_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("A style needs a name")
+        return cleaned
+
+
+class TitleStyleOut(TitleLookOut):
+    id: str
+    name: str
+    #: Clip Farm's own Styles, which cannot be edited or deleted.
+    builtin: bool = False
+
+
+class FontFamilyOut(BaseModel):
+    """One family an operator can pick, and the weights actually vendored.
+
+    `weights` is the truth about the files on disk, not an aspiration: asking
+    for a weight a family does not have resolves to its nearest, so the picker
+    shows only what will be drawn exactly.
+    """
+
+    id: str
+    name: str
+    category: str
+    weights: list[int]
+
+
+class FontFaceOut(BaseModel):
+    """One vendored file, and the two names needed to use it.
+
+    `file` is what the browser loads and what the renderer opens — the same
+    bytes on both sides, which is the whole reason the faces are committed
+    (ADR 0008).
+    """
+
+    id: str
+    family: str
+    weight: int
+    weight_label: str
+    file: str
+    url: str
+
+
+class FontCatalogOut(BaseModel):
+    families: list[FontFamilyOut]
+    faces: list[FontFaceOut]
+
+
 class PublicationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -342,6 +535,9 @@ class BatchOut(BaseModel):
     # Base Shot at an offset rather than in the running order (ADR 0005).
     shots: list[ShotOut] = []
     cutaways: list[CutawayOut] = []
+    # Timed in Sequence milliseconds and owned by the Batch, so they travel
+    # here rather than on any Clip (ADR 0008).
+    titles: list[TitleOut] = []
     # The most recent export, if this Batch has ever been rendered.
     sequence_render: SequenceRenderOut | None = None
 

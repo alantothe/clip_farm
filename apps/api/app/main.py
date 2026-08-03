@@ -14,6 +14,7 @@ from app.routers import (
     platforms_router,
     projects_router,
     publishing_router,
+    titles_router,
 )
 
 
@@ -45,6 +46,7 @@ app.include_router(platforms_router)
 app.include_router(publishing_router)
 app.include_router(media_router)
 app.include_router(batches_router)
+app.include_router(titles_router)
 app.include_router(projects_router)
 app.include_router(jobs_router)
 

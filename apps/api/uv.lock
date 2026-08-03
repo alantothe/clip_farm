@@ -296,6 +296,7 @@ ai-local = [
     { name = "faster-whisper" },
 ]
 dev = [
+    { name = "fonttools" },
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
@@ -322,6 +323,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 ai-local = [{ name = "faster-whisper", specifier = ">=1.1,<2" }]
 dev = [
+    { name = "fonttools", specifier = ">=4.50,<5" },
     { name = "pytest", specifier = ">=8.3,<9" },
     { name = "pytest-cov", specifier = ">=6,<7" },
 ]

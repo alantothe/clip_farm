@@ -99,6 +99,7 @@ const batch: Batch = {
   clips: [makeClip({ id: 'clip-ready', title: 'first' }), importingClip],
   shots: [],
   cutaways: [],
+  titles: [],
   sequence_render: null,
 }
 

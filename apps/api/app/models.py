@@ -35,6 +35,16 @@ ORIGIN_KIND_UPLOAD = "upload"
 FORMAT_VERTICAL = "vertical"
 FORMATS = (FORMAT_VERTICAL,)
 
+# How a Title's text is set off from the picture behind it. `none` leaves the
+# glyphs outlined; `box` puts them in a filled panel. They are exclusive because
+# libass's BorderStyle is: 1 draws an outline, 3 draws a box and spends the same
+# outline width on the box's padding (ADR 0008).
+TITLE_BACKGROUND_NONE = "none"
+TITLE_BACKGROUND_BOX = "box"
+TITLE_BACKGROUNDS = (TITLE_BACKGROUND_NONE, TITLE_BACKGROUND_BOX)
+
+TITLE_ALIGNMENTS = ("left", "center", "right")
+
 
 class Batch(Base):
     """A named set of Clips imported and worked on together.
@@ -73,6 +83,14 @@ class Batch(Base):
         back_populates="batch",
         cascade="all, delete-orphan",
         order_by="SequenceRender.created_at",
+    )
+    # Titles are timed in Sequence milliseconds and belong to the Batch rather
+    # than to any Clip in it (ADR 0008). They may overlap, so this is the order
+    # they are drawn in: later ones sit on top.
+    titles: Mapped[list["Title"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        order_by="Title.start_ms, Title.created_at",
     )
 
 
@@ -179,6 +197,118 @@ class SequenceRender(Base):
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     batch: Mapped[Batch] = relationship(back_populates="sequence_renders")
+
+
+class TitleLook:
+    """Everything about a Title except its words and its timing.
+
+    A mixin because a Title and a Title Style carry exactly the same set: a
+    Style *is* a Title's look and placement, saved under a name and without the
+    text (ADR 0008). Keeping one definition is what stops the two drifting and
+    leaving a Style that cannot describe a Title.
+
+    Sizes are fractions rather than pixels wherever a font size scales them —
+    `outline_width` at 0.08 is 8% of the font size, so making the text bigger
+    thickens its outline the way a designer would expect. Everything measured
+    against the frame is a percentage of it, so the same numbers survive if a
+    second Format ever lands.
+    """
+
+    #: A family id from `fonts/catalog.json`, not a face name. Which file that
+    #: resolves to is `app.services.fonts`' business, and depends on the weight.
+    font_family: Mapped[str] = mapped_column(String, default="inter")
+    font_weight: Mapped[int] = mapped_column(Integer, default=900)
+    #: Synthesised on both sides rather than vendored as its own face (ADR 0008).
+    italic: Mapped[bool] = mapped_column(Boolean, default=False)
+    uppercase: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Cap height and the rest scale from this: a percent of the frame's height.
+    font_size_percent: Mapped[float] = mapped_column(Float, default=6.0)
+    #: Tracking, as a fraction of the font size.
+    letter_spacing: Mapped[float] = mapped_column(Float, default=0.0)
+    color: Mapped[str] = mapped_column(String, default="#FFFFFF")
+    opacity: Mapped[float] = mapped_column(Float, default=1.0)
+    align: Mapped[str] = mapped_column(String, default="center")
+
+    outline_color: Mapped[str] = mapped_column(String, default="#000000")
+    #: A fraction of the font size. Zero is no outline at all.
+    outline_width: Mapped[float] = mapped_column(Float, default=0.08)
+    shadow_color: Mapped[str] = mapped_column(String, default="#000000")
+    shadow_offset: Mapped[float] = mapped_column(Float, default=0.0)
+
+    background: Mapped[str] = mapped_column(String, default=TITLE_BACKGROUND_NONE)
+    background_color: Mapped[str] = mapped_column(String, default="#000000")
+    background_opacity: Mapped[float] = mapped_column(Float, default=0.7)
+    #: The box's padding, as a fraction of the font size.
+    background_padding: Mapped[float] = mapped_column(Float, default=0.25)
+
+    #: Where the text's centre sits, as a percent of the frame.
+    center_x: Mapped[float] = mapped_column(Float, default=50.0)
+    center_y: Mapped[float] = mapped_column(Float, default=30.0)
+    #: How wide the text may run before it wraps, as a percent of the frame.
+    width_percent: Mapped[float] = mapped_column(Float, default=80.0)
+    rotation_deg: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+#: The columns `TitleLook` defines, in one place, so copying a Style onto a
+#: Title and back again never has to name all twenty by hand. Read from the
+#: annotations rather than a hand-kept list: a field added to the mixin and
+#: forgotten here would apply a Style that silently left it behind.
+TITLE_LOOK_FIELDS = tuple(TitleLook.__annotations__)
+
+
+class TitleStyle(TitleLook, Base):
+    """A saved look a Title can be made from, reusable across every Batch.
+
+    Applying one copies its values; it does not bind them, so editing a Style
+    leaves Titles already made from it alone (ADR 0008). Clip Farm's own
+    built-in Styles are not rows here — they live in `app.services.titles`, so
+    improving one is a release rather than a data migration.
+    """
+
+    __tablename__ = "title_styles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class Title(TitleLook, Base):
+    """Text drawn over the picture for a span of a Batch's Sequence.
+
+    It belongs to the Batch rather than to a Clip, and its times are Sequence
+    milliseconds rather than offsets into anything: a hook written for the first
+    three seconds stays at the first three seconds when the Shots underneath are
+    reordered (ADR 0008).
+
+    A Title crossing a cut is not composited over the joined video. It is sliced
+    at the segment boundaries it crosses and burned into each piece, which is
+    what leaves ADR 0003's join untouched.
+    """
+
+    __tablename__ = "titles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text, default="")
+    start_ms: Mapped[int] = mapped_column(Integer, default=0)
+    end_ms: Mapped[int] = mapped_column(Integer, default=3000)
+    #: Which Style this was made from, for the label alone. Nulled rather than
+    #: cascaded when that Style is deleted: the look is already copied here, so
+    #: the Title is unaffected by losing the name it came from.
+    style_id: Mapped[str | None] = mapped_column(
+        ForeignKey("title_styles.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    batch: Mapped["Batch"] = relationship(back_populates="titles")
+
+    @property
+    def duration_ms(self) -> int:
+        return max(0, self.end_ms - self.start_ms)
 
 
 class Project(Base):

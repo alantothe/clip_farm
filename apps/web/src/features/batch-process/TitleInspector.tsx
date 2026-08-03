@@ -1,0 +1,634 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Bookmark, Trash2, Type } from 'lucide-react'
+import { formatTime } from '../../lib/format'
+import { faceFamily, loadFace, resolveFace } from '../../lib/titles'
+import type {
+  FontCatalog,
+  FontFamily,
+  Title,
+  TitleAlign,
+  TitleLook,
+  TitlePatch,
+  TitleStyle,
+} from '../../types'
+
+const CATEGORY_LABELS: Record<string, string> = {
+  sans: 'Sans',
+  display: 'Display',
+  serif: 'Serif',
+  script: 'Script & hand',
+}
+
+const WEIGHT_LABELS: Record<number, string> = {
+  400: 'Regular',
+  700: 'Bold',
+  800: 'Extra',
+  900: 'Black',
+}
+
+const ALIGNMENTS: TitleAlign[] = ['left', 'center', 'right']
+
+/**
+ * A number control that shows every intermediate value and sends only the last.
+ *
+ * A range input fires on every pixel of a drag. Sending each one would put a
+ * hundred requests behind one gesture; showing none of them until release would
+ * make the slider feel broken. So the moves go to the preview, which is local,
+ * and the release goes to the server — the same split every gesture on the
+ * Timeline already uses.
+ */
+function Slider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  format,
+  onPreview,
+  onCommit,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  step: number
+  format?: (value: number) => string
+  onPreview: (value: number) => void
+  onCommit: (value: number) => void
+}) {
+  const latest = useRef(value)
+  return (
+    <label className="title-field">
+      <span className="title-field__label">
+        {label}
+        <small>{format ? format(value) : value}</small>
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => {
+          latest.current = Number(event.target.value)
+          onPreview(latest.current)
+        }}
+        onPointerUp={() => onCommit(latest.current)}
+        onKeyUp={() => onCommit(latest.current)}
+        onBlur={() => onCommit(latest.current)}
+      />
+    </label>
+  )
+}
+
+/** A colour well that commits when the picker closes, not while it is open. */
+function Colour({
+  label,
+  value,
+  onPreview,
+  onCommit,
+}: {
+  label: string
+  value: string
+  onPreview: (value: string) => void
+  onCommit: (value: string) => void
+}) {
+  const latest = useRef(value)
+  return (
+    <label className="title-field title-field--colour">
+      <span className="title-field__label">{label}</span>
+      <input
+        type="color"
+        value={value}
+        onChange={(event) => {
+          latest.current = event.target.value.toUpperCase()
+          onPreview(latest.current)
+        }}
+        onBlur={() => onCommit(latest.current)}
+      />
+    </label>
+  )
+}
+
+/**
+ * Everything about the selected Title.
+ *
+ * The controls are wide because the ask was for a lot of them, but they are
+ * ordered by how often they are reached for: the words and the timing, then the
+ * Style that sets all of the rest at once, then type, colour and placement for
+ * departing from it.
+ *
+ * Nothing here binds a Title to a Style. Applying one copies its values, so
+ * editing a Style later leaves this Title alone (ADR 0008).
+ */
+export function TitleInspector({
+  title,
+  catalog,
+  styles,
+  onEdit,
+  onPreview,
+  onRemove,
+  onSaveStyle,
+  onUpdateStyle,
+  onDeleteStyle,
+  busy,
+}: {
+  title: Title
+  catalog: FontCatalog | null
+  styles: TitleStyle[]
+  onEdit: (patch: TitlePatch) => void
+  /** Local-only, for the stage to follow a drag before it is sent. */
+  onPreview: (patch: TitlePatch | null) => void
+  onRemove: () => void
+  onSaveStyle: (name: string) => void
+  onUpdateStyle: (style: TitleStyle) => void
+  onDeleteStyle: (style: TitleStyle) => void
+  busy: boolean
+}) {
+  const [text, setText] = useState(title.text)
+  const [naming, setNaming] = useState(false)
+  const [styleName, setStyleName] = useState('')
+  const [previewsLoaded, setPreviewsLoaded] = useState(false)
+
+  useEffect(() => {
+    setText(title.text)
+  }, [title.id, title.text])
+
+  // Clearing on the way out: a preview left behind would keep overriding the
+  // Title on the stage after the inspector had gone.
+  useEffect(() => () => onPreview(null), [onPreview])
+
+  const family = useMemo(
+    () => catalog?.families.find((item) => item.id === title.font_family) ?? null,
+    [catalog, title.font_family],
+  )
+  const face = resolveFace(catalog, title.font_family, title.font_weight)
+
+  // The face in use has to be loaded for the stage to draw it.
+  useEffect(() => {
+    if (face) void loadFace(face)
+  }, [face])
+
+  const grouped = useMemo(() => {
+    const groups = new Map<string, FontFamily[]>()
+    for (const item of catalog?.families ?? []) {
+      groups.set(item.category, [...(groups.get(item.category) ?? []), item])
+    }
+    return [...groups]
+  }, [catalog])
+
+  /**
+   * Load one face per family so the picker's options draw in their own type.
+   *
+   * Deferred until the picker is first reached: 27 files is a real download,
+   * and an operator who never changes the font should never pay for it.
+   */
+  function loadPickerPreviews() {
+    if (previewsLoaded || !catalog) return
+    setPreviewsLoaded(true)
+    for (const item of catalog.families) {
+      const preview = resolveFace(catalog, item.id, 400)
+      if (preview) void loadFace(preview)
+    }
+  }
+
+  const set = (patch: TitlePatch) => onEdit(patch)
+  const preview = (patch: TitlePatch) => onPreview(patch)
+  const appliedStyle = styles.find((item) => item.id === title.style_id) ?? null
+
+  return (
+    <section className="title-inspector" aria-label="Title">
+      <header className="title-inspector__head">
+        <h2>
+          <Type size={14} /> Text
+        </h2>
+        <span className="title-inspector__time">
+          {formatTime(title.start_ms)}–{formatTime(title.end_ms)}
+        </span>
+        <button
+          className="icon-button"
+          type="button"
+          onClick={onRemove}
+          disabled={busy}
+          aria-label="Remove this text"
+          title="Remove this text"
+        >
+          <Trash2 size={15} />
+        </button>
+      </header>
+
+      <textarea
+        className="title-inspector__text"
+        value={text}
+        rows={2}
+        maxLength={500}
+        placeholder="Type the text that appears over the video"
+        aria-label="Title text"
+        onChange={(event) => {
+          setText(event.target.value)
+          preview({ text: event.target.value })
+        }}
+        onBlur={() => {
+          if (text !== title.text) set({ text })
+        }}
+      />
+
+      <div className="title-inspector__row">
+        <label className="title-field title-field--number">
+          <span className="title-field__label">Starts</span>
+          <input
+            type="number"
+            min={0}
+            step={0.1}
+            value={(title.start_ms / 1000).toFixed(1)}
+            onChange={(event) => {
+              const start = Math.max(0, Math.round(Number(event.target.value) * 1000))
+              // Carrying the length keeps a retype from inverting the span,
+              // which the API would refuse.
+              set({ start_ms: start, end_ms: start + (title.end_ms - title.start_ms) })
+            }}
+          />
+        </label>
+        <label className="title-field title-field--number">
+          <span className="title-field__label">Runs for</span>
+          <input
+            type="number"
+            min={0.4}
+            step={0.1}
+            value={((title.end_ms - title.start_ms) / 1000).toFixed(1)}
+            onChange={(event) =>
+              set({
+                end_ms: title.start_ms + Math.max(400, Math.round(Number(event.target.value) * 1000)),
+              })
+            }
+          />
+        </label>
+      </div>
+
+      <div className="title-inspector__group">
+        <div className="title-inspector__row">
+          <label className="title-field title-field--grow">
+            <span className="title-field__label">Style</span>
+            <select
+              value={title.style_id ?? ''}
+              onChange={(event) => {
+                if (event.target.value) set({ style_id: event.target.value })
+              }}
+            >
+              <option value="">
+                {appliedStyle ? appliedStyle.name : 'Custom'}
+              </option>
+              {styles.map((style) => (
+                <option key={style.id} value={style.id}>
+                  {style.name}
+                  {style.builtin ? '' : ' (saved)'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="chip"
+            type="button"
+            onClick={() => {
+              setStyleName(text.slice(0, 30) || 'My style')
+              setNaming(true)
+            }}
+            disabled={busy}
+            title="Save this look as a profile you can reuse on any batch"
+          >
+            <Bookmark size={13} />
+            Save as profile
+          </button>
+        </div>
+
+        {naming && (
+          <div className="title-inspector__row">
+            <label className="title-field title-field--grow">
+              <span className="title-field__label">Profile name</span>
+              <input
+                autoFocus
+                value={styleName}
+                maxLength={80}
+                onChange={(event) => setStyleName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && styleName.trim()) {
+                    onSaveStyle(styleName.trim())
+                    setNaming(false)
+                  }
+                  if (event.key === 'Escape') setNaming(false)
+                }}
+              />
+            </label>
+            <button
+              className="chip"
+              type="button"
+              disabled={!styleName.trim() || busy}
+              onClick={() => {
+                onSaveStyle(styleName.trim())
+                setNaming(false)
+              }}
+            >
+              Save
+            </button>
+            <button className="text-button" type="button" onClick={() => setNaming(false)}>
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {appliedStyle && !appliedStyle.builtin && (
+          <div className="title-inspector__row">
+            <button
+              className="text-button"
+              type="button"
+              disabled={busy}
+              onClick={() => onUpdateStyle(appliedStyle)}
+              title="Overwrite the profile with how this text looks now"
+            >
+              Update “{appliedStyle.name}”
+            </button>
+            <button
+              className="text-button"
+              type="button"
+              disabled={busy}
+              onClick={() => onDeleteStyle(appliedStyle)}
+            >
+              Delete profile
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="title-inspector__group">
+        <div className="title-inspector__row">
+          <label className="title-field title-field--grow">
+            <span className="title-field__label">Font</span>
+            <select
+              value={title.font_family}
+              style={face ? { fontFamily: `"${faceFamily(face.id)}", sans-serif` } : undefined}
+              onFocus={loadPickerPreviews}
+              onPointerDown={loadPickerPreviews}
+              onChange={(event) => set({ font_family: event.target.value })}
+            >
+              {grouped.map(([category, items]) => (
+                <optgroup key={category} label={CATEGORY_LABELS[category] ?? category}>
+                  {items?.map((item) => {
+                    const preview = resolveFace(catalog, item.id, 400)
+                    return (
+                      <option
+                        key={item.id}
+                        value={item.id}
+                        style={
+                          preview
+                            ? { fontFamily: `"${faceFamily(preview.id)}", sans-serif` }
+                            : undefined
+                        }
+                      >
+                        {item.name}
+                      </option>
+                    )
+                  })}
+                </optgroup>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {/* Only the weights this family was actually vendored at: offering one
+            it does not have would draw the nearest and look like a bug. */}
+        <div className="title-inspector__row" role="group" aria-label="Weight">
+          {(family?.weights ?? [400]).map((weight) => (
+            <button
+              key={weight}
+              type="button"
+              className={`chip ${title.font_weight === weight ? 'is-active' : ''}`}
+              aria-pressed={title.font_weight === weight}
+              onClick={() => set({ font_weight: weight })}
+            >
+              {WEIGHT_LABELS[weight] ?? weight}
+            </button>
+          ))}
+          <button
+            type="button"
+            className={`chip ${title.italic ? 'is-active' : ''}`}
+            aria-pressed={title.italic}
+            onClick={() => set({ italic: !title.italic })}
+            title="Slanted. Synthesised rather than a face of its own."
+          >
+            <em>Italic</em>
+          </button>
+          <button
+            type="button"
+            className={`chip ${title.uppercase ? 'is-active' : ''}`}
+            aria-pressed={title.uppercase}
+            onClick={() => set({ uppercase: !title.uppercase })}
+          >
+            AA
+          </button>
+        </div>
+
+        <div className="title-inspector__row" role="group" aria-label="Alignment">
+          {ALIGNMENTS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={`chip ${title.align === option ? 'is-active' : ''}`}
+              aria-pressed={title.align === option}
+              onClick={() => set({ align: option })}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+
+        <Slider
+          label="Size"
+          value={title.font_size_percent}
+          min={1}
+          max={20}
+          step={0.1}
+          format={(value) => `${value.toFixed(1)}% of frame`}
+          onPreview={(value) => preview({ font_size_percent: value })}
+          onCommit={(value) => set({ font_size_percent: value })}
+        />
+        <Slider
+          label="Letter spacing"
+          value={title.letter_spacing}
+          min={-0.05}
+          max={0.4}
+          step={0.01}
+          format={(value) => `${value.toFixed(2)}em`}
+          onPreview={(value) => preview({ letter_spacing: value })}
+          onCommit={(value) => set({ letter_spacing: value })}
+        />
+      </div>
+
+      <div className="title-inspector__group">
+        <div className="title-inspector__row">
+          <Colour
+            label="Text"
+            value={title.color}
+            onPreview={(value) => preview({ color: value })}
+            onCommit={(value) => set({ color: value })}
+          />
+          <Colour
+            label="Outline"
+            value={title.outline_color}
+            onPreview={(value) => preview({ outline_color: value })}
+            onCommit={(value) => set({ outline_color: value })}
+          />
+          <Colour
+            label="Shadow"
+            value={title.shadow_color}
+            onPreview={(value) => preview({ shadow_color: value })}
+            onCommit={(value) => set({ shadow_color: value })}
+          />
+        </div>
+        <Slider
+          label="Opacity"
+          value={title.opacity}
+          min={0.05}
+          max={1}
+          step={0.05}
+          format={(value) => `${Math.round(value * 100)}%`}
+          onPreview={(value) => preview({ opacity: value })}
+          onCommit={(value) => set({ opacity: value })}
+        />
+        <Slider
+          label="Outline width"
+          value={title.outline_width}
+          min={0}
+          max={0.3}
+          step={0.01}
+          format={(value) => (value ? `${value.toFixed(2)}em` : 'none')}
+          onPreview={(value) => preview({ outline_width: value })}
+          onCommit={(value) => set({ outline_width: value })}
+        />
+        <Slider
+          label="Shadow"
+          value={title.shadow_offset}
+          min={0}
+          max={0.3}
+          step={0.01}
+          format={(value) => (value ? `${value.toFixed(2)}em` : 'none')}
+          onPreview={(value) => preview({ shadow_offset: value })}
+          onCommit={(value) => set({ shadow_offset: value })}
+        />
+      </div>
+
+      <div className="title-inspector__group">
+        <div className="title-inspector__row" role="group" aria-label="Background">
+          <button
+            type="button"
+            className={`chip ${title.background === 'none' ? 'is-active' : ''}`}
+            aria-pressed={title.background === 'none'}
+            onClick={() => set({ background: 'none' })}
+          >
+            No panel
+          </button>
+          <button
+            type="button"
+            className={`chip ${title.background === 'box' ? 'is-active' : ''}`}
+            aria-pressed={title.background === 'box'}
+            onClick={() => set({ background: 'box' })}
+            title="A filled panel behind each line. Replaces the outline."
+          >
+            Panel
+          </button>
+          {title.background === 'box' && (
+            <Colour
+              label="Panel"
+              value={title.background_color}
+              onPreview={(value) => preview({ background_color: value })}
+              onCommit={(value) => set({ background_color: value })}
+            />
+          )}
+        </div>
+        {title.background === 'box' && (
+          <>
+            <Slider
+              label="Panel opacity"
+              value={title.background_opacity}
+              min={0}
+              max={1}
+              step={0.05}
+              format={(value) => `${Math.round(value * 100)}%`}
+              onPreview={(value) => preview({ background_opacity: value })}
+              onCommit={(value) => set({ background_opacity: value })}
+            />
+            <Slider
+              label="Panel padding"
+              value={title.background_padding}
+              min={0}
+              max={1}
+              step={0.05}
+              format={(value) => `${value.toFixed(2)}em`}
+              onPreview={(value) => preview({ background_padding: value })}
+              onCommit={(value) => set({ background_padding: value })}
+            />
+          </>
+        )}
+      </div>
+
+      <div className="title-inspector__group">
+        <p className="title-inspector__hint">
+          Drag the text on the player to place it, and its corner to resize it.
+        </p>
+        <Slider
+          label="Across"
+          value={title.center_x}
+          min={0}
+          max={100}
+          step={0.5}
+          format={(value) => `${Math.round(value)}%`}
+          onPreview={(value) => preview({ center_x: value })}
+          onCommit={(value) => set({ center_x: value })}
+        />
+        <Slider
+          label="Down"
+          value={title.center_y}
+          min={0}
+          max={100}
+          step={0.5}
+          format={(value) => `${Math.round(value)}%`}
+          onPreview={(value) => preview({ center_y: value })}
+          onCommit={(value) => set({ center_y: value })}
+        />
+        <Slider
+          label="Wrap width"
+          value={title.width_percent}
+          min={5}
+          max={100}
+          step={1}
+          format={(value) => `${Math.round(value)}% of frame`}
+          onPreview={(value) => preview({ width_percent: value })}
+          onCommit={(value) => set({ width_percent: value })}
+        />
+        <Slider
+          label="Rotation"
+          value={title.rotation_deg}
+          min={-45}
+          max={45}
+          step={1}
+          format={(value) => `${value}°`}
+          onPreview={(value) => preview({ rotation_deg: value })}
+          onCommit={(value) => set({ rotation_deg: value })}
+        />
+      </div>
+    </section>
+  )
+}
+
+/** The look fields alone, for saving a Title as a Style. */
+export function lookOf(title: Title): Partial<TitleLook> {
+  const {
+    id: _id,
+    batch_id: _batchId,
+    text: _text,
+    start_ms: _start,
+    end_ms: _end,
+    style_id: _style,
+    ...look
+  } = title
+  return look
+}

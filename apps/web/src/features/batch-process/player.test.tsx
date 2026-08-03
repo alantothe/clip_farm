@@ -93,6 +93,7 @@ function makeBatch(overrides: Partial<Batch> = {}): Batch {
       makeShot({ id: 'shot-2', clip_id: 'clip-b', position: 1 }),
     ],
     cutaways: [],
+    titles: [],
     sequence_render: null,
     ...overrides,
   }

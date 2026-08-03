@@ -1,0 +1,917 @@
+{
+  "generated_by": "tools/vendor_fonts.py",
+  "source": "https://github.com/google/fonts",
+  "families": [
+    {
+      "id": "inter",
+      "name": "Inter",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "roboto",
+      "name": "Roboto",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "open-sans",
+      "name": "Open Sans",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        800
+      ]
+    },
+    {
+      "id": "lato",
+      "name": "Lato",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "montserrat",
+      "name": "Montserrat",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "poppins",
+      "name": "Poppins",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "nunito",
+      "name": "Nunito",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "raleway",
+      "name": "Raleway",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "rubik",
+      "name": "Rubik",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "work-sans",
+      "name": "Work Sans",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "dm-sans",
+      "name": "DM Sans",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "space-grotesk",
+      "name": "Space Grotesk",
+      "category": "sans",
+      "weights": [
+        400,
+        700
+      ]
+    },
+    {
+      "id": "barlow",
+      "name": "Barlow",
+      "category": "sans",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "roboto-condensed",
+      "name": "Roboto Condensed",
+      "category": "display",
+      "weights": [
+        400,
+        700
+      ]
+    },
+    {
+      "id": "oswald",
+      "name": "Oswald",
+      "category": "display",
+      "weights": [
+        400,
+        700
+      ]
+    },
+    {
+      "id": "teko",
+      "name": "Teko",
+      "category": "display",
+      "weights": [
+        400,
+        700
+      ]
+    },
+    {
+      "id": "bebas-neue",
+      "name": "Bebas Neue",
+      "category": "display",
+      "weights": [
+        400
+      ]
+    },
+    {
+      "id": "anton",
+      "name": "Anton",
+      "category": "display",
+      "weights": [
+        400
+      ]
+    },
+    {
+      "id": "archivo-black",
+      "name": "Archivo Black",
+      "category": "display",
+      "weights": [
+        400
+      ]
+    },
+    {
+      "id": "fjalla-one",
+      "name": "Fjalla One",
+      "category": "display",
+      "weights": [
+        400
+      ]
+    },
+    {
+      "id": "bangers",
+      "name": "Bangers",
+      "category": "display",
+      "weights": [
+        400
+      ]
+    },
+    {
+      "id": "playfair-display",
+      "name": "Playfair Display",
+      "category": "serif",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "merriweather",
+      "name": "Merriweather",
+      "category": "serif",
+      "weights": [
+        400,
+        700,
+        900
+      ]
+    },
+    {
+      "id": "permanent-marker",
+      "name": "Permanent Marker",
+      "category": "script",
+      "weights": [
+        400
+      ]
+    },
+    {
+      "id": "caveat",
+      "name": "Caveat",
+      "category": "script",
+      "weights": [
+        400,
+        700
+      ]
+    },
+    {
+      "id": "pacifico",
+      "name": "Pacifico",
+      "category": "script",
+      "weights": [
+        400
+      ]
+    },
+    {
+      "id": "lobster",
+      "name": "Lobster",
+      "category": "script",
+      "weights": [
+        400
+      ]
+    }
+  ],
+  "faces": [
+    {
+      "id": "inter-400",
+      "family": "inter",
+      "family_name": "Inter",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Inter-Regular.ttf",
+      "face_name": "Inter",
+      "face_bold": false
+    },
+    {
+      "id": "inter-700",
+      "family": "inter",
+      "family_name": "Inter",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Inter-Bold.ttf",
+      "face_name": "Inter Bold",
+      "face_bold": false
+    },
+    {
+      "id": "inter-900",
+      "family": "inter",
+      "family_name": "Inter",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Inter-Black.ttf",
+      "face_name": "Inter Black",
+      "face_bold": false
+    },
+    {
+      "id": "roboto-400",
+      "family": "roboto",
+      "family_name": "Roboto",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Roboto-Regular.ttf",
+      "face_name": "Roboto",
+      "face_bold": false
+    },
+    {
+      "id": "roboto-700",
+      "family": "roboto",
+      "family_name": "Roboto",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Roboto-Bold.ttf",
+      "face_name": "Roboto Bold",
+      "face_bold": false
+    },
+    {
+      "id": "roboto-900",
+      "family": "roboto",
+      "family_name": "Roboto",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Roboto-Black.ttf",
+      "face_name": "Roboto Black",
+      "face_bold": false
+    },
+    {
+      "id": "open-sans-400",
+      "family": "open-sans",
+      "family_name": "Open Sans",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "OpenSans-Regular.ttf",
+      "face_name": "Open Sans",
+      "face_bold": false
+    },
+    {
+      "id": "open-sans-700",
+      "family": "open-sans",
+      "family_name": "Open Sans",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "OpenSans-Bold.ttf",
+      "face_name": "Open Sans Bold",
+      "face_bold": false
+    },
+    {
+      "id": "open-sans-800",
+      "family": "open-sans",
+      "family_name": "Open Sans",
+      "category": "sans",
+      "weight": 800,
+      "weight_label": "ExtraBold",
+      "file": "OpenSans-ExtraBold.ttf",
+      "face_name": "Open Sans ExtraBold",
+      "face_bold": false
+    },
+    {
+      "id": "lato-400",
+      "family": "lato",
+      "family_name": "Lato",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Lato-Regular.ttf",
+      "face_name": "Lato",
+      "face_bold": false
+    },
+    {
+      "id": "lato-700",
+      "family": "lato",
+      "family_name": "Lato",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Lato-Bold.ttf",
+      "face_name": "Lato Bold",
+      "face_bold": false
+    },
+    {
+      "id": "lato-900",
+      "family": "lato",
+      "family_name": "Lato",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Lato-Black.ttf",
+      "face_name": "Lato Black",
+      "face_bold": false
+    },
+    {
+      "id": "montserrat-400",
+      "family": "montserrat",
+      "family_name": "Montserrat",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Montserrat-Regular.ttf",
+      "face_name": "Montserrat",
+      "face_bold": false
+    },
+    {
+      "id": "montserrat-700",
+      "family": "montserrat",
+      "family_name": "Montserrat",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Montserrat-Bold.ttf",
+      "face_name": "Montserrat Bold",
+      "face_bold": false
+    },
+    {
+      "id": "montserrat-900",
+      "family": "montserrat",
+      "family_name": "Montserrat",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Montserrat-Black.ttf",
+      "face_name": "Montserrat Black",
+      "face_bold": false
+    },
+    {
+      "id": "poppins-400",
+      "family": "poppins",
+      "family_name": "Poppins",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Poppins-Regular.ttf",
+      "face_name": "Poppins",
+      "face_bold": false
+    },
+    {
+      "id": "poppins-700",
+      "family": "poppins",
+      "family_name": "Poppins",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Poppins-Bold.ttf",
+      "face_name": "Poppins Bold",
+      "face_bold": false
+    },
+    {
+      "id": "poppins-900",
+      "family": "poppins",
+      "family_name": "Poppins",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Poppins-Black.ttf",
+      "face_name": "Poppins Black",
+      "face_bold": false
+    },
+    {
+      "id": "nunito-400",
+      "family": "nunito",
+      "family_name": "Nunito",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Nunito-Regular.ttf",
+      "face_name": "Nunito",
+      "face_bold": false
+    },
+    {
+      "id": "nunito-700",
+      "family": "nunito",
+      "family_name": "Nunito",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Nunito-Bold.ttf",
+      "face_name": "Nunito Bold",
+      "face_bold": false
+    },
+    {
+      "id": "nunito-900",
+      "family": "nunito",
+      "family_name": "Nunito",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Nunito-Black.ttf",
+      "face_name": "Nunito Black",
+      "face_bold": false
+    },
+    {
+      "id": "raleway-400",
+      "family": "raleway",
+      "family_name": "Raleway",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Raleway-Regular.ttf",
+      "face_name": "Raleway",
+      "face_bold": false
+    },
+    {
+      "id": "raleway-700",
+      "family": "raleway",
+      "family_name": "Raleway",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Raleway-Bold.ttf",
+      "face_name": "Raleway Bold",
+      "face_bold": false
+    },
+    {
+      "id": "raleway-900",
+      "family": "raleway",
+      "family_name": "Raleway",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Raleway-Black.ttf",
+      "face_name": "Raleway Black",
+      "face_bold": false
+    },
+    {
+      "id": "rubik-400",
+      "family": "rubik",
+      "family_name": "Rubik",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Rubik-Regular.ttf",
+      "face_name": "Rubik",
+      "face_bold": false
+    },
+    {
+      "id": "rubik-700",
+      "family": "rubik",
+      "family_name": "Rubik",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Rubik-Bold.ttf",
+      "face_name": "Rubik Bold",
+      "face_bold": false
+    },
+    {
+      "id": "rubik-900",
+      "family": "rubik",
+      "family_name": "Rubik",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Rubik-Black.ttf",
+      "face_name": "Rubik Black",
+      "face_bold": false
+    },
+    {
+      "id": "work-sans-400",
+      "family": "work-sans",
+      "family_name": "Work Sans",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "WorkSans-Regular.ttf",
+      "face_name": "Work Sans",
+      "face_bold": false
+    },
+    {
+      "id": "work-sans-700",
+      "family": "work-sans",
+      "family_name": "Work Sans",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "WorkSans-Bold.ttf",
+      "face_name": "Work Sans Bold",
+      "face_bold": false
+    },
+    {
+      "id": "work-sans-900",
+      "family": "work-sans",
+      "family_name": "Work Sans",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "WorkSans-Black.ttf",
+      "face_name": "Work Sans Black",
+      "face_bold": false
+    },
+    {
+      "id": "dm-sans-400",
+      "family": "dm-sans",
+      "family_name": "DM Sans",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "DMSans-Regular.ttf",
+      "face_name": "DM Sans",
+      "face_bold": false
+    },
+    {
+      "id": "dm-sans-700",
+      "family": "dm-sans",
+      "family_name": "DM Sans",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "DMSans-Bold.ttf",
+      "face_name": "DM Sans Bold",
+      "face_bold": false
+    },
+    {
+      "id": "dm-sans-900",
+      "family": "dm-sans",
+      "family_name": "DM Sans",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "DMSans-Black.ttf",
+      "face_name": "DM Sans Black",
+      "face_bold": false
+    },
+    {
+      "id": "space-grotesk-400",
+      "family": "space-grotesk",
+      "family_name": "Space Grotesk",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "SpaceGrotesk-Regular.ttf",
+      "face_name": "Space Grotesk",
+      "face_bold": false
+    },
+    {
+      "id": "space-grotesk-700",
+      "family": "space-grotesk",
+      "family_name": "Space Grotesk",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "SpaceGrotesk-Bold.ttf",
+      "face_name": "Space Grotesk Bold",
+      "face_bold": false
+    },
+    {
+      "id": "barlow-400",
+      "family": "barlow",
+      "family_name": "Barlow",
+      "category": "sans",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Barlow-Regular.ttf",
+      "face_name": "Barlow",
+      "face_bold": false
+    },
+    {
+      "id": "barlow-700",
+      "family": "barlow",
+      "family_name": "Barlow",
+      "category": "sans",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Barlow-Bold.ttf",
+      "face_name": "Barlow Bold",
+      "face_bold": false
+    },
+    {
+      "id": "barlow-900",
+      "family": "barlow",
+      "family_name": "Barlow",
+      "category": "sans",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Barlow-Black.ttf",
+      "face_name": "Barlow Black",
+      "face_bold": false
+    },
+    {
+      "id": "roboto-condensed-400",
+      "family": "roboto-condensed",
+      "family_name": "Roboto Condensed",
+      "category": "display",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "RobotoCondensed-Regular.ttf",
+      "face_name": "Roboto Condensed",
+      "face_bold": false
+    },
+    {
+      "id": "roboto-condensed-700",
+      "family": "roboto-condensed",
+      "family_name": "Roboto Condensed",
+      "category": "display",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "RobotoCondensed-Bold.ttf",
+      "face_name": "Roboto Condensed Bold",
+      "face_bold": false
+    },
+    {
+      "id": "oswald-400",
+      "family": "oswald",
+      "family_name": "Oswald",
+      "category": "display",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Oswald-Regular.ttf",
+      "face_name": "Oswald",
+      "face_bold": false
+    },
+    {
+      "id": "oswald-700",
+      "family": "oswald",
+      "family_name": "Oswald",
+      "category": "display",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Oswald-Bold.ttf",
+      "face_name": "Oswald Bold",
+      "face_bold": false
+    },
+    {
+      "id": "teko-400",
+      "family": "teko",
+      "family_name": "Teko",
+      "category": "display",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Teko-Regular.ttf",
+      "face_name": "Teko",
+      "face_bold": false
+    },
+    {
+      "id": "teko-700",
+      "family": "teko",
+      "family_name": "Teko",
+      "category": "display",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Teko-Bold.ttf",
+      "face_name": "Teko Bold",
+      "face_bold": false
+    },
+    {
+      "id": "bebas-neue-400",
+      "family": "bebas-neue",
+      "family_name": "Bebas Neue",
+      "category": "display",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "BebasNeue-Regular.ttf",
+      "face_name": "Bebas Neue",
+      "face_bold": false
+    },
+    {
+      "id": "anton-400",
+      "family": "anton",
+      "family_name": "Anton",
+      "category": "display",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Anton-Regular.ttf",
+      "face_name": "Anton",
+      "face_bold": false
+    },
+    {
+      "id": "archivo-black-400",
+      "family": "archivo-black",
+      "family_name": "Archivo Black",
+      "category": "display",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "ArchivoBlack-Regular.ttf",
+      "face_name": "Archivo Black",
+      "face_bold": false
+    },
+    {
+      "id": "fjalla-one-400",
+      "family": "fjalla-one",
+      "family_name": "Fjalla One",
+      "category": "display",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "FjallaOne-Regular.ttf",
+      "face_name": "Fjalla One",
+      "face_bold": false
+    },
+    {
+      "id": "bangers-400",
+      "family": "bangers",
+      "family_name": "Bangers",
+      "category": "display",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Bangers-Regular.ttf",
+      "face_name": "Bangers",
+      "face_bold": false
+    },
+    {
+      "id": "playfair-display-400",
+      "family": "playfair-display",
+      "family_name": "Playfair Display",
+      "category": "serif",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "PlayfairDisplay-Regular.ttf",
+      "face_name": "Playfair Display",
+      "face_bold": false
+    },
+    {
+      "id": "playfair-display-700",
+      "family": "playfair-display",
+      "family_name": "Playfair Display",
+      "category": "serif",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "PlayfairDisplay-Bold.ttf",
+      "face_name": "Playfair Display Bold",
+      "face_bold": false
+    },
+    {
+      "id": "playfair-display-900",
+      "family": "playfair-display",
+      "family_name": "Playfair Display",
+      "category": "serif",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "PlayfairDisplay-Black.ttf",
+      "face_name": "Playfair Display Black",
+      "face_bold": false
+    },
+    {
+      "id": "merriweather-400",
+      "family": "merriweather",
+      "family_name": "Merriweather",
+      "category": "serif",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Merriweather-Regular.ttf",
+      "face_name": "Merriweather",
+      "face_bold": false
+    },
+    {
+      "id": "merriweather-700",
+      "family": "merriweather",
+      "family_name": "Merriweather",
+      "category": "serif",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Merriweather-Bold.ttf",
+      "face_name": "Merriweather Bold",
+      "face_bold": false
+    },
+    {
+      "id": "merriweather-900",
+      "family": "merriweather",
+      "family_name": "Merriweather",
+      "category": "serif",
+      "weight": 900,
+      "weight_label": "Black",
+      "file": "Merriweather-Black.ttf",
+      "face_name": "Merriweather Black",
+      "face_bold": false
+    },
+    {
+      "id": "permanent-marker-400",
+      "family": "permanent-marker",
+      "family_name": "Permanent Marker",
+      "category": "script",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "PermanentMarker-Regular.ttf",
+      "face_name": "Permanent Marker",
+      "face_bold": false
+    },
+    {
+      "id": "caveat-400",
+      "family": "caveat",
+      "family_name": "Caveat",
+      "category": "script",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Caveat-Regular.ttf",
+      "face_name": "Caveat",
+      "face_bold": false
+    },
+    {
+      "id": "caveat-700",
+      "family": "caveat",
+      "family_name": "Caveat",
+      "category": "script",
+      "weight": 700,
+      "weight_label": "Bold",
+      "file": "Caveat-Bold.ttf",
+      "face_name": "Caveat Bold",
+      "face_bold": false
+    },
+    {
+      "id": "pacifico-400",
+      "family": "pacifico",
+      "family_name": "Pacifico",
+      "category": "script",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Pacifico-Regular.ttf",
+      "face_name": "Pacifico",
+      "face_bold": false
+    },
+    {
+      "id": "lobster-400",
+      "family": "lobster",
+      "family_name": "Lobster",
+      "category": "script",
+      "weight": 400,
+      "weight_label": "Regular",
+      "file": "Lobster-Regular.ttf",
+      "face_name": "Lobster",
+      "face_bold": false
+    }
+  ]
+}

@@ -141,6 +141,97 @@ export interface Cutaway {
   trim_end_ms: number | null
 }
 
+export type TitleAlign = 'left' | 'center' | 'right'
+/** How a Title is set off from the picture: outlined glyphs, or a filled panel. */
+export type TitleBackground = 'none' | 'box'
+
+/**
+ * A Title's look and placement — everything about it but its words and timing.
+ *
+ * Sizes that scale with the type are fractions of the font size, and everything
+ * measured against the frame is a percent of it, so the same numbers drive the
+ * stage and the export (ADR 0008).
+ */
+export interface TitleLook {
+  /** A family id from the font catalog, not a face name. */
+  font_family: string
+  font_weight: number
+  italic: boolean
+  uppercase: boolean
+  /** A percent of the frame's height. */
+  font_size_percent: number
+  /** Tracking, as a fraction of the font size. */
+  letter_spacing: number
+  color: string
+  opacity: number
+  align: TitleAlign
+  outline_color: string
+  /** A fraction of the font size. Zero is no outline. */
+  outline_width: number
+  shadow_color: string
+  shadow_offset: number
+  background: TitleBackground
+  background_color: string
+  background_opacity: number
+  background_padding: number
+  center_x: number
+  center_y: number
+  /** How wide the text may run before it wraps, as a percent of the frame. */
+  width_percent: number
+  rotation_deg: number
+}
+
+/**
+ * Text drawn over the picture for a span of a Batch's Sequence.
+ *
+ * Its times are Sequence milliseconds, not an offset into a Shot: reordering
+ * the Sequence moves the Shots underneath and leaves the Title where it was
+ * written (ADR 0008).
+ */
+export interface Title extends TitleLook {
+  id: string
+  batch_id: string
+  text: string
+  start_ms: number
+  end_ms: number
+  /** Which Style this look came from, for its label. Not a live link. */
+  style_id: string | null
+}
+
+/** A saved look a Title can be made from, reusable across every Batch. */
+export interface TitleStyle extends TitleLook {
+  id: string
+  name: string
+  /** Clip Farm's own, which cannot be edited or deleted. */
+  builtin: boolean
+}
+
+/** What a Title edit sends: only what changed. */
+export type TitlePatch = Partial<TitleLook> &
+  Partial<{ text: string; start_ms: number; end_ms: number; style_id: string }>
+
+export interface FontFamily {
+  id: string
+  name: string
+  category: string
+  /** Only the weights actually vendored, so the picker offers no near misses. */
+  weights: number[]
+}
+
+export interface FontFace {
+  id: string
+  family: string
+  weight: number
+  weight_label: string
+  file: string
+  url: string
+}
+
+export interface FontCatalog {
+  families: FontFamily[]
+  faces: FontFace[]
+}
+
 /** What a trim drag sends: only the edge that moved, so the other stays as it was. */
 export type ShotTrim = Partial<{
   trim_start_ms: number | null
@@ -176,6 +267,8 @@ export interface Batch {
   shots: Shot[]
   /** Cutaways are not in the running order — each covers a Shot at an offset. */
   cutaways: Cutaway[]
+  /** Timed against the Sequence, and owned by the Batch rather than a Clip. */
+  titles: Title[]
   sequence_render: SequenceRender | null
 }
 

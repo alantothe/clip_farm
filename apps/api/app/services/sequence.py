@@ -8,7 +8,7 @@ has to be composited.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.models import Shot
 
@@ -29,6 +29,12 @@ class Segment:
     audio: Shot | None = None
     audio_start_ms: int = 0
     audio_end_ms: int = 0
+    #: Where this stretch begins in the finished video, which is the one thing
+    #: here measured in Sequence time. Titles are timed against the Sequence
+    #: rather than against any Shot, so slicing one into the segments it crosses
+    #: needs each segment to know where it sits (ADR 0008). Only `plan_sequence`
+    #: can fill it: `plan_segments` sees one Base Shot and not what precedes it.
+    sequence_start_ms: int = 0
 
     @property
     def duration_ms(self) -> int:
@@ -95,8 +101,16 @@ def plan_segments(base: Shot) -> list[Segment]:
 
 
 def plan_sequence(shots: list[Shot]) -> list[Segment]:
-    """Every stretch of the finished video, in play order."""
+    """Every stretch of the finished video, in play order and placed in time.
+
+    The running cursor is what turns a list of stretches into a timeline: it is
+    where each segment starts in the finished video, and it is what lets a Title
+    written for 0:03 find the segment playing at 0:03 (ADR 0008).
+    """
     segments: list[Segment] = []
+    cursor = 0
     for shot in shots:
-        segments.extend(plan_segments(shot))
+        for segment in plan_segments(shot):
+            segments.append(replace(segment, sequence_start_ms=cursor))
+            cursor += segment.duration_ms
     return segments

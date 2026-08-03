@@ -16,11 +16,41 @@ import { NewBatchDialog } from './NewBatchDialog'
 import { Player } from './Player'
 import { ShotInspector } from './ShotInspector'
 import { MIN_SPAN_MS, Timeline, sequenceDurationMs, shotTrim, sourceTimeMs } from './Timeline'
+import { TitleInspector, lookOf } from './TitleInspector'
+import type { TitleSpan } from './TitleTrack'
 import { useSequencePlayer } from './useSequencePlayer'
-import type { Batch, BatchSummary, Cutaway, Format, Project, Shot, ShotTrim } from '../../types'
+import type {
+  Batch,
+  BatchSummary,
+  Cutaway,
+  Format,
+  Project,
+  Shot,
+  ShotTrim,
+  Title,
+  TitlePatch,
+  TitleStyle,
+} from '../../types'
 
 const BATCHES_KEY = ['batches'] as const
 const batchKey = (id: string) => ['batch', id] as const
+const TITLE_STYLES_KEY = ['title-styles'] as const
+const FONTS_KEY = ['fonts'] as const
+
+/** How long a new Title runs, before the operator drags either edge. */
+const NEW_TITLE_MS = 3000
+
+/** What a Title edit sends, alongside which one it is about. */
+type TitleEdit =
+  | { kind: 'add'; atMs: number }
+  | { kind: 'patch'; titleId: string; patch: TitlePatch }
+  | { kind: 'remove'; titleId: string }
+
+/** Saving the selected Title's look under a name, or maintaining one saved. */
+type StyleAction =
+  | { kind: 'save'; name: string; look: Partial<Title> }
+  | { kind: 'update'; style: TitleStyle; look: Partial<Title> }
+  | { kind: 'delete'; style: TitleStyle }
 
 type SequenceEdit =
   | { kind: 'add'; clipId: string; position?: number; trim?: ShotTrim }
@@ -72,6 +102,27 @@ export function applySequenceEdit(batch: Batch, edit: SequenceEdit): Batch {
   }
 
   return { ...batch, shots: shots.map((shot, position) => ({ ...shot, position })) }
+}
+
+/**
+ * A Title edit applied to the cached Batch, so a drag lands instantly.
+ *
+ * The same bargain `applySequenceEdit` makes, and for the same reason: the
+ * gesture has already ended, and a Title snapping back to where it was dragged
+ * from while the round trip finishes reads as a bug. An `add` is not predicted
+ * — only the server can name the new Title.
+ */
+export function applyTitleEdit(batch: Batch, edit: TitleEdit): Batch {
+  if (edit.kind === 'add') return batch
+  if (edit.kind === 'remove') {
+    return { ...batch, titles: batch.titles.filter((title) => title.id !== edit.titleId) }
+  }
+  return {
+    ...batch,
+    titles: batch.titles.map((title) =>
+      title.id === edit.titleId ? { ...title, ...edit.patch } : title,
+    ),
+  }
 }
 
 const batchRoute = (id: string) => `/modes/batch-process/batches/${id}`
@@ -171,6 +222,14 @@ export function BatchProcessPage() {
   const [playheadMs, setPlayheadMs] = useState(0)
   // A Batch's Format is chosen once, in a dialog, and never edited (ADR 0006).
   const [newBatchOpen, setNewBatchOpen] = useState(false)
+  // A Title's selection is its own: a Title is not a Shot, and selecting one
+  // should not make the Shot inspector's buttons act on something else.
+  const [selectedTitleId, setSelectedTitleId] = useState<string | null>(null)
+  // An inspector control still under the operator's finger. Local only, so the
+  // stage follows a slider without a request per pixel.
+  const [titlePreview, setTitlePreview] = useState<({ titleId: string } & TitlePatch) | null>(
+    null,
+  )
 
   const batchesQuery = useQuery({ queryKey: BATCHES_KEY, queryFn: api.listBatches })
   const batches = batchesQuery.data ?? []
@@ -194,10 +253,23 @@ export function BatchProcessPage() {
       return importing || exporting ? 1500 : false
     },
   })
+  // Styles and the font catalog belong to the app rather than to a Batch, so
+  // they are fetched once and shared. The catalog never changes between
+  // releases — the faces are vendored — so it is never refetched.
+  const stylesQuery = useQuery({ queryKey: TITLE_STYLES_KEY, queryFn: api.listTitleStyles })
+  const fontsQuery = useQuery({
+    queryKey: FONTS_KEY,
+    queryFn: api.getFontCatalog,
+    staleTime: Infinity,
+  })
+  const titleStyles: TitleStyle[] = stylesQuery.data ?? []
+
   const batch = batchQuery.data ?? null
   const clips = batch?.clips ?? []
   const shots = batch?.shots ?? []
   const cutaways = batch?.cutaways ?? []
+  const titles = batch?.titles ?? []
+  const selectedTitle = titles.find((title) => title.id === selectedTitleId) ?? null
   // The playhead is shared: the Player and the Timeline both drive it, so the
   // hook lives here rather than inside either of them.
   const player = useSequencePlayer({
@@ -326,6 +398,65 @@ export function BatchProcessPage() {
     },
   })
 
+  const titleMutation = useMutation({
+    mutationFn: (edit: TitleEdit) => {
+      if (edit.kind === 'add') {
+        return api.addTitle(batchId!, {
+          text: 'Your text here',
+          start_ms: Math.round(edit.atMs),
+          end_ms: Math.round(edit.atMs) + NEW_TITLE_MS,
+          // The first built-in Style, so a new Title arrives looking like
+          // something rather than as unstyled default type.
+          style_id: titleStyles[0]?.id,
+        })
+      }
+      if (edit.kind === 'remove') return api.removeTitle(batchId!, edit.titleId)
+      return api.updateTitle(batchId!, edit.titleId, edit.patch)
+    },
+    onMutate: async (edit) => {
+      await queryClient.cancelQueries({ queryKey: batchKey(batchId!) })
+      const previous = queryClient.getQueryData<Batch>(batchKey(batchId!))
+      if (previous) {
+        queryClient.setQueryData(batchKey(batchId!), applyTitleEdit(previous, edit))
+      }
+      return { previous }
+    },
+    onError: (_error, _edit, context) => {
+      if (context?.previous) queryClient.setQueryData(batchKey(batchId!), context.previous)
+    },
+    onSuccess: (updated, edit) => {
+      queryClient.setQueryData(batchKey(updated.id), updated)
+      // The server named the new Title, so this is the first moment it can be
+      // selected — and a Title added is a Title about to be typed into.
+      if (edit.kind === 'add') {
+        const added = updated.titles[updated.titles.length - 1]
+        if (added) setSelectedTitleId(added.id)
+      }
+    },
+  })
+
+  const styleMutation = useMutation<TitleStyle | { deleted: number }, Error, StyleAction>({
+    mutationFn: (action) => {
+      if (action.kind === 'save') return api.createTitleStyle({ name: action.name, ...action.look })
+      if (action.kind === 'update') {
+        return api.updateTitleStyle(action.style.id, {
+          name: action.style.name,
+          ...action.look,
+        })
+      }
+      return api.deleteTitleStyle(action.style.id)
+    },
+    onSuccess: (_result, action) => {
+      void queryClient.invalidateQueries({ queryKey: TITLE_STYLES_KEY })
+      // Deleting a Style leaves every Title made from it looking exactly as it
+      // did — the look was copied, not linked — but the label it carried is
+      // gone, so the Batch is refetched to drop it (ADR 0008).
+      if (action.kind === 'delete') {
+        void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) })
+      }
+    },
+  })
+
   const exportMutation = useMutation({
     mutationFn: () => api.renderSequence(batchId!),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) }),
@@ -365,9 +496,24 @@ export function BatchProcessPage() {
   useEffect(() => {
     setRejected([])
     setSelectedShotId(null)
+    setSelectedTitleId(null)
+    setTitlePreview(null)
     setUndoRemoval(null)
     setPlayheadMs(0)
   }, [batchId])
+
+  // One selection at a time. A Shot and a Title are edited by different
+  // inspectors, and two open at once would leave the dock arguing with itself.
+  function selectShot(shotId: string | null) {
+    setSelectedShotId(shotId)
+    if (shotId) setSelectedTitleId(null)
+  }
+
+  function selectTitle(titleId: string | null) {
+    setSelectedTitleId(titleId)
+    setTitlePreview(null)
+    if (titleId) setSelectedShotId(null)
+  }
 
   // With no batch in the URL, open the most recent one rather than a dead end.
   useEffect(() => {
@@ -516,13 +662,62 @@ export function BatchProcessPage() {
               <Player
                 player={player}
                 format={batch.format}
+                titles={titles}
+                fontCatalog={fontsQuery.data ?? null}
+                selectedTitleId={selectedTitleId}
+                titlePreview={titlePreview}
+                onSelectTitle={selectTitle}
+                onEditTitle={(title, patch) =>
+                  titleMutation.mutate({ kind: 'patch', titleId: title.id, patch })
+                }
                 onTrimToPlayhead={trimToPlayhead}
                 canTrim={trimTarget !== null}
               />
+
+              {/*
+               * The Title's controls sit beside the stage rather than under it.
+               * A 9:16 stage in a landscape frame leaves most of its width
+               * unused, so this costs the picture almost nothing — while the
+               * same panel in the dock came out of the stage's *height*, which
+               * is the axis a vertical Format actually needs (ADR 0007). It is
+               * also the panel you are looking at the picture while using.
+               */}
+              {selectedTitle && (
+                <TitleInspector
+                  title={selectedTitle}
+                  catalog={fontsQuery.data ?? null}
+                  styles={titleStyles}
+                  onEdit={(patch) => {
+                    setTitlePreview(null)
+                    titleMutation.mutate({ kind: 'patch', titleId: selectedTitle.id, patch })
+                  }}
+                  onPreview={(patch) =>
+                    setTitlePreview(patch ? { titleId: selectedTitle.id, ...patch } : null)
+                  }
+                  onRemove={() => {
+                    setSelectedTitleId(null)
+                    titleMutation.mutate({ kind: 'remove', titleId: selectedTitle.id })
+                  }}
+                  onSaveStyle={(name) =>
+                    styleMutation.mutate({ kind: 'save', name, look: lookOf(selectedTitle) })
+                  }
+                  onUpdateStyle={(style) =>
+                    styleMutation.mutate({ kind: 'update', style, look: lookOf(selectedTitle) })
+                  }
+                  onDeleteStyle={(style) => styleMutation.mutate({ kind: 'delete', style })}
+                  busy={titleMutation.isPending || styleMutation.isPending}
+                />
+              )}
             </div>
           </div>
 
           <div className="editor-dock">
+            {(titleMutation.error || styleMutation.error) && (
+              <div className="toast-error" role="alert">
+                {(titleMutation.error ?? styleMutation.error)?.message}
+              </div>
+            )}
+
             {selectedClip && (selectedShot || selectedCutaway) && (
               <ShotInspector
                 shot={selectedShot ?? selectedCutaway!}
@@ -593,11 +788,21 @@ export function BatchProcessPage() {
               shots={shots}
               cutaways={cutaways}
               clips={clips}
+              titles={titles}
               selectedShotId={selectedShotId}
+              selectedTitleId={selectedTitleId}
               placingClipId={placingClipId}
               playheadMs={playheadMs}
               onScrub={setPlayheadMs}
-              onSelect={setSelectedShotId}
+              onSelect={selectShot}
+              onSelectTitle={selectTitle}
+              onMoveTitle={(title, span) =>
+                titleMutation.mutate({ kind: 'patch', titleId: title.id, patch: span })
+              }
+              onTrimTitle={(title, span: TitleSpan) =>
+                titleMutation.mutate({ kind: 'patch', titleId: title.id, patch: span })
+              }
+              onAddTitle={(atMs) => titleMutation.mutate({ kind: 'add', atMs })}
               onMove={(shot, position) =>
                 sequenceMutation.mutate({ kind: 'move', shotId: shot.id, position })
               }

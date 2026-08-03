@@ -32,6 +32,7 @@ from app.services.media import (
     sha256_file,
 )
 from app.services.sequence import plan_sequence
+from app.services.titles import titles_in_span
 from app.services.transcription import TranscriptionError, transcribe_audio
 from app.services.x_download import download_x_video, extract_post_caption
 from app.publishers import (
@@ -449,6 +450,13 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
                     caption_style=clip.caption_style,
                     caption_position=clip.caption_position,
                     image_overlays=clip.image_overlays,
+                    # Titles belong to the Batch and are timed against the
+                    # Sequence, so each segment takes the slice of them that
+                    # plays while it does — including over a Cutaway, which a
+                    # Title covers like any other picture (ADR 0008).
+                    titles=titles_in_span(
+                        batch.titles, segment.sequence_start_ms, segment.duration_ms
+                    ),
                 )
 
                 if segment.audio is not None:

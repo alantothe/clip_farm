@@ -11,7 +11,7 @@ One source video together with the edit decisions applied to it. The unit you op
 _Avoid_: project, video, item
 
 **Batch**:
-A named set of Clips imported and worked on together, which renders as one video through its Sequence. A Clip belongs to at most one Batch. A Batch holds no edit settings of its own — each Clip in it is trimmed, cropped, and subtitled on its own — but it does hold the Format its Sequence renders to, chosen when the Batch is made and fixed thereafter. Several Batches run at once; that is the point of them.
+A named set of Clips imported and worked on together, which renders as one video through its Sequence. A Clip belongs to at most one Batch. Almost every edit setting belongs to the Clip rather than the Batch — each Clip in it is trimmed, cropped, and subtitled on its own. What the Batch holds is what belongs to the finished video as a whole: the Format its Sequence renders to, chosen when the Batch is made and fixed thereafter, and its Titles. Several Batches run at once; that is the point of them.
 _Avoid_: project, group, folder, run
 
 **Sequence**:
@@ -35,8 +35,12 @@ The strip that presents a Sequence for editing — reordering Shots, trimming th
 _Avoid_: track, storyboard, editor
 
 **Player**:
-The screen that plays a Sequence as one video, with its transport and guides. It shares the Timeline's playhead rather than keeping one of its own. UI, not a model — as Timeline is.
+The screen that plays a Sequence as one video, with its transport and guides. It shares the Timeline's playhead rather than keeping one of its own. Titles are placed and sized on its stage. UI, not a model — as Timeline is.
 _Avoid_: preview, monitor, viewer, rough cut
+
+**Title Track**:
+The lane on the Timeline that holds a Batch's Titles, above the Shots and the Cutaways. UI, not a model — as Timeline is.
+_Avoid_: text track, text layer, caption track, title lane
 
 **Review Range**:
 A marked span of a Sequence to play or loop while editing. It changes nothing and renders as nothing — it is not a Trim. There is one per Player; looping a single Shot sets its edges to that Shot's.
@@ -77,8 +81,16 @@ The text posted alongside a Render on the Platform.
 _Avoid_: description, post text, social caption, blurb
 
 **Overlay**:
-An image placed on top of the video for a defined span of the Clip.
+An image placed on top of the video for a defined span of the Clip. Always an image: text drawn over the picture is a Title, and belongs to a Batch rather than a Clip.
 _Avoid_: sticker, watermark, image
+
+**Title**:
+Text an operator writes, drawn over the picture for a span of a Sequence and burned into the Sequence Render. It belongs to the Batch, not to any Clip, and holds its own time, place, size and look. A Batch has as many as it likes, and they may overlap. A Title transcribes nothing — that is a Subtitle — and is not posted beside the video — that is a Caption.
+_Avoid_: text overlay, text, lower third, sticker, graphic, headline
+
+**Title Style**:
+A saved, named look a Title can be made from — its font, colour, size, placement and the rest, without its words or its timing. Reusable across every Batch. Applying one copies its values onto the Title; it does not bind them, so editing a Style later leaves Titles already made from it alone (ADR 0008). Some are built into Clip Farm and cannot be edited; the rest are saved by the operator.
+_Avoid_: profile, preset, template, theme, style
 
 **Trim**:
 The span of the Source Video that survives into the Render.
