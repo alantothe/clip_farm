@@ -11,6 +11,7 @@ import { BatchRail } from './BatchRail'
 import { ClipDropZone } from './ClipDropZone'
 import { ClipGrid } from './ClipGrid'
 import { ExportPanel } from './ExportPanel'
+import { SequencePreview } from './SequencePreview'
 import { ShotInspector } from './ShotInspector'
 import { Timeline, sequenceDurationMs } from './Timeline'
 import type { Batch, BatchSummary, Project, Shot, ShotTrim } from '../../types'
@@ -143,6 +144,7 @@ export function BatchProcessPage() {
   // Removing is the one gesture that loses work a re-drag would not restore:
   // the Shot's own trim goes with it. So it, alone, offers an undo.
   const [undoRemoval, setUndoRemoval] = useState<{ shot: Shot; title: string } | null>(null)
+  const [playheadMs, setPlayheadMs] = useState(0)
 
   const batchesQuery = useQuery({ queryKey: BATCHES_KEY, queryFn: api.listBatches })
   const batches = batchesQuery.data ?? []
@@ -268,6 +270,7 @@ export function BatchProcessPage() {
     setRejected([])
     setSelectedShotId(null)
     setUndoRemoval(null)
+    setPlayheadMs(0)
   }, [batchId])
 
   // With no batch in the URL, open the most recent one rather than a dead end.
@@ -374,11 +377,19 @@ export function BatchProcessPage() {
 
           {clips.length > 0 ? (
             <>
+              <SequencePreview
+                shots={shots}
+                clips={clips}
+                playheadMs={playheadMs}
+                onScrub={setPlayheadMs}
+              />
               <Timeline
                 shots={shots}
                 clips={clips}
                 selectedShotId={selectedShotId}
                 placingClipId={placingClipId}
+                playheadMs={playheadMs}
+                onScrub={setPlayheadMs}
                 onSelect={setSelectedShotId}
                 onMove={(shot, position) =>
                   sequenceMutation.mutate({ kind: 'move', shotId: shot.id, position })

@@ -497,6 +497,31 @@ test('removing a shot leaves the clip in the batch, and offers an undo', async (
   )
 })
 
+test('plays the sequence as a rough cut, and says that is what it is', async () => {
+  stubApi({ 'GET /api/batches/batch-1': placed })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const preview = await screen.findByRole('region', { name: 'Rough cut' })
+  // The previews are the landscape sources, so the panel must not imply
+  // otherwise — this is the whole reason the cheap preview was acceptable.
+  expect(within(preview).getByText(/framing and subtitles apply on export/)).toBeVisible()
+  expect(within(preview).getByText('first')).toBeVisible()
+  expect(within(preview).getByText('shot 1 of 2')).toBeVisible()
+  expect(within(preview).getByText('00:00.0 / 00:08.0')).toBeVisible()
+  expect(within(preview).getByRole('button', { name: 'Play the rough cut' })).toBeEnabled()
+})
+
+test('the transport is dead until something is placed', async () => {
+  stubApi({ 'GET /api/batches/batch-1': sequencedBatch() })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const preview = await screen.findByRole('region', { name: 'Rough cut' })
+  expect(within(preview).getByRole('button', { name: 'Play the rough cut' })).toBeDisabled()
+  expect(within(preview).getByText('Nothing placed yet.')).toBeVisible()
+})
+
 test('exporting is refused until something is on the timeline', async () => {
   stubApi({ 'GET /api/batches/batch-1': sequencedBatch() })
 

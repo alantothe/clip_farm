@@ -25,10 +25,10 @@ export function sequenceDurationMs(shots: Shot[], clips: Project[]): number {
 }
 
 /** A Shot on the Timeline, with where it starts and how long it runs. */
-type Placed = { shot: Shot; clip: Project; startMs: number; spanMs: number }
+export type Placed = { shot: Shot; clip: Project; startMs: number; spanMs: number }
 
 /** Gapless: each Shot starts where the one before it ended. */
-function layout(shots: Shot[], clips: Project[]): Placed[] {
+export function layout(shots: Shot[], clips: Project[]): Placed[] {
   let cursor = 0
   const placed: Placed[] = []
   for (const shot of shots) {
@@ -39,6 +39,28 @@ function layout(shots: Shot[], clips: Project[]): Placed[] {
     cursor += spanMs
   }
   return placed
+}
+
+/** Which Shot is playing at a point on the Sequence, and where inside it. */
+export function shotAt(placed: Placed[], ms: number): { item: Placed; intoShotMs: number } | null {
+  for (const item of placed) {
+    if (ms < item.startMs + item.spanMs) {
+      return { item, intoShotMs: Math.max(0, ms - item.startMs) }
+    }
+  }
+  // Past the end: hold on the last frame rather than reporting nothing.
+  const last = placed[placed.length - 1]
+  return last ? { item: last, intoShotMs: last.spanMs } : null
+}
+
+/**
+ * Where to seek a Clip's Source Video for a point inside its Shot.
+ *
+ * The preview Artifact is the whole Source Video, so a Shot that starts three
+ * seconds in plays from three seconds in — the Trim is an offset, not a cut.
+ */
+export function sourceTimeMs(item: Placed, intoShotMs: number): number {
+  return shotTrim(item.shot, item.clip).start + intoShotMs
 }
 
 /** Where a Shot dragged to `ms` belongs, given the Shots it is not. */
@@ -60,6 +82,7 @@ const snap = (ms: number) => Math.round(ms / SNAP_MS) * SNAP_MS
 
 type Gesture =
   | { kind: 'move'; shotId: string; originX: number }
+  | { kind: 'scrub'; originX: number }
   | {
       kind: 'trim'
       shotId: string
@@ -89,6 +112,8 @@ export function Timeline({
   clips,
   selectedShotId,
   placingClipId,
+  playheadMs,
+  onScrub,
   onSelect,
   onMove,
   onTrim,
@@ -100,6 +125,8 @@ export function Timeline({
   clips: Project[]
   selectedShotId: string | null
   placingClipId: string | null
+  playheadMs: number
+  onScrub: (ms: number) => void
   onSelect: (shotId: string | null) => void
   onMove: (shot: Shot, position: number) => void
   onTrim: (shot: Shot, trim: ShotTrim) => void
@@ -186,6 +213,14 @@ export function Timeline({
   function onPointerMove(event: React.PointerEvent<HTMLElement>) {
     const current = gesture.current
     if (!current) return
+
+    // Scrubbing follows the pointer from the first pixel: there is no click to
+    // tell it apart from, so no threshold to clear first.
+    if (current.kind === 'scrub') {
+      onScrub(Math.min(totalMs, msAtX(event.clientX)))
+      return
+    }
+
     if (Math.abs(event.clientX - current.originX) > DRAG_THRESHOLD_PX) dragged.current = true
     if (!dragged.current) return
 
@@ -222,6 +257,9 @@ export function Timeline({
     const current = gesture.current
     gesture.current = null
     if (!current) return
+
+    // Scrubbing commits as it goes and selects nothing.
+    if (current.kind === 'scrub') return
 
     if (!dragged.current) {
       // A click, not a drag. Selecting is what a click means.
@@ -297,7 +335,15 @@ export function Timeline({
 
       <div className="sequence__scroll">
         <div className="sequence__inner" style={{ width: Math.max(pxOf(totalMs), 240) }}>
-          <div className="sequence__ruler" aria-hidden="true">
+          <div
+            className="sequence__ruler"
+            onPointerDown={(event) => {
+              begin(event, { kind: 'scrub', originX: event.clientX })
+              onScrub(Math.min(totalMs, msAtX(event.clientX)))
+            }}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+          >
             {ticks.map((second) => (
               <span key={second} style={{ left: pxOf(second * 1000) }}>
                 {formatTime(second * 1000)}
@@ -393,6 +439,12 @@ export function Timeline({
               />
             )}
           </ol>
+
+          <i
+            className="sequence__playhead"
+            style={{ left: pxOf(Math.min(playheadMs, totalMs)) }}
+            aria-hidden="true"
+          />
         </div>
       </div>
     </div>

@@ -2915,6 +2915,7 @@ input[type='range']::-webkit-slider-thumb {
   height: 20px;
   border-bottom: 1px solid var(--line);
   background: var(--paper);
+  cursor: ew-resize;
 }
 
 .sequence__ruler span {
@@ -3040,6 +3041,26 @@ input[type='range']::-webkit-slider-thumb {
 .sequence__handle--start { left: 0; }
 .sequence__handle--end { right: 0; }
 
+.sequence__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 10px;
+  width: 1px;
+  background: var(--coral);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.sequence__playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  border-left: 4.5px solid transparent;
+  border-right: 4.5px solid transparent;
+  border-top: 7px solid var(--coral);
+}
+
 .sequence__drop {
   position: absolute;
   top: -4px;
@@ -3047,6 +3068,92 @@ input[type='range']::-webkit-slider-thumb {
   width: 2px;
   background: var(--coral);
   z-index: 4;
+}
+
+/* --- The rough cut ----------------------------------------------------- */
+
+.preview {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  margin: 22px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+}
+
+.preview__screen {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 4px;
+  background: var(--dark);
+  overflow: hidden;
+}
+
+.preview__placeholder { color: #4a5350; }
+
+/* Both elements are mounted so the next Shot can load while this one plays. */
+.preview__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+}
+
+.preview__video.is-active { opacity: 1; }
+
+.preview__side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.preview__transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview__clock {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.preview__now {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+}
+
+.preview__now strong {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview__now small,
+.preview__caveat {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.preview__caveat {
+  margin: auto 0 0;
+  max-width: 44ch;
+  line-height: 1.5;
 }
 
 /* --- The selected Shot's controls -------------------------------------- */

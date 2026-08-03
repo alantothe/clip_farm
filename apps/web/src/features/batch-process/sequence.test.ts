@@ -8,7 +8,15 @@
  * a gesture ends.
  */
 import { applySequenceEdit } from './BatchProcessPage'
-import { insertionIndex, sequenceDurationMs, shotSpanMs, shotTrim } from './Timeline'
+import {
+  insertionIndex,
+  layout,
+  sequenceDurationMs,
+  shotAt,
+  shotSpanMs,
+  shotTrim,
+  sourceTimeMs,
+} from './Timeline'
 import type { Batch, Project, Shot } from '../../types'
 
 const clip = (overrides: Partial<Project> & { id: string }): Project =>
@@ -130,5 +138,55 @@ describe('the cache while an edit is in flight', () => {
     applySequenceEdit(batch, { kind: 'move', shotId: 's3', position: 0 })
 
     expect(batch.shots.map((item) => item.id)).toEqual(['s1', 's2', 's3'])
+  })
+})
+
+describe('what plays at a point on the sequence', () => {
+  const clips = [
+    // Trimmed to 2s–6s of a 20s source: the preview holds the whole source, so
+    // the trim is an offset to seek to rather than a cut already made.
+    clip({ id: 'a', trim_start_ms: 2_000, trim_end_ms: 6_000 }),
+    clip({ id: 'b', trim_start_ms: 0, trim_end_ms: 3_000 }),
+  ]
+  const placed = layout(
+    [
+      shot({ id: 's1', clip_id: 'a', position: 0 }),
+      shot({ id: 's2', clip_id: 'b', position: 1 }),
+    ],
+    clips,
+  )
+
+  test('the sequence starts on the first shot at its in-point', () => {
+    const at = shotAt(placed, 0)!
+
+    expect(at.item.shot.id).toBe('s1')
+    expect(at.intoShotMs).toBe(0)
+    expect(sourceTimeMs(at.item, at.intoShotMs)).toBe(2_000)
+  })
+
+  test('a point inside a shot seeks that far past its in-point', () => {
+    const at = shotAt(placed, 1_500)!
+
+    expect(at.item.shot.id).toBe('s1')
+    expect(sourceTimeMs(at.item, at.intoShotMs)).toBe(3_500)
+  })
+
+  test('a boundary belongs to the shot that starts there', () => {
+    const at = shotAt(placed, 4_000)!
+
+    expect(at.item.shot.id).toBe('s2')
+    expect(at.intoShotMs).toBe(0)
+    expect(sourceTimeMs(at.item, at.intoShotMs)).toBe(0)
+  })
+
+  test('past the end holds the last frame rather than reporting nothing', () => {
+    const at = shotAt(placed, 99_000)!
+
+    expect(at.item.shot.id).toBe('s2')
+    expect(at.intoShotMs).toBe(3_000)
+  })
+
+  test('an empty sequence has nothing playing', () => {
+    expect(shotAt([], 0)).toBeNull()
   })
 })
