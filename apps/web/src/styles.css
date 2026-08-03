@@ -3394,6 +3394,56 @@ input[type='range']::-webkit-slider-thumb {
   pointer-events: none;
 }
 
+/* An Overlay as the export will burn it in. Read-only here: it is moved and
+   resized in the Clip's own editor, not on the Sequence. */
+.player__overlay {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.player__overlay img { display: block; width: 100%; height: auto; }
+
+/*
+ * While a Cutaway covers, the picture and the sound come from different Clips.
+ * The panel below says so in words, but once the stage is large the picture is
+ * what you are looking at, so it says so there too.
+ */
+.player__badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.player__badge-mark,
+.player__badge-sound {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  background: rgba(8, 10, 9, 0.72);
+  color: #f2f5f0;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  max-width: 60%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.player__badge-mark { color: var(--acid); }
+
+/* The Player's own safe area sits above the picture, below the badge. */
+.player__stage .safe-area { z-index: 6; }
+
 /* --- The Sequence under the Player ------------------------------------- */
 
 .scrub {

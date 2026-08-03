@@ -67,6 +67,10 @@ export interface SequencePlayer {
   covering: PlacedCutaway | null
   /** True when the Shot under the playhead has no preview to play. */
   missingPreview: boolean
+  /** Where the playhead sits inside the current Shot's own Source Video. */
+  sourceMs: number
+  /** The same, inside a covering Cutaway's Source Video. Null when uncovered. */
+  coverSourceMs: number | null
   onTimeUpdate: () => void
   advance: () => void
   restart: () => void
@@ -343,6 +347,10 @@ export function useSequencePlayer({
     placedCutaways,
     covering,
     missingPreview: current ? !previewUrl(current.item.clip) : false,
+    sourceMs: current ? sourceTimeMs(current.item, current.intoShotMs) : 0,
+    coverSourceMs: covering
+      ? shotTrim(covering.cutaway, covering.clip).start + (playheadMs - covering.startMs)
+      : null,
     onTimeUpdate,
     advance,
     restart,

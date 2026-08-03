@@ -650,3 +650,143 @@ test('trimming to the playhead will not leave a shot too short to see', async ()
     expect.objectContaining({ method: 'PATCH' }),
   )
 })
+
+const talking = makeClip({
+  id: 'clip-a',
+  title: 'first',
+  captions: [
+    { id: 'cap-1', sequence: 0, start_ms: 0, end_ms: 2000, text: 'and then it broke', edited: false },
+    { id: 'cap-2', sequence: 1, start_ms: 2000, end_ms: 4000, text: 'which nobody expected', edited: false },
+  ],
+})
+
+test('the subtitle on the stage is the one that will be burned in', async () => {
+  const player = await openPlayer(makeBatch({ clips: [talking, second] }))
+
+  expect(within(player).getByText('and then it broke')).toBeVisible()
+
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+
+  // Past two seconds, so the next segment.
+  await waitFor(() => expect(within(player).getByText('which nobody expected')).toBeVisible())
+  expect(within(player).queryByText('and then it broke')).not.toBeInTheDocument()
+})
+
+test('a clip with subtitles switched off shows none', async () => {
+  const silent = makeClip({ ...talking, id: 'clip-a', title: 'first', captions_enabled: false })
+  const player = await openPlayer(makeBatch({ clips: [silent, second] }))
+
+  expect(within(player).queryByText('and then it broke')).not.toBeInTheDocument()
+})
+
+test('no subtitle burns in under a cutaway, from either clip', async () => {
+  // The export renders a covered span as the Cutaway's picture with captions
+  // off, so nothing is burned in there — not the Cutaway's own, which
+  // transcribe audio nobody hears, and not the base Shot's either.
+  const cover = makeClip({
+    id: 'clip-b',
+    title: 'second',
+    captions: [
+      { id: 'cap-b', sequence: 0, start_ms: 0, end_ms: 3000, text: 'b-roll words', edited: false },
+    ],
+  })
+  const player = await openPlayer(
+    makeBatch({
+      clips: [talking, cover],
+      shots: [makeShot({ id: 'shot-1', clip_id: 'clip-a', position: 0 })],
+      cutaways: [cutaway],
+    }),
+  )
+
+  // Uncovered at the start: the base Shot's subtitle is showing.
+  expect(within(player).getByText('and then it broke')).toBeVisible()
+
+  fireEvent.click(within(player).getByRole('button', { name: 'Play the rough cut' }))
+  const [active] = stageVideos()
+  tick(active, 1.2)
+
+  await waitFor(() =>
+    expect(within(player).queryByText('and then it broke')).not.toBeInTheDocument(),
+  )
+  expect(within(player).queryByText('b-roll words')).not.toBeInTheDocument()
+})
+
+test('an overlay is drawn where and when the export burns it', async () => {
+  const branded = makeClip({
+    id: 'clip-a',
+    title: 'first',
+    image_overlays: [
+      {
+        id: 'ov-1',
+        name: 'logo',
+        url: '/media/logo.png',
+        mime_type: 'image/png',
+        size_bytes: 4096,
+        start_ms: 1000,
+        end_ms: 3000,
+        center_x: 70,
+        center_y: 20,
+        width_percent: 30,
+        rotation_deg: 12,
+        opacity: 0.8,
+      },
+    ],
+  })
+  const player = await openPlayer(makeBatch({ clips: [branded, second] }))
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+
+  // Before its span.
+  expect(document.querySelector('.player__overlay')).toBeNull()
+
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+
+  await waitFor(() => expect(document.querySelector('.player__overlay')).not.toBeNull())
+  const overlay = document.querySelector<HTMLElement>('.player__overlay')!
+  expect(overlay.style.left).toBe('70%')
+  expect(overlay.style.top).toBe('20%')
+  expect(overlay.style.width).toBe('30%')
+  expect(overlay.style.transform).toContain('rotate(12deg)')
+})
+
+test('the safe area is offered, and off until asked for', async () => {
+  const player = await openPlayer(makeBatch())
+
+  expect(document.querySelector('.safe-area')).toBeNull()
+  fireEvent.click(within(player).getByRole('button', { name: /Safe area/ }))
+  await waitFor(() => expect(document.querySelector('.safe-area')).not.toBeNull())
+})
+
+test('the cutaway badge names the picture and the sound', async () => {
+  const player = await openPlayer(
+    makeBatch({
+      shots: [makeShot({ id: 'shot-1', clip_id: 'clip-a', position: 0 })],
+      cutaways: [cutaway],
+    }),
+  )
+  fireEvent.click(within(player).getByRole('button', { name: 'Play the rough cut' }))
+
+  const [active] = stageVideos()
+  tick(active, 1.2)
+
+  await waitFor(() => expect(within(player).getByText('Cutaway')).toBeVisible())
+  // Whose sound you are hearing, on the picture itself.
+  const badge = document.querySelector('.player__badge')!
+  expect(within(badge as HTMLElement).getByText('first')).toBeVisible()
+})
+
+test('a smart-cropped shot says its framing is approximate, and a fitted one does not', async () => {
+  const smart = makeClip({ id: 'clip-a', title: 'first', layout: 'smart_crop' })
+  const player = await openPlayer(makeBatch({ clips: [smart, second] }))
+
+  expect(within(player).getByText(/crop follows faces on export/)).toBeVisible()
+
+  // The second shot is fitted whole, so nothing about it is approximate.
+  fireEvent.click(within(player).getByRole('button', { name: 'Next cut' }))
+  await waitFor(() =>
+    expect(within(player).queryByText(/crop follows faces on export/)).not.toBeInTheDocument(),
+  )
+})
