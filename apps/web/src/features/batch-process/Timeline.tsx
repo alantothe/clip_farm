@@ -2,17 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { Clapperboard, ZoomIn, ZoomOut } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import { artifact } from '../../lib/project'
-import type { Project, Shot, ShotTrim } from '../../types'
+import type { Cutaway, Project, Shot, ShotTrim } from '../../types'
+
+/** Everything with a Trim of its own: a Shot, or a Cutaway. */
+type Trimmed = { trim_start_ms: number | null; trim_end_ms: number | null }
 
 /** The span a Shot plays: its own Trim, falling back to its Clip's. */
-export function shotTrim(shot: Shot, clip: Project) {
+export function shotTrim(shot: Trimmed, clip: Project) {
   return {
     start: shot.trim_start_ms ?? clip.trim_start_ms,
     end: shot.trim_end_ms ?? clip.trim_end_ms ?? clip.duration_ms ?? 0,
   }
 }
 
-export function shotSpanMs(shot: Shot, clip: Project): number {
+export function shotSpanMs(shot: Trimmed, clip: Project): number {
   const { start, end } = shotTrim(shot, clip)
   return Math.max(0, end - start)
 }
@@ -63,6 +66,66 @@ export function sourceTimeMs(item: Placed, intoShotMs: number): number {
   return shotTrim(item.shot, item.clip).start + intoShotMs
 }
 
+const MIN_SPAN_MS = 400
+const SNAP_MS = 100
+const DRAG_THRESHOLD_PX = 3
+const ZOOM_LIMITS = { min: 4, max: 200 }
+
+const snap = (ms: number) => Math.round(ms / SNAP_MS) * SNAP_MS
+
+/** A Cutaway drawn on the lane: where it starts on the Sequence, and how long. */
+export type PlacedCutaway = {
+  cutaway: Cutaway
+  clip: Project
+  startMs: number
+  spanMs: number
+  /** True when its Base Shot has been trimmed shorter than the Cutaway needs. */
+  overflows: boolean
+}
+
+/**
+ * Cutaways positioned against the Sequence.
+ *
+ * A Cutaway is anchored to its Base Shot, so where it lands is that Shot's
+ * start plus the offset — which is exactly why reordering carries it along.
+ */
+export function layoutCutaways(
+  cutaways: Cutaway[],
+  placed: Placed[],
+  clips: Project[],
+): PlacedCutaway[] {
+  const result: PlacedCutaway[] = []
+  for (const cutaway of cutaways) {
+    const base = placed.find((item) => item.shot.id === cutaway.base_shot_id)
+    const clip = clips.find((item) => item.id === cutaway.clip_id)
+    if (!base || !clip) continue
+    const wanted = shotSpanMs(cutaway, clip)
+    const room = Math.max(0, base.spanMs - cutaway.offset_ms)
+    result.push({
+      cutaway,
+      clip,
+      startMs: base.startMs + Math.min(cutaway.offset_ms, base.spanMs),
+      spanMs: Math.min(wanted, room),
+      overflows: wanted > room,
+    })
+  }
+  return result
+}
+
+/** Where a Cutaway dragged to `ms` lands: which Shot it covers, and how far in. */
+export function anchorAt(
+  placed: Placed[],
+  ms: number,
+  spanMs: number,
+): { baseShotId: string; offsetMs: number } | null {
+  const host =
+    placed.find((item) => ms >= item.startMs && ms < item.startMs + item.spanMs) ??
+    placed[placed.length - 1]
+  if (!host) return null
+  const offset = Math.min(Math.max(0, ms - host.startMs), Math.max(0, host.spanMs - spanMs))
+  return { baseShotId: host.shot.id, offsetMs: snap(offset) }
+}
+
 /** Where a Shot dragged to `ms` belongs, given the Shots it is not. */
 export function insertionIndex(others: Placed[], ms: number): number {
   let index = 0
@@ -73,16 +136,10 @@ export function insertionIndex(others: Placed[], ms: number): number {
   return index
 }
 
-const MIN_SPAN_MS = 400
-const SNAP_MS = 100
-const DRAG_THRESHOLD_PX = 3
-const ZOOM_LIMITS = { min: 4, max: 200 }
-
-const snap = (ms: number) => Math.round(ms / SNAP_MS) * SNAP_MS
-
 type Gesture =
   | { kind: 'move'; shotId: string; originX: number }
   | { kind: 'scrub'; originX: number }
+  | { kind: 'cutaway-move'; shotId: string; originX: number; grabMs: number }
   | {
       kind: 'trim'
       shotId: string
@@ -109,6 +166,7 @@ type Gesture =
  */
 export function Timeline({
   shots,
+  cutaways,
   clips,
   selectedShotId,
   placingClipId,
@@ -118,10 +176,14 @@ export function Timeline({
   onMove,
   onTrim,
   onPlace,
+  onMoveCutaway,
+  onTrimCutaway,
+  onPlaceCutaway,
   onPlaceEnd,
   busy,
 }: {
   shots: Shot[]
+  cutaways: Cutaway[]
   clips: Project[]
   selectedShotId: string | null
   placingClipId: string | null
@@ -131,6 +193,9 @@ export function Timeline({
   onMove: (shot: Shot, position: number) => void
   onTrim: (shot: Shot, trim: ShotTrim) => void
   onPlace: (clipId: string, position: number) => void
+  onMoveCutaway: (cutaway: Cutaway, baseShotId: string, offsetMs: number) => void
+  onTrimCutaway: (cutaway: Cutaway, trim: ShotTrim) => void
+  onPlaceCutaway: (clipId: string, baseShotId: string, offsetMs: number) => void
   onPlaceEnd: () => void
   busy: boolean
 }) {
@@ -140,7 +205,12 @@ export function Timeline({
     null,
   )
   const [dropIndex, setDropIndex] = useState<number | null>(null)
+  const [draftAnchor, setDraftAnchor] = useState<
+    { cutawayId: string; baseShotId: string; offsetMs: number } | null
+  >(null)
+  const [coverDrop, setCoverDrop] = useState<number | null>(null)
   const trackRef = useRef<HTMLOListElement>(null)
+  const coverRef = useRef<HTMLOListElement>(null)
   const gesture = useRef<Gesture | null>(null)
   const dragged = useRef(false)
 
@@ -157,6 +227,19 @@ export function Timeline({
     : ordered
 
   const placed = layout(drafted, clips)
+  // A Cutaway is trimmed and dragged with the same gestures, so the same drafts
+  // apply to it — its id is what tells which list an in-flight edit belongs to.
+  const draftedCutaways = cutaways.map((cutaway) => {
+    let next = cutaway
+    if (draftTrim?.shotId === cutaway.id) {
+      next = { ...next, trim_start_ms: draftTrim.start, trim_end_ms: draftTrim.end }
+    }
+    if (draftAnchor?.cutawayId === cutaway.id) {
+      next = { ...next, base_shot_id: draftAnchor.baseShotId, offset_ms: draftAnchor.offsetMs }
+    }
+    return next
+  })
+  const placedCutaways = layoutCutaways(draftedCutaways, placed, clips)
   const totalMs = placed.reduce((sum, item) => sum + item.spanMs, 0)
   const pxOf = (ms: number) => (ms / 1000) * pxPerSec
 
@@ -170,10 +253,10 @@ export function Timeline({
   // at the card, not here — the window is the only place both can be seen.
   useEffect(() => {
     if (!placingClipId) return
-    const track = trackRef.current
+    const clip = clips.find((item) => item.id === placingClipId)
 
-    function over(event: PointerEvent) {
-      const rect = track?.getBoundingClientRect()
+    function over(element: Element | null, event: PointerEvent) {
+      const rect = element?.getBoundingClientRect()
       return Boolean(
         rect &&
           event.clientX >= rect.left &&
@@ -184,12 +267,22 @@ export function Timeline({
     }
 
     function move(event: PointerEvent) {
-      setDropIndex(over(event) ? insertionIndex(placed, msAtX(event.clientX)) : null)
+      const ms = msAtX(event.clientX)
+      setCoverDrop(over(coverRef.current, event) ? ms : null)
+      setDropIndex(over(trackRef.current, event) ? insertionIndex(placed, ms) : null)
     }
 
     function up(event: PointerEvent) {
-      if (over(event)) onPlace(placingClipId!, insertionIndex(placed, msAtX(event.clientX)))
+      const ms = msAtX(event.clientX)
+      if (over(coverRef.current, event) && clip) {
+        // Dropped on the cover lane: it covers whichever Shot is under it.
+        const anchor = anchorAt(placed, ms, shotSpanMs(clip as unknown as Trimmed, clip))
+        if (anchor) onPlaceCutaway(placingClipId!, anchor.baseShotId, anchor.offsetMs)
+      } else if (over(trackRef.current, event)) {
+        onPlace(placingClipId!, insertionIndex(placed, ms))
+      }
       setDropIndex(null)
+      setCoverDrop(null)
       onPlaceEnd()
     }
 
@@ -224,6 +317,20 @@ export function Timeline({
     if (Math.abs(event.clientX - current.originX) > DRAG_THRESHOLD_PX) dragged.current = true
     if (!dragged.current) return
 
+    if (current.kind === 'cutaway-move') {
+      const item = placedCutaways.find((entry) => entry.cutaway.id === current.shotId)
+      if (!item) return
+      const anchor = anchorAt(placed, msAtX(event.clientX) - current.grabMs, item.spanMs)
+      if (anchor) {
+        setDraftAnchor({
+          cutawayId: current.shotId,
+          baseShotId: anchor.baseShotId,
+          offsetMs: anchor.offsetMs,
+        })
+      }
+      return
+    }
+
     if (current.kind === 'move') {
       const others = placed.filter((item) => item.shot.id !== current.shotId)
       const target = insertionIndex(others, msAtX(event.clientX))
@@ -236,7 +343,9 @@ export function Timeline({
       return
     }
 
-    const item = placed.find((entry) => entry.shot.id === current.shotId)
+    const item =
+      placed.find((entry) => entry.shot.id === current.shotId) ??
+      placedCutaways.find((entry) => entry.cutaway.id === current.shotId)
     if (!item) return
     const deltaMs = snap(((event.clientX - current.originX) / pxPerSec) * 1000)
     const limit = item.clip.duration_ms ?? current.from.end
@@ -265,8 +374,19 @@ export function Timeline({
       // A click, not a drag. Selecting is what a click means.
       setDraftOrder(null)
       setDraftTrim(null)
+      setDraftAnchor(null)
       onSelect(current.shotId)
       return
+    }
+
+    const cutaway = cutaways.find((item) => item.id === current.shotId)
+    if (current.kind === 'cutaway-move' && draftAnchor && cutaway) {
+      if (
+        draftAnchor.baseShotId !== cutaway.base_shot_id ||
+        draftAnchor.offsetMs !== cutaway.offset_ms
+      ) {
+        onMoveCutaway(cutaway, draftAnchor.baseShotId, draftAnchor.offsetMs)
+      }
     }
 
     const shot = shots.find((item) => item.id === current.shotId)
@@ -274,6 +394,14 @@ export function Timeline({
       const from = shots.findIndex((item) => item.id === current.shotId)
       const to = draftOrder.indexOf(current.shotId)
       if (to >= 0 && to !== from) onMove(shot, to)
+    }
+    if (current.kind === 'trim' && draftTrim && cutaway) {
+      onTrimCutaway(
+        cutaway,
+        current.edge === 'start'
+          ? { trim_start_ms: draftTrim.start }
+          : { trim_end_ms: draftTrim.end },
+      )
     }
     if (current.kind === 'trim' && draftTrim && shot) {
       // Only the edge that moved is sent, so the other stays as it was —
@@ -287,6 +415,7 @@ export function Timeline({
     }
     setDraftOrder(null)
     setDraftTrim(null)
+    setDraftAnchor(null)
   }
 
   if (!shots.length) {
@@ -350,6 +479,83 @@ export function Timeline({
               </span>
             ))}
           </div>
+
+          <ol className="sequence__cover" aria-label="Cutaways" ref={coverRef}>
+            {placedCutaways.map((item) => {
+              const selected = item.cutaway.id === selectedShotId
+              const width = pxOf(item.spanMs)
+              return (
+                <li
+                  className={`sequence__cutaway ${selected ? 'is-selected' : ''} ${
+                    item.overflows ? 'is-clipped' : ''
+                  }`}
+                  key={item.cutaway.id}
+                  style={{ left: pxOf(item.startMs), width }}
+                >
+                  <button
+                    className="sequence__cutaway-body"
+                    type="button"
+                    onPointerDown={(event) =>
+                      begin(event, {
+                        kind: 'cutaway-move',
+                        shotId: item.cutaway.id,
+                        originX: event.clientX,
+                        grabMs: msAtX(event.clientX) - item.startMs,
+                      })
+                    }
+                    onPointerMove={onPointerMove}
+                    onPointerUp={onPointerUp}
+                    onFocus={() => onSelect(item.cutaway.id)}
+                    aria-label={`${item.clip.title}, cutaway covering ${
+                      formatTime(item.spanMs)
+                    }${item.overflows ? ', clipped to the shot it covers' : ''}`}
+                  >
+                    {width > 72 && <span className="sequence__cutaway-text">{item.clip.title}</span>}
+                  </button>
+                  <span
+                    className="sequence__handle sequence__handle--start"
+                    aria-hidden="true"
+                    onPointerDown={(event) => {
+                      const { start, end } = shotTrim(item.cutaway, item.clip)
+                      begin(event, {
+                        kind: 'trim',
+                        shotId: item.cutaway.id,
+                        edge: 'start',
+                        originX: event.clientX,
+                        from: { start, end },
+                      })
+                    }}
+                    onPointerMove={onPointerMove}
+                    onPointerUp={onPointerUp}
+                  />
+                  <span
+                    className="sequence__handle sequence__handle--end"
+                    aria-hidden="true"
+                    onPointerDown={(event) => {
+                      const { start, end } = shotTrim(item.cutaway, item.clip)
+                      begin(event, {
+                        kind: 'trim',
+                        shotId: item.cutaway.id,
+                        edge: 'end',
+                        originX: event.clientX,
+                        from: { start, end },
+                      })
+                    }}
+                    onPointerMove={onPointerMove}
+                    onPointerUp={onPointerUp}
+                  />
+                </li>
+              )
+            })}
+            {!placedCutaways.length && (
+              <span className="sequence__cover-hint">
+                Drop a clip here to cover a shot while its sound keeps playing.
+              </span>
+            )}
+            {coverDrop !== null && (
+              <i className="sequence__drop" style={{ left: pxOf(coverDrop) }} aria-hidden="true" />
+            )}
+          </ol>
 
           <ol className="sequence__track" aria-label="Timeline" ref={trackRef}>
             {placed.map((item, index) => {

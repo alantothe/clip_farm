@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, RotateCcw, X } from 'lucide-react'
 import { formatTime } from '../../lib/format'
-import type { Project, Shot, ShotTrim } from '../../types'
+import type { Cutaway, Project, Shot, ShotTrim } from '../../types'
 import { shotSpanMs, shotTrim } from './Timeline'
 
 const asSeconds = (ms: number) => (ms / 1000).toFixed(1)
@@ -19,18 +19,21 @@ export function ShotInspector({
   clip,
   index,
   count,
+  covering,
   onMove,
   onTrim,
   onRemove,
   busy,
 }: {
-  shot: Shot
+  shot: Shot | Cutaway
   clip: Project
   index: number
   count: number
+  /** The Base Shot's title when this is a Cutaway, which has no place in the order. */
+  covering: string | null
   onMove: (shot: Shot, position: number) => void
-  onTrim: (shot: Shot, trim: ShotTrim) => void
-  onRemove: (shot: Shot) => void
+  onTrim: (shot: Shot | Cutaway, trim: ShotTrim) => void
+  onRemove: (shot: Shot | Cutaway) => void
   busy: boolean
 }) {
   const trim = shotTrim(shot, clip)
@@ -59,7 +62,8 @@ export function ShotInspector({
       <span className="shot-inspector__title">
         <strong>{clip.title}</strong>
         <small>
-          shot {index + 1} of {count} · {formatTime(shotSpanMs(shot, clip))} ·{' '}
+          {covering ? `covering ${covering}` : `shot ${index + 1} of ${count}`} ·{' '}
+          {formatTime(shotSpanMs(shot, clip))} ·{' '}
           {overridden ? 'trimmed here' : 'follows clip'}
         </small>
       </span>
@@ -98,26 +102,31 @@ export function ShotInspector({
       </label>
 
       <span className="shot-inspector__actions">
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => onMove(shot, index - 1)}
-          disabled={busy || index === 0}
-          aria-label={`Move ${clip.title} earlier`}
-          title="Move earlier"
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => onMove(shot, index + 1)}
-          disabled={busy || index === count - 1}
-          aria-label={`Move ${clip.title} later`}
-          title="Move later"
-        >
-          <ChevronRight size={16} />
-        </button>
+        {/* A Cutaway has no place in the running order to move it along. */}
+        {!covering && (
+          <>
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => onMove(shot as Shot, index - 1)}
+              disabled={busy || index === 0}
+              aria-label={`Move ${clip.title} earlier`}
+              title="Move earlier"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              className="icon-button"
+              type="button"
+              onClick={() => onMove(shot as Shot, index + 1)}
+              disabled={busy || index === count - 1}
+              aria-label={`Move ${clip.title} later`}
+              title="Move later"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </>
+        )}
         <button
           className="text-button"
           type="button"
@@ -134,8 +143,12 @@ export function ShotInspector({
           type="button"
           onClick={() => onRemove(shot)}
           disabled={busy}
-          aria-label={`Remove ${clip.title} from the timeline`}
-          title="Remove from timeline"
+          aria-label={
+            covering
+              ? `Stop ${clip.title} covering ${covering}`
+              : `Remove ${clip.title} from the timeline`
+          }
+          title={covering ? 'Uncover the shot' : 'Remove from timeline'}
         >
           <X size={16} />
         </button>

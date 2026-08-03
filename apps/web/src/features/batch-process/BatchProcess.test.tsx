@@ -96,6 +96,7 @@ const batch: Batch = {
   updated_at: '2026-08-02T12:00:00Z',
   clips: [makeClip({ id: 'clip-ready', title: 'first' }), importingClip],
   shots: [],
+  cutaways: [],
   sequence_render: null,
 }
 
@@ -295,6 +296,7 @@ function sequencedBatch(overrides: Partial<Batch> = {}): Batch {
     ...batch,
     clips: [readyClip, secondClip],
     shots: [],
+    cutaways: [],
     sequence_render: null,
     ...overrides,
   }
@@ -520,6 +522,95 @@ test('the transport is dead until something is placed', async () => {
   const preview = await screen.findByRole('region', { name: 'Rough cut' })
   expect(within(preview).getByRole('button', { name: 'Play the rough cut' })).toBeDisabled()
   expect(within(preview).getByText('Nothing placed yet.')).toBeVisible()
+})
+
+const covered: Batch = sequencedBatch({
+  shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0 })],
+  cutaways: [
+    {
+      id: 'cut-1',
+      clip_id: 'clip-second',
+      base_shot_id: 'shot-1',
+      offset_ms: 1_000,
+      trim_start_ms: null,
+      trim_end_ms: null,
+    },
+  ],
+})
+
+test('a cutaway sits on its own lane, over the shot it covers', async () => {
+  stubApi({ 'GET /api/batches/batch-1': covered })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const lane = await screen.findByRole('list', { name: 'Cutaways' })
+  const entries = within(lane).getAllByRole('listitem')
+  expect(entries).toHaveLength(1)
+  // 1.0s into a shot that starts at 0, and 3s long, at the default scale.
+  expect(entries[0]).toHaveStyle({ left: '24px', width: '72px' })
+  // It is not in the running order.
+  const timeline = screen.getByRole('list', { name: 'Timeline' })
+  expect(within(timeline).getAllByRole('listitem')).toHaveLength(1)
+})
+
+test('a cutaway is trimmed and uncovered from the same inspector', async () => {
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': covered })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  const lane = await screen.findByRole('list', { name: 'Cutaways' })
+  fireEvent.focus(within(lane).getByRole('button', { name: /second, cutaway covering/ }))
+
+  // It says what it covers rather than a place in an order it is not in.
+  expect(screen.getByText(/covering first/)).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Move second earlier' })).toBeNull()
+
+  const out = screen.getByRole('spinbutton', { name: 'Shot out point, seconds' })
+  fireEvent.change(out, { target: { value: '2' } })
+  fireEvent.blur(out)
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/cutaways/cut-1',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ trim_end_ms: 2000 }) }),
+    ),
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stop second covering first' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/cutaways/cut-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+})
+
+test('the rough cut says a cutaway is playing over the sound beneath it', async () => {
+  // Covering from the very start, so it is live at the opening playhead —
+  // scrubbing into it needs pointer geometry jsdom cannot run.
+  stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0 })],
+      cutaways: [
+        {
+          id: 'cut-1',
+          clip_id: 'clip-second',
+          base_shot_id: 'shot-1',
+          offset_ms: 0,
+          trim_start_ms: null,
+          trim_end_ms: null,
+        },
+      ],
+    }),
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const preview = await screen.findByRole('region', { name: 'Rough cut' })
+  // The cover supplies the picture; the shot underneath keeps the sound, which
+  // is the one thing a cutaway changes and the preview must not misreport.
+  expect(within(preview).getByText('second')).toBeVisible()
+  expect(within(preview).getByText('covering first, its sound playing')).toBeVisible()
 })
 
 test('exporting is refused until something is on the timeline', async () => {

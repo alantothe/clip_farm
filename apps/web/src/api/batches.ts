@@ -60,6 +60,34 @@ export const trimShot = (batchId: string, shotId: string, trim: ShotTrim) =>
     body: JSON.stringify(trim),
   })
 
+/**
+ * Cover a Shot with a Clip for a span.
+ *
+ * A Cutaway is anchored to the Shot it covers rather than to a clock time, so
+ * what travels is a base shot id and an offset into it.
+ */
+export const addCutaway = (
+  batchId: string,
+  cutaway: { clip_id: string; base_shot_id: string; offset_ms: number } & ShotTrim,
+) =>
+  request<Batch>(`/api/batches/${batchId}/cutaways`, {
+    method: 'POST',
+    body: JSON.stringify(cutaway),
+  })
+
+export const updateCutaway = (
+  batchId: string,
+  cutawayId: string,
+  patch: { base_shot_id?: string; offset_ms?: number } & ShotTrim,
+) =>
+  request<Batch>(`/api/batches/${batchId}/cutaways/${cutawayId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const removeCutaway = (batchId: string, cutawayId: string) =>
+  request<Batch>(`/api/batches/${batchId}/cutaways/${cutawayId}`, { method: 'DELETE' })
+
 export const renderSequence = (batchId: string) =>
   request<SequenceRender>(`/api/batches/${batchId}/render`, { method: 'POST' })
 

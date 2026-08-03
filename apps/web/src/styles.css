@@ -2930,6 +2930,78 @@ input[type='range']::-webkit-slider-thumb {
   white-space: nowrap;
 }
 
+/* The cover lane: Cutaways sit above the Shots they cover. */
+.sequence__cover {
+  position: relative;
+  height: 26px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  background: repeating-linear-gradient(
+    -45deg,
+    #f1f4f1,
+    #f1f4f1 5px,
+    #e9ede9 5px,
+    #e9ede9 10px
+  );
+}
+
+.sequence__cover-hint {
+  position: absolute;
+  left: 8px;
+  top: 7px;
+  font-size: 10px;
+  color: #8a938d;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.sequence__cutaway {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  border-left: 3px solid var(--blue);
+  overflow: hidden;
+}
+
+.sequence__cutaway.is-selected {
+  box-shadow: inset 0 0 0 2px var(--ink);
+  z-index: 2;
+}
+
+/* Clipped by a Base Shot trimmed shorter than it: an ordinary edit, but the
+   operator should be able to see that not all of it will play. */
+.sequence__cutaway.is-clipped {
+  border-right: 3px dashed var(--coral);
+}
+
+.sequence__cutaway-body {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 7px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.sequence__cutaway-body:active { cursor: grabbing; }
+
+.sequence__cutaway-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 .sequence__track {
   position: relative;
   height: 62px;
@@ -3108,6 +3180,9 @@ input[type='range']::-webkit-slider-thumb {
 }
 
 .preview__video.is-active { opacity: 1; }
+
+/* Over the top, muted: the base element below still carries the sound. */
+.preview__video--cover { z-index: 2; }
 
 .preview__side {
   display: flex;

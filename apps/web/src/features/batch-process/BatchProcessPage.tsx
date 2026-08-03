@@ -14,7 +14,7 @@ import { ExportPanel } from './ExportPanel'
 import { SequencePreview } from './SequencePreview'
 import { ShotInspector } from './ShotInspector'
 import { Timeline, sequenceDurationMs } from './Timeline'
-import type { Batch, BatchSummary, Project, Shot, ShotTrim } from '../../types'
+import type { Batch, BatchSummary, Cutaway, Project, Shot, ShotTrim } from '../../types'
 
 const BATCHES_KEY = ['batches'] as const
 const batchKey = (id: string) => ['batch', id] as const
@@ -24,6 +24,10 @@ type SequenceEdit =
   | { kind: 'remove'; shotId: string }
   | { kind: 'move'; shotId: string; position: number }
   | { kind: 'trim'; shotId: string; trim: ShotTrim }
+  | { kind: 'cover'; clipId: string; baseShotId: string; offsetMs: number }
+  | { kind: 'uncover'; cutawayId: string }
+  | { kind: 'anchor'; cutawayId: string; baseShotId: string; offsetMs: number }
+  | { kind: 'trim-cutaway'; cutawayId: string; trim: ShotTrim }
 
 /**
  * A Sequence edit applied to the cached Batch, so a drag lands instantly.
@@ -33,7 +37,24 @@ type SequenceEdit =
  * `add` is not predicted — only the server can name the new Shot.
  */
 export function applySequenceEdit(batch: Batch, edit: SequenceEdit): Batch {
-  if (edit.kind === 'add') return batch
+  if (edit.kind === 'add' || edit.kind === 'cover') return batch
+
+  if (edit.kind === 'uncover') {
+    return { ...batch, cutaways: batch.cutaways.filter((item) => item.id !== edit.cutawayId) }
+  }
+  if (edit.kind === 'anchor' || edit.kind === 'trim-cutaway') {
+    const patch =
+      edit.kind === 'anchor'
+        ? { base_shot_id: edit.baseShotId, offset_ms: edit.offsetMs }
+        : edit.trim
+    return {
+      ...batch,
+      cutaways: batch.cutaways.map((item) =>
+        item.id === edit.cutawayId ? { ...item, ...patch } : item,
+      ),
+    }
+  }
+
   let shots = [...batch.shots]
 
   if (edit.kind === 'remove') {
@@ -171,6 +192,7 @@ export function BatchProcessPage() {
   const batch = batchQuery.data ?? null
   const clips = batch?.clips ?? []
   const shots = batch?.shots ?? []
+  const cutaways = batch?.cutaways ?? []
   // A Clip can be placed more than once, so this counts rather than flags.
   const placedCounts = shots.reduce(
     (counts, shot) => counts.set(shot.clip_id, (counts.get(shot.clip_id) ?? 0) + 1),
@@ -179,8 +201,17 @@ export function BatchProcessPage() {
   const activeClip = clipId ? clips.find((clip) => clip.id === clipId) ?? null : null
   const selectedIndex = shots.findIndex((shot) => shot.id === selectedShotId)
   const selectedShot = selectedIndex >= 0 ? shots[selectedIndex] : null
-  const selectedClip = selectedShot
-    ? clips.find((clip) => clip.id === selectedShot.clip_id) ?? null
+  // A Cutaway is a Shot too, so one selection covers both lanes.
+  const selectedCutaway = cutaways.find((item) => item.id === selectedShotId) ?? null
+  const selectedClip = (() => {
+    const clipId = selectedShot?.clip_id ?? selectedCutaway?.clip_id
+    return clipId ? clips.find((clip) => clip.id === clipId) ?? null : null
+  })()
+  const coveredTitle = selectedCutaway
+    ? clips.find(
+        (clip) =>
+          clip.id === shots.find((shot) => shot.id === selectedCutaway.base_shot_id)?.clip_id,
+      )?.title ?? null
     : null
 
   const createMutation = useMutation({
@@ -208,6 +239,23 @@ export function BatchProcessPage() {
       }
       if (edit.kind === 'remove') return api.removeShot(batchId!, edit.shotId)
       if (edit.kind === 'trim') return api.trimShot(batchId!, edit.shotId, edit.trim)
+      if (edit.kind === 'cover') {
+        return api.addCutaway(batchId!, {
+          clip_id: edit.clipId,
+          base_shot_id: edit.baseShotId,
+          offset_ms: edit.offsetMs,
+        })
+      }
+      if (edit.kind === 'uncover') return api.removeCutaway(batchId!, edit.cutawayId)
+      if (edit.kind === 'anchor') {
+        return api.updateCutaway(batchId!, edit.cutawayId, {
+          base_shot_id: edit.baseShotId,
+          offset_ms: edit.offsetMs,
+        })
+      }
+      if (edit.kind === 'trim-cutaway') {
+        return api.updateCutaway(batchId!, edit.cutawayId, edit.trim)
+      }
       return api.moveShot(batchId!, edit.shotId, edit.position)
     },
     // The gesture already ended, so the cache moves now and rolls back if the
@@ -379,12 +427,14 @@ export function BatchProcessPage() {
             <>
               <SequencePreview
                 shots={shots}
+                cutaways={cutaways}
                 clips={clips}
                 playheadMs={playheadMs}
                 onScrub={setPlayheadMs}
               />
               <Timeline
                 shots={shots}
+                cutaways={cutaways}
                 clips={clips}
                 selectedShotId={selectedShotId}
                 placingClipId={placingClipId}
@@ -400,24 +450,47 @@ export function BatchProcessPage() {
                 onPlace={(clipId, position) =>
                   sequenceMutation.mutate({ kind: 'add', clipId, position })
                 }
+                onMoveCutaway={(cutaway, baseShotId, offsetMs) =>
+                  sequenceMutation.mutate({
+                    kind: 'anchor',
+                    cutawayId: cutaway.id,
+                    baseShotId,
+                    offsetMs,
+                  })
+                }
+                onTrimCutaway={(cutaway, trim) =>
+                  sequenceMutation.mutate({ kind: 'trim-cutaway', cutawayId: cutaway.id, trim })
+                }
+                onPlaceCutaway={(clipId, baseShotId, offsetMs) =>
+                  sequenceMutation.mutate({ kind: 'cover', clipId, baseShotId, offsetMs })
+                }
                 onPlaceEnd={() => setPlacingClipId(null)}
                 busy={sequenceMutation.isPending}
               />
-              {selectedShot && selectedClip && (
+              {selectedClip && (selectedShot || selectedCutaway) && (
                 <ShotInspector
-                  shot={selectedShot}
+                  shot={selectedShot ?? selectedCutaway!}
                   clip={selectedClip}
                   index={selectedIndex}
                   count={shots.length}
+                  covering={coveredTitle}
                   onMove={(shot, position) =>
                     sequenceMutation.mutate({ kind: 'move', shotId: shot.id, position })
                   }
                   onTrim={(shot, trim) =>
-                    sequenceMutation.mutate({ kind: 'trim', shotId: shot.id, trim })
+                    sequenceMutation.mutate(
+                      selectedCutaway
+                        ? { kind: 'trim-cutaway', cutawayId: shot.id, trim }
+                        : { kind: 'trim', shotId: shot.id, trim },
+                    )
                   }
                   onRemove={(shot) => {
-                    setUndoRemoval({ shot, title: selectedClip.title })
                     setSelectedShotId(null)
+                    if (selectedCutaway) {
+                      sequenceMutation.mutate({ kind: 'uncover', cutawayId: shot.id })
+                      return
+                    }
+                    setUndoRemoval({ shot: shot as Shot, title: selectedClip.title })
                     sequenceMutation.mutate({ kind: 'remove', shotId: shot.id })
                   }}
                   busy={sequenceMutation.isPending}

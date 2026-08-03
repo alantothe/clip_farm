@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Clapperboard, Pause, Play, SkipBack } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import { artifact } from '../../lib/project'
-import type { Project, Shot } from '../../types'
-import { layout, shotAt, shotTrim, sourceTimeMs } from './Timeline'
+import type { Cutaway, Project, Shot } from '../../types'
+import { layout, layoutCutaways, shotAt, shotTrim, sourceTimeMs } from './Timeline'
 
 /** The preview Artifact, falling back to the Source Video as ClipEditor does. */
 export function previewUrl(clip: Project): string | null {
@@ -30,14 +30,20 @@ const SEEK_TOLERANCE_MS = 300
  * Two elements rather than one: switching `src` on a single element black-
  * flashes and drops audio at every cut, so the next Shot is loaded and seeked
  * on the idle element while the current one plays, and they swap at the join.
+ *
+ * A Cutaway plays as a third element laid over the top, muted, while the Base
+ * Shot underneath keeps supplying the sound — which is exactly what the export
+ * does, so the rough cut does not mislead about the one thing Cutaways change.
  */
 export function SequencePreview({
   shots,
+  cutaways,
   clips,
   playheadMs,
   onScrub,
 }: {
   shots: Shot[]
+  cutaways: Cutaway[]
   clips: Project[]
   playheadMs: number
   onScrub: (ms: number) => void
@@ -45,6 +51,7 @@ export function SequencePreview({
   const [playing, setPlaying] = useState(false)
   const [slot, setSlot] = useState(0)
   const videos = [useRef<HTMLVideoElement>(null), useRef<HTMLVideoElement>(null)]
+  const coverRef = useRef<HTMLVideoElement>(null)
 
   const placed = layout(shots, clips)
   const totalMs = placed.reduce((sum, item) => sum + item.spanMs, 0)
@@ -54,6 +61,33 @@ export function SequencePreview({
 
   const active = videos[slot]
   const idle = videos[1 - slot]
+
+  // Whichever Cutaway is over the playhead, if any.
+  const placedCutaways = layoutCutaways(cutaways, placed, clips)
+  const covering =
+    placedCutaways.find(
+      (item) => playheadMs >= item.startMs && playheadMs < item.startMs + item.spanMs,
+    ) ?? null
+
+  useEffect(() => {
+    const video = coverRef.current
+    if (!video || !covering) return
+    const url = previewUrl(covering.clip)
+    if (!url) return
+    if (video.getAttribute('src') !== url) video.setAttribute('src', url)
+    const wanted =
+      shotTrim(covering.cutaway, covering.clip).start + (playheadMs - covering.startMs)
+    if (Math.abs(video.currentTime * 1000 - wanted) > SEEK_TOLERANCE_MS) {
+      video.currentTime = wanted / 1000
+    }
+  }, [covering?.cutaway.id, covering?.startMs, playheadMs])
+
+  useEffect(() => {
+    const video = coverRef.current
+    if (!video) return
+    if (playing && covering) void video.play().catch(() => undefined)
+    else video.pause()
+  }, [playing, covering?.cutaway.id])
 
   // Keep the visible element on the right Clip at the right frame. A seek only
   // happens when it has drifted — during playback the video's own clock is
@@ -133,6 +167,14 @@ export function SequencePreview({
             onTimeUpdate={value === slot ? onTimeUpdate : undefined}
           />
         ))}
+        {/* Muted, and over the top: the base element below still has the sound. */}
+        <video
+          ref={coverRef}
+          className={`preview__video preview__video--cover ${covering ? 'is-active' : ''}`}
+          playsInline
+          preload="auto"
+          muted
+        />
       </div>
 
       <div className="preview__side">
@@ -166,7 +208,12 @@ export function SequencePreview({
         </div>
 
         <p className="preview__now">
-          {current ? (
+          {covering ? (
+            <>
+              <strong>{covering.clip.title}</strong>
+              <small>covering {current ? current.item.clip.title : 'a shot'}, its sound playing</small>
+            </>
+          ) : current ? (
             <>
               <strong>{current.item.clip.title}</strong>
               <small>shot {index + 1} of {placed.length}</small>

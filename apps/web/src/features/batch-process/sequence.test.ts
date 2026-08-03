@@ -9,15 +9,17 @@
  */
 import { applySequenceEdit } from './BatchProcessPage'
 import {
+  anchorAt,
   insertionIndex,
   layout,
+  layoutCutaways,
   sequenceDurationMs,
   shotAt,
   shotSpanMs,
   shotTrim,
   sourceTimeMs,
 } from './Timeline'
-import type { Batch, Project, Shot } from '../../types'
+import type { Batch, Cutaway, Project, Shot } from '../../types'
 
 const clip = (overrides: Partial<Project> & { id: string }): Project =>
   ({
@@ -188,5 +190,79 @@ describe('what plays at a point on the sequence', () => {
 
   test('an empty sequence has nothing playing', () => {
     expect(shotAt([], 0)).toBeNull()
+  })
+})
+
+describe('cutaways positioned against the sequence', () => {
+  const clips = [
+    clip({ id: 'a', trim_end_ms: 6_000 }),
+    clip({ id: 'b', trim_end_ms: 8_000 }),
+    clip({ id: 'cover', trim_end_ms: 2_000 }),
+  ]
+  const placed = layout(
+    [
+      shot({ id: 's1', clip_id: 'a', position: 0 }),
+      shot({ id: 's2', clip_id: 'b', position: 1 }),
+    ],
+    clips,
+  )
+  const cutaway = (overrides: Partial<Cutaway> & { base_shot_id: string; offset_ms: number }) => ({
+    id: 'k1',
+    clip_id: 'cover',
+    trim_start_ms: null,
+    trim_end_ms: null,
+    ...overrides,
+  })
+
+  test('a cutaway lands at its base shot’s start plus its offset', () => {
+    const [item] = layoutCutaways([cutaway({ base_shot_id: 's2', offset_ms: 3_000 })], placed, clips)
+
+    // s2 starts at 6.0s, so a 3.0s offset into it is 9.0s on the sequence.
+    expect(item.startMs).toBe(9_000)
+    expect(item.spanMs).toBe(2_000)
+    expect(item.overflows).toBe(false)
+  })
+
+  test('a cutaway is clipped to what is left of the shot it covers', () => {
+    // s2 runs 6.0s–14.0s, so an offset of 7.0s leaves only 1.0s of room.
+    const [item] = layoutCutaways([cutaway({ base_shot_id: 's2', offset_ms: 7_000 })], placed, clips)
+
+    expect(item.spanMs).toBe(1_000)
+    expect(item.overflows).toBe(true)
+  })
+
+  test('a cutaway whose base shot is gone is not drawn', () => {
+    expect(layoutCutaways([cutaway({ base_shot_id: 'gone', offset_ms: 0 })], placed, clips)).toEqual(
+      [],
+    )
+  })
+})
+
+describe('where a dragged cutaway anchors', () => {
+  const clips = [clip({ id: 'a', trim_end_ms: 6_000 }), clip({ id: 'b', trim_end_ms: 8_000 })]
+  const placed = layout(
+    [
+      shot({ id: 's1', clip_id: 'a', position: 0 }),
+      shot({ id: 's2', clip_id: 'b', position: 1 }),
+    ],
+    clips,
+  )
+
+  test('it covers whichever shot it was dropped over', () => {
+    expect(anchorAt(placed, 2_000, 1_000)).toEqual({ baseShotId: 's1', offsetMs: 2_000 })
+    expect(anchorAt(placed, 7_500, 1_000)).toEqual({ baseShotId: 's2', offsetMs: 1_500 })
+  })
+
+  test('it cannot be pushed past the end of the shot it covers', () => {
+    // s1 is 6.0s long, so a 2.0s cutaway can start no later than 4.0s in.
+    expect(anchorAt(placed, 5_800, 2_000)).toEqual({ baseShotId: 's1', offsetMs: 4_000 })
+  })
+
+  test('dropping past the sequence falls on the last shot', () => {
+    expect(anchorAt(placed, 99_000, 1_000)?.baseShotId).toBe('s2')
+  })
+
+  test('an empty sequence has nothing to cover', () => {
+    expect(anchorAt([], 0, 1_000)).toBeNull()
   })
 })
