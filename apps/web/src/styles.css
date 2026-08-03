@@ -3650,8 +3650,18 @@ input[type='range']::-webkit-slider-thumb {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
   font-size: 10px;
+}
+
+.phrases__scope {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.02em;
 }
 
 .phrases {
@@ -3664,11 +3674,12 @@ input[type='range']::-webkit-slider-thumb {
   overflow-y: auto;
 }
 
-/* The forget button rides on the row rather than inside the applying button:
-   a button inside a button is not a thing HTML has. */
+/* Applying and deleting are sibling buttons: nested buttons are invalid and
+   an always-visible trash control makes saved words manageable on touch too. */
 .phrase {
-  position: relative;
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 27px;
+  gap: 4px;
 }
 
 .phrase__apply {
@@ -3693,7 +3704,7 @@ input[type='range']::-webkit-slider-thumb {
    picture, and white-on-black is the commonest they come. */
 .phrase__sample {
   display: block;
-  padding: 5px 22px 5px 7px;
+  padding: 5px 7px;
   background: #1b1b1f;
   font-size: 12px;
   line-height: 1.25;
@@ -3717,28 +3728,22 @@ input[type='range']::-webkit-slider-thumb {
 }
 
 .phrase__forget {
-  position: absolute;
-  top: 3px;
-  right: 3px;
   display: flex;
   align-items: center;
-  padding: 2px;
-  border: 0;
-  border-radius: 3px;
-  background: rgba(0, 0, 0, 0.45);
-  color: #d8d8dd;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
   cursor: pointer;
-  opacity: 0;
 }
 
-/* Shown on approach, and whenever it is focused — a control that only appears
-   under a pointer is a control a keyboard cannot reach. */
-.phrase:hover .phrase__forget,
-.phrase__forget:focus-visible {
-  opacity: 1;
+.phrase__forget:hover {
+  border-color: #a84444;
+  color: #df6a6a;
+  background: rgba(168, 68, 68, 0.1);
 }
-
-.phrase__forget:hover { color: #fff; background: rgba(0, 0, 0, 0.7); }
 
 /*
  * The looks, each drawn in itself.

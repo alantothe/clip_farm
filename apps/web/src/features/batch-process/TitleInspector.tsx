@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bookmark, BookmarkPlus, Sliders, Trash2, Type, X } from 'lucide-react'
+import { Bookmark, BookmarkPlus, Sliders, Trash2, Type } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import {
   faceFamily,
@@ -225,12 +225,12 @@ function PhraseSwatch({
       <button
         type="button"
         className="phrase__forget"
-        aria-label={`Forget “${phrase.text}”`}
-        title="Forget these words. Any text already written from them is untouched."
+        aria-label={`Delete saved words “${phrase.text}”`}
+        title="Delete these saved words. Text already added to batches is untouched."
         onClick={onDelete}
         disabled={busy}
       >
-        <X size={11} />
+        <Trash2 size={13} />
       </button>
     </span>
   )
@@ -477,19 +477,24 @@ export function TitleInspector({
         </button>
 
         {phrases.length > 0 && (
-          <div className="phrases" role="group" aria-label="Saved words">
-            {phrases.map((phrase) => (
-              <PhraseSwatch
-                key={phrase.id}
-                phrase={phrase}
-                catalog={catalog}
-                active={phrase.text === title.text && sameLook(title, phrase)}
-                onApply={() => writePhrase(phrase)}
-                onDelete={() => onDeletePhrase(phrase)}
-                busy={busy}
-              />
-            ))}
-          </div>
+          <>
+            <p className="phrases__scope" id="saved-words-scope">
+              <Bookmark size={11} /> Saved for every batch
+            </p>
+            <div className="phrases" role="group" aria-label="Saved words">
+              {phrases.map((phrase) => (
+                <PhraseSwatch
+                  key={phrase.id}
+                  phrase={phrase}
+                  catalog={catalog}
+                  active={phrase.text === title.text && sameLook(title, phrase)}
+                  onApply={() => writePhrase(phrase)}
+                  onDelete={() => onDeletePhrase(phrase)}
+                  busy={busy}
+                />
+              ))}
+            </div>
+          </>
         )}
       </div>
 

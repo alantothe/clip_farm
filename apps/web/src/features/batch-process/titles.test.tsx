@@ -592,7 +592,8 @@ test('writing a saved phrase brings its words and its look, and leaves the timin
   fireEvent.focus(within(track).getByRole('button', { name: /title/i }))
   const shelf = await screen.findByRole('group', { name: 'Saved words' })
 
-  // Exactly the words: the button beside it is named "Forget “Lima Peru”".
+  expect(screen.getByText('Saved for every batch')).toBeVisible()
+  // Exactly the words: the button beside it is named for deleting this saved copy.
   fireEvent.click(within(shelf).getByRole('button', { name: 'Lima Peru' }))
 
   await waitFor(() => {
@@ -607,6 +608,32 @@ test('writing a saved phrase brings its words and its look, and leaves the timin
   })
   // And in the box straight away, not on the reply.
   expect(screen.getByLabelText('Title text')).toHaveValue('Lima Peru')
+})
+
+test('saved words have an always-available delete action in the UI', async () => {
+  const batch = makeBatch([look({ id: 'title-1', text: 'Lima Peru' })])
+  const phrase = { ...look(), id: 'phrase-1', text: 'Lima Peru' }
+  const fetchMock = stubApi(batch, {
+    'GET /api/phrases': [phrase],
+    'DELETE /api/phrases/phrase-1': { deleted: 1 },
+  })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /Lima Peru/ }))
+  const remove = await screen.findByRole('button', {
+    name: 'Delete saved words “Lima Peru”',
+  })
+
+  expect(remove).toBeVisible()
+  fireEvent.click(remove)
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/phrases/phrase-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
 })
 
 test('the shelf stays out of the way until something is on it', async () => {
