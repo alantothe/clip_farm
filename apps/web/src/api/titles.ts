@@ -1,4 +1,4 @@
-import type { Batch, FontCatalog, TitleLook, TitlePatch, TitleStyle } from '../types'
+import type { Batch, FontCatalog, Phrase, TitleLook, TitlePatch, TitleStyle } from '../types'
 import { request } from './client'
 
 // A Title edit returns the whole Batch, as a Sequence edit does: the Title
@@ -42,5 +42,20 @@ export const updateTitleStyle = (
 
 export const deleteTitleStyle = (styleId: string) =>
   request<{ deleted: number }>(`/api/title-styles/${styleId}`, { method: 'DELETE' })
+
+// Phrases are global too, and for the same reason: the words are saved so they
+// can be written again on a Batch that does not exist yet. Saving the same
+// words twice replaces the first — the server decides that, not the caller.
+
+export const listPhrases = () => request<Phrase[]>('/api/phrases')
+
+export const createPhrase = (phrase: { text: string } & Partial<TitleLook>) =>
+  request<Phrase>('/api/phrases', {
+    method: 'POST',
+    body: JSON.stringify(phrase),
+  })
+
+export const deletePhrase = (phraseId: string) =>
+  request<{ deleted: number }>(`/api/phrases/${phraseId}`, { method: 'DELETE' })
 
 export const getFontCatalog = () => request<FontCatalog>('/api/fonts')

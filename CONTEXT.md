@@ -89,8 +89,12 @@ Text an operator writes, drawn over the picture for a span of a Sequence and bur
 _Avoid_: text overlay, text, lower third, sticker, graphic, headline
 
 **Title Style**:
-A saved, named look a Title can be made from — its font, colour, size, placement and the rest, without its words or its timing. Reusable across every Batch. Applying one copies its values onto the Title; it does not bind them, so editing a Style later leaves Titles already made from it alone (ADR 0008). Some are built into Clip Farm and cannot be edited; the rest are saved by the operator.
+A saved, named look a Title can be made from — its font, colour, size, placement and the rest, without its words or its timing. Reusable across every Batch. Applying one copies its values onto the Title; it does not bind them, so editing a Style later leaves Titles already made from it alone (ADR 0008). Some are built into Clip Farm and cannot be edited; the rest are saved by the operator. A saved look that carries the words too is a Phrase.
 _Avoid_: profile, preset, template, theme, style
+
+**Phrase**:
+Words an operator saves whole — the text together with its look and its place — to write again on another Batch. A Title Style saves the look without the words; a Phrase saves both. It has no name, because the words are its name, and no timing, because where it lands in a Sequence is a fact about that Sequence. Applying one copies its words and its look onto a Title and leaves that Title's timing alone (ADR 0008).
+_Avoid_: snippet, preset, saved text, template, favourite
 
 **Trim**:
 The span of the Source Video that survives into the Render.

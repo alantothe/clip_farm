@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.models import TITLE_LOOK_FIELDS, Title, TitleStyle
+from app.models import TITLE_LOOK_FIELDS, Title, TitleLook
 
 BUILTIN_PREFIX = "builtin:"
 
@@ -328,12 +328,13 @@ def builtin_style(style_id: str) -> dict[str, Any] | None:
     return next((style for style in BUILTIN_STYLES if style["id"] == style_id), None)
 
 
-def look_of(source: TitleStyle | dict[str, Any]) -> dict[str, Any]:
-    """A Style's look and placement, as the fields a Title stores them in.
+def look_of(source: TitleLook | dict[str, Any]) -> dict[str, Any]:
+    """A look and placement, as the fields a Title stores them in.
 
-    A built-in Style is a partial dict — it names only what it changes — so the
-    gaps come from the model's own column defaults rather than from a second
-    copy of them written out here.
+    Anything carrying `TitleLook` answers — a Style, a Phrase, or a Title being
+    saved as either. A built-in Style is a partial dict instead — it names only
+    what it changes — so the gaps come from the model's own column defaults
+    rather than from a second copy of them written out here.
     """
     if isinstance(source, dict):
         defaults = {
@@ -343,7 +344,7 @@ def look_of(source: TitleStyle | dict[str, Any]) -> dict[str, Any]:
     return {field: getattr(source, field) for field in TITLE_LOOK_FIELDS}
 
 
-def apply_style(title: Title, source: TitleStyle | dict[str, Any]) -> None:
+def apply_style(title: Title, source: TitleLook | dict[str, Any]) -> None:
     """Copy a Style onto a Title. A copy, never a link (ADR 0008)."""
     for field, value in look_of(source).items():
         setattr(title, field, value)

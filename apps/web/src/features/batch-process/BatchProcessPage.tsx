@@ -25,6 +25,7 @@ import type {
   BatchSummary,
   Cutaway,
   Format,
+  Phrase,
   Project,
   Shot,
   ShotTrim,
@@ -36,6 +37,7 @@ import type {
 const BATCHES_KEY = ['batches'] as const
 const batchKey = (id: string) => ['batch', id] as const
 const TITLE_STYLES_KEY = ['title-styles'] as const
+const PHRASES_KEY = ['phrases'] as const
 const FONTS_KEY = ['fonts'] as const
 
 /** How long a new Title runs, before the operator drags either edge. */
@@ -52,6 +54,11 @@ type StyleAction =
   | { kind: 'save'; name: string; look: Partial<Title> }
   | { kind: 'update'; style: TitleStyle; look: Partial<Title> }
   | { kind: 'delete'; style: TitleStyle }
+
+/** Saving the selected Title's words along with its look, or forgetting them. */
+type PhraseAction =
+  | { kind: 'save'; text: string; look: Partial<Title> }
+  | { kind: 'delete'; phrase: Phrase }
 
 type SequenceEdit =
   | { kind: 'add'; clipId: string; position?: number; trim?: ShotTrim }
@@ -283,12 +290,14 @@ export function BatchProcessPage() {
   // they are fetched once and shared. The catalog never changes between
   // releases — the faces are vendored — so it is never refetched.
   const stylesQuery = useQuery({ queryKey: TITLE_STYLES_KEY, queryFn: api.listTitleStyles })
+  const phrasesQuery = useQuery({ queryKey: PHRASES_KEY, queryFn: api.listPhrases })
   const fontsQuery = useQuery({
     queryKey: FONTS_KEY,
     queryFn: api.getFontCatalog,
     staleTime: Infinity,
   })
   const titleStyles: TitleStyle[] = stylesQuery.data ?? []
+  const phrases: Phrase[] = phrasesQuery.data ?? []
 
   const batch = batchQuery.data ?? null
   const clips = batch?.clips ?? []
@@ -484,6 +493,17 @@ export function BatchProcessPage() {
         void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) })
       }
     },
+  })
+
+  const phraseMutation = useMutation<Phrase | { deleted: number }, Error, PhraseAction>({
+    mutationFn: (action) => {
+      if (action.kind === 'save') return api.createPhrase({ text: action.text, ...action.look })
+      return api.deletePhrase(action.phrase.id)
+    },
+    // No Batch to settle either way: applying a Phrase copies its words and its
+    // look onto the Title, so forgetting one leaves every Title written from it
+    // exactly as it was — there is not even a label to drop (ADR 0008).
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: PHRASES_KEY }),
   })
 
   const exportMutation = useMutation({
@@ -728,6 +748,7 @@ export function BatchProcessPage() {
                   title={selectedTitle}
                   catalog={fontsQuery.data ?? null}
                   styles={titleStyles}
+                  phrases={phrases}
                   onEdit={(patch) => {
                     setTitlePreview(null)
                     titleMutation.mutate({ kind: 'patch', titleId: selectedTitle.id, patch })
@@ -746,16 +767,28 @@ export function BatchProcessPage() {
                     styleMutation.mutate({ kind: 'update', style, look: lookOf(selectedTitle) })
                   }
                   onDeleteStyle={(style) => styleMutation.mutate({ kind: 'delete', style })}
-                  busy={titleMutation.isPending || styleMutation.isPending}
+                  // The words come from the box rather than from the Title:
+                  // the last half-second of typing may not have been sent yet,
+                  // and it is the words on screen the operator means to save.
+                  onSavePhrase={(text) =>
+                    phraseMutation.mutate({ kind: 'save', text, look: lookOf(selectedTitle) })
+                  }
+                  onDeletePhrase={(phrase) => phraseMutation.mutate({ kind: 'delete', phrase })}
+                  busy={
+                    titleMutation.isPending || styleMutation.isPending || phraseMutation.isPending
+                  }
                 />
               )}
             </div>
           </div>
 
           <div className="editor-dock">
-            {(titleMutation.error || styleMutation.error) && (
+            {(titleMutation.error || styleMutation.error || phraseMutation.error) && (
               <div className="toast-error" role="alert">
-                {(titleMutation.error ?? styleMutation.error)?.message}
+                {
+                  (titleMutation.error ?? styleMutation.error ?? phraseMutation.error)
+                    ?.message
+                }
               </div>
             )}
 

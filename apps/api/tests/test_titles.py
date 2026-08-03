@@ -1,9 +1,12 @@
-"""Titles: text a Batch draws over its Sequence, and the Styles they come from.
+"""Titles: text a Batch draws over its Sequence, and what they are saved as.
 
 A Title is timed against the Sequence rather than against any Shot, so the
 interesting cases are the ones where those two disagree — a Title that crosses a
 cut, one that starts before the segment playing it, one written past the end
 (ADR 0008).
+
+The two savings are here as well: a Style, which keeps the look and drops the
+words, and a Phrase, which keeps both. Neither binds — applying one copies.
 """
 
 from types import SimpleNamespace
@@ -11,13 +14,14 @@ from types import SimpleNamespace
 import pysubs2
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.database import Base
-from app.models import Batch, Project, Shot, Title, TitleStyle
+from app.models import Batch, Phrase, Project, Shot, Title, TitleStyle
 from app.routers import titles as titles_router
-from app.schemas import TitleCreate, TitleStyleWrite, TitleUpdate
+from app.schemas import PhraseWrite, TitleCreate, TitleStyleWrite, TitleUpdate
 from app.services import fonts
 from app.services.media import create_ass_titles
 from app.services.sequence import plan_sequence
@@ -281,6 +285,81 @@ def test_apply_style_copies_every_look_field(tmp_path):
     apply_style(title, source)
 
     assert (title.font_family, title.rotation_deg, title.opacity) == ("bangers", 12.0, 0.5)
+
+
+# --- Phrases: the same saving, with the words kept -----------------------
+
+
+def test_a_phrase_saves_the_words_along_with_the_look(tmp_path):
+    session = make_session(tmp_path)
+
+    saved = titles_router.create_phrase(
+        PhraseWrite(text="Lima Peru — The North Side", font_size_percent=7.5, center_y=26.0),
+        session,
+    )
+
+    assert saved.text == "Lima Peru — The North Side"
+    assert (saved.font_size_percent, saved.center_y) == (7.5, 26.0)
+    # A Phrase has no timing: where it lands is a fact about the Sequence.
+    assert not hasattr(saved, "start_ms")
+
+
+def test_saving_the_same_words_twice_rewrites_the_first(tmp_path):
+    """The words are the label, so two reading the same could not be told apart."""
+    session = make_session(tmp_path)
+    first = titles_router.create_phrase(PhraseWrite(text="Wait for it", center_y=20.0), session)
+
+    second = titles_router.create_phrase(PhraseWrite(text="Wait for it", center_y=80.0), session)
+
+    assert second.id == first.id
+    assert second.center_y == 80.0
+    assert len(titles_router.list_phrases(session)) == 1
+
+
+def test_phrases_are_listed_newest_first(tmp_path):
+    session = make_session(tmp_path)
+    for words in ("first", "second", "third"):
+        titles_router.create_phrase(PhraseWrite(text=words), session)
+
+    assert [phrase.text for phrase in titles_router.list_phrases(session)] == [
+        "third",
+        "second",
+        "first",
+    ]
+
+
+def test_forgetting_a_phrase_leaves_the_title_written_from_it_alone(tmp_path):
+    """Applying a Phrase copies it, exactly as applying a Style does."""
+    session = make_session(tmp_path)
+    batch = make_batch(session)
+    saved = titles_router.create_phrase(PhraseWrite(text="Sign off", color="#FFE500"), session)
+    out = titles_router.add_title(
+        batch.id, TitleCreate(text=saved.text, color=saved.color), session
+    )
+
+    titles_router.delete_phrase(saved.id, session)
+
+    session.expire_all()
+    title = session.get(Title, out.titles[0].id)
+    assert (title.text, title.color) == ("Sign off", "#FFE500")
+
+
+def test_a_phrase_cannot_be_saved_without_words(tmp_path):
+    with pytest.raises(ValidationError):
+        PhraseWrite(text="   ")
+
+
+def test_forgetting_a_phrase_that_is_not_there_is_a_404(tmp_path):
+    session = make_session(tmp_path)
+
+    with pytest.raises(HTTPException) as caught:
+        titles_router.delete_phrase("nope", session)
+    assert caught.value.status_code == 404
+
+
+def test_a_phrase_carries_every_look_field_a_style_does(tmp_path):
+    """Anything a Style can describe, a Phrase can too — the mixin is shared."""
+    assert set(look_of(Phrase(text="x"))) == set(look_of(TitleStyle(name="x")))
 
 
 # --- Slicing a Title into the segments it crosses ------------------------

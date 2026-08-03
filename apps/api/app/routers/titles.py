@@ -14,13 +14,15 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import Batch, Title, TitleStyle
+from app.models import Batch, Phrase, Title, TitleStyle
 from app.schemas import (
     BatchOut,
     DeletionOut,
     FontCatalogOut,
     FontFaceOut,
     FontFamilyOut,
+    PhraseOut,
+    PhraseWrite,
     TitleCreate,
     TitleStyleOut,
     TitleStyleWrite,
@@ -40,6 +42,11 @@ router = APIRouter()
 # thousands of Titles would build an ASS file per segment large enough to slow
 # every export. This is a sanity bound, not a design limit.
 MAX_TITLES_PER_BATCH = 200
+
+# Every Phrase is drawn in its own face on the panel, so the list is a download
+# as well as a list. Past this many it stops being something an operator picks
+# from by eye, which is the only thing it is for.
+MAX_PHRASES = 60
 
 
 def _touch(session: Session, batch: Batch) -> BatchOut:
@@ -209,6 +216,61 @@ def delete_title_style(style_id: str, session: Session = Depends(get_db)) -> Del
     for title in session.scalars(select(Title).where(Title.style_id == style.id)).all():
         title.style_id = None
     session.delete(style)
+    session.commit()
+    return DeletionOut(deleted=1)
+
+
+@router.get(f"{settings.api_prefix}/phrases", response_model=list[PhraseOut])
+def list_phrases(session: Session = Depends(get_db)) -> list[PhraseOut]:
+    """Every saved Phrase, newest first.
+
+    Newest first because the most recently added are the ones most likely
+    wanted again, and a list only ever appended to would push them out of
+    sight. Ordered by when each was added rather than when it was last touched,
+    so re-saving a nudged Phrase leaves the panel where the eye left it.
+
+    Global rather than per-Batch, for the same reason Styles are: writing the
+    same words on the next Batch is the whole point of saving them.
+    """
+    phrases = session.scalars(select(Phrase).order_by(Phrase.created_at.desc())).all()
+    return [PhraseOut.model_validate(phrase) for phrase in phrases]
+
+
+@router.post(f"{settings.api_prefix}/phrases", response_model=PhraseOut, status_code=201)
+def create_phrase(payload: PhraseWrite, session: Session = Depends(get_db)) -> PhraseOut:
+    """Save words whole, with the look and the place they were written in.
+
+    Saving the same words twice replaces the first rather than adding a second.
+    An operator who nudges a Phrase and saves it again means "like this now",
+    and two entries reading identically on the panel could not be told apart —
+    the words are the label.
+    """
+    phrase = session.scalars(select(Phrase).where(Phrase.text == payload.text)).first()
+    if not phrase:
+        if len(session.scalars(select(Phrase)).all()) >= MAX_PHRASES:
+            raise HTTPException(
+                status_code=409, detail=f"Up to {MAX_PHRASES} phrases can be saved"
+            )
+        phrase = Phrase(text=payload.text)
+        session.add(phrase)
+    for field, value in payload.look().items():
+        setattr(phrase, field, value)
+    session.commit()
+    return PhraseOut.model_validate(phrase)
+
+
+@router.delete(f"{settings.api_prefix}/phrases/{{phrase_id}}", response_model=DeletionOut)
+def delete_phrase(phrase_id: str, session: Session = Depends(get_db)) -> DeletionOut:
+    """Forget a Phrase.
+
+    Every Title written from it is untouched: applying a Phrase copies its
+    words and its look onto the Title, exactly as applying a Style copies a
+    look, so there is nothing here for a Title to lose (ADR 0008).
+    """
+    phrase = session.get(Phrase, phrase_id)
+    if not phrase:
+        raise HTTPException(status_code=404, detail="Phrase not found")
+    session.delete(phrase)
     session.commit()
     return DeletionOut(deleted=1)
 

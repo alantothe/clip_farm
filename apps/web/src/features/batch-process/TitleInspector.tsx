@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bookmark, Sliders, Trash2, Type } from 'lucide-react'
+import { Bookmark, BookmarkPlus, Sliders, Trash2, Type, X } from 'lucide-react'
 import { formatTime } from '../../lib/format'
 import {
   faceFamily,
@@ -12,6 +12,7 @@ import {
 import type {
   FontCatalog,
   FontFamily,
+  Phrase,
   Title,
   TitleAlign,
   TitleLook,
@@ -179,6 +180,63 @@ function StyleSwatch({
 }
 
 /**
+ * One saved Phrase, drawn in its own words and its own look, as the button
+ * that writes it.
+ *
+ * The sample is the label here, unlike a Style's swatch: a Phrase has no name
+ * because its words are its name, so what a screen reader is given is the
+ * words too.
+ */
+function PhraseSwatch({
+  phrase,
+  catalog,
+  active,
+  onApply,
+  onDelete,
+  busy,
+}: {
+  phrase: Phrase
+  catalog: FontCatalog | null
+  active: boolean
+  onApply: () => void
+  onDelete: () => void
+  busy: boolean
+}) {
+  const face = resolveFace(catalog, phrase.font_family, phrase.font_weight)
+  const { box, text } = swatchCss(phrase, face)
+  return (
+    <span className={`phrase ${active ? 'is-active' : ''}`}>
+      <button
+        type="button"
+        className="phrase__apply"
+        aria-pressed={active}
+        title="Write these words here, at the size and place they were saved"
+        onClick={onApply}
+        disabled={busy}
+      >
+        <span className="phrase__sample">
+          {/* The words are their own layer, so a tilted Phrase tips the type
+              and not the dark panel behind it. */}
+          <span className="phrase__words" style={box}>
+            <span style={text}>{phrase.text}</span>
+          </span>
+        </span>
+      </button>
+      <button
+        type="button"
+        className="phrase__forget"
+        aria-label={`Forget “${phrase.text}”`}
+        title="Forget these words. Any text already written from them is untouched."
+        onClick={onDelete}
+        disabled={busy}
+      >
+        <X size={11} />
+      </button>
+    </span>
+  )
+}
+
+/**
  * Everything about the selected Title.
  *
  * The panel is a look and four adjustments. Choosing from twenty ready-made
@@ -196,17 +254,21 @@ export function TitleInspector({
   title,
   catalog,
   styles,
+  phrases,
   onEdit,
   onPreview,
   onRemove,
   onSaveStyle,
   onUpdateStyle,
   onDeleteStyle,
+  onSavePhrase,
+  onDeletePhrase,
   busy,
 }: {
   title: Title
   catalog: FontCatalog | null
   styles: TitleStyle[]
+  phrases: Phrase[]
   onEdit: (patch: TitlePatch) => void
   /** Local-only, for the stage to follow a drag before it is sent. */
   onPreview: (patch: TitlePatch | null) => void
@@ -214,6 +276,9 @@ export function TitleInspector({
   onSaveStyle: (name: string) => void
   onUpdateStyle: (style: TitleStyle) => void
   onDeleteStyle: (style: TitleStyle) => void
+  /** The words as they stand in the box, which may not have been sent yet. */
+  onSavePhrase: (text: string) => void
+  onDeletePhrase: (phrase: Phrase) => void
   busy: boolean
 }) {
   const [text, setText] = useState(title.text)
@@ -255,6 +320,17 @@ export function TitleInspector({
     }
   }, [catalog, styles])
 
+  // A Phrase is shown in its own face for the same reason a Style is: the words
+  // and the way they are set are the whole of what is being recognised. Mostly
+  // already loaded — a Phrase was saved from a Style — so this is usually free.
+  useEffect(() => {
+    if (!catalog) return
+    for (const phrase of phrases) {
+      const sample = resolveFace(catalog, phrase.font_family, phrase.font_weight)
+      if (sample) void loadFace(sample)
+    }
+  }, [catalog, phrases])
+
   const grouped = useMemo(() => {
     const groups = new Map<string, FontFamily[]>()
     for (const item of catalog?.families ?? []) {
@@ -289,6 +365,11 @@ export function TitleInspector({
   const applied = styles.find((style) => style.id === title.style_id) ?? null
   const saved = applied && !applied.builtin ? applied : null
 
+  // Saving words already saved rewrites that Phrase rather than adding a second
+  // reading the same — the server settles that. Said here so the button does
+  // not offer to save something that is already on the shelf.
+  const savedAlready = phrases.some((phrase) => phrase.text === text.trim())
+
   // --- The words -----------------------------------------------------------
   //
   // Typing goes three places: local state so the box is a text box, the
@@ -315,6 +396,24 @@ export function TitleInspector({
   function flush() {
     window.clearTimeout(timer.current)
     if (unsent.current !== null) commit.current(unsent.current)
+  }
+
+  /**
+   * Write a saved Phrase into this Title: its words and its whole look.
+   *
+   * The timing is deliberately left alone. Where a Title sits in a Sequence and
+   * how long it runs are facts about this Sequence — the block was dragged
+   * there on purpose — and a Phrase knows nothing about either.
+   *
+   * The pending keystroke timer is dropped rather than flushed: whatever was
+   * half-typed is exactly what is being replaced, and letting it land after
+   * would overwrite the Phrase a moment later.
+   */
+  function writePhrase(phrase: Phrase) {
+    window.clearTimeout(timer.current)
+    unsent.current = null
+    setText(phrase.text)
+    set({ ...lookOfStyle(phrase), text: phrase.text })
   }
 
   // Clearing on the way out: a preview left behind would keep overriding the
@@ -356,6 +455,43 @@ export function TitleInspector({
         onChange={(event) => type(event.target.value)}
         onBlur={flush}
       />
+
+      {/*
+       * Words worth writing twice.
+       *
+       * Sits under the box rather than beside the Looks because it is about the
+       * words: a Style answers "how should this be set", a Phrase answers "what
+       * did I write last time". Hidden entirely until the first one is saved —
+       * an empty shelf is a control that only ever cost the operator a glance.
+       */}
+      <div className="title-inspector__saved">
+        <button
+          className="text-button title-inspector__save-phrase"
+          type="button"
+          disabled={busy || !text.trim()}
+          onClick={() => onSavePhrase(text.trim())}
+          title="Save these words with their size and place, to write again on any batch"
+        >
+          <BookmarkPlus size={13} />
+          {savedAlready ? 'Update these words' : 'Save these words'}
+        </button>
+
+        {phrases.length > 0 && (
+          <div className="phrases" role="group" aria-label="Saved words">
+            {phrases.map((phrase) => (
+              <PhraseSwatch
+                key={phrase.id}
+                phrase={phrase}
+                catalog={catalog}
+                active={phrase.text === title.text && sameLook(title, phrase)}
+                onApply={() => writePhrase(phrase)}
+                onDelete={() => onDeletePhrase(phrase)}
+                busy={busy}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="title-inspector__group">
         <p className="title-inspector__label" id="title-looks">

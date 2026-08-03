@@ -499,6 +499,85 @@ test('saving a look as a profile names it and keeps it for the next batch', asyn
   expect(saved).not.toHaveProperty('start_ms')
 })
 
+test('saving the words keeps them along with the size and the place', async () => {
+  const batch = makeBatch([
+    look({ id: 'title-1', text: 'Lima Peru', font_size_percent: 7.5, center_y: 26 }),
+  ])
+  const fetchMock = stubApi(batch, {
+    'POST /api/phrases': { ...look(), id: 'phrase-new', text: 'Lima Peru' },
+  })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /Lima Peru/ }))
+  await screen.findByLabelText('Title text')
+
+  // Under the box the words were typed in, not behind Fine-tune: this is about
+  // the words, and it is the reason the panel is opened a second time.
+  fireEvent.click(screen.getByRole('button', { name: /Save these words/ }))
+
+  const posted = () =>
+    fetchMock.mock.calls.find(
+      ([path, init]) =>
+        String(path) === '/api/phrases' && (init as RequestInit)?.method === 'POST',
+    )
+  await waitFor(() => expect(posted()).toBeDefined())
+  const saved = JSON.parse((posted()?.[1] as RequestInit).body as string)
+  expect(saved.text).toBe('Lima Peru')
+  expect(saved.font_size_percent).toBe(7.5)
+  expect(saved.center_y).toBe(26)
+  // The timing is the Sequence's business, not the words'.
+  expect(saved).not.toHaveProperty('start_ms')
+  expect(saved).not.toHaveProperty('end_ms')
+})
+
+test('writing a saved phrase brings its words and its look, and leaves the timing', async () => {
+  const batch = makeBatch([look({ id: 'title-1', text: '', start_ms: 4000, end_ms: 7000 })])
+  const fetchMock = stubApi(batch, {
+    'GET /api/phrases': [
+      { ...look({ font_family: 'inter', font_size_percent: 7.5, center_y: 26 }), id: 'phrase-1', text: 'Lima Peru' },
+    ],
+    'PATCH /api/batches/batch-1/titles/title-1': batch,
+  })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /title/i }))
+  const shelf = await screen.findByRole('group', { name: 'Saved words' })
+
+  // Exactly the words: the button beside it is named "Forget “Lima Peru”".
+  fireEvent.click(within(shelf).getByRole('button', { name: 'Lima Peru' }))
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(([path]) => String(path).endsWith('/titles/title-1'))
+    const sent = JSON.parse((call?.[1] as RequestInit).body as string)
+    expect(sent.text).toBe('Lima Peru')
+    expect(sent.font_size_percent).toBe(7.5)
+    expect(sent.center_y).toBe(26)
+    // The block was dragged to 4s on purpose; a Phrase knows nothing about that.
+    expect(sent).not.toHaveProperty('start_ms')
+    expect(sent).not.toHaveProperty('end_ms')
+  })
+  // And in the box straight away, not on the reply.
+  expect(screen.getByLabelText('Title text')).toHaveValue('Lima Peru')
+})
+
+test('the shelf stays out of the way until something is on it', async () => {
+  stubApi(makeBatch([look({ id: 'title-1', text: 'WAIT FOR IT' })]))
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
+  await screen.findByLabelText('Title text')
+
+  // Saving is always offered; the shelf appears only once it holds something.
+  expect(screen.getByRole('button', { name: /Save these words/ })).toBeVisible()
+  expect(screen.queryByRole('group', { name: 'Saved words' })).not.toBeInTheDocument()
+})
+
 test('the stage draws a title only while it is playing', async () => {
   stubApi(makeBatch([look({ id: 'title-1', text: 'ONLY LATER', start_ms: 2000, end_ms: 4000 })]))
 

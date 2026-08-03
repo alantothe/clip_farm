@@ -206,6 +206,18 @@ export interface TitleStyle extends TitleLook {
   builtin: boolean
 }
 
+/**
+ * Words saved whole — the text with its look and its place — to write again.
+ *
+ * A Style saves the look without the words; a Phrase saves both. It has no
+ * name because the words are the label, and no timing because where it lands
+ * in a Sequence is a fact about that Sequence (ADR 0008).
+ */
+export interface Phrase extends TitleLook {
+  id: string
+  text: string
+}
+
 /** What a Title edit sends: only what changed. */
 export type TitlePatch = Partial<TitleLook> &
   Partial<{ text: string; start_ms: number; end_ms: number; style_id: string }>

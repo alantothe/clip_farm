@@ -299,6 +299,29 @@ class TitleStyleOut(TitleLookOut):
     builtin: bool = False
 
 
+class PhraseWrite(TitleLookPatch):
+    """Save words whole, with the look and the placement they were written in.
+
+    The same look fields a Style takes, plus the text — which is what makes it
+    a Phrase rather than a Style. No name: the words are the label.
+    """
+
+    text: str = Field(min_length=1, max_length=500)
+
+    @field_validator("text")
+    @classmethod
+    def text_is_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("A phrase needs its words")
+        return cleaned
+
+
+class PhraseOut(TitleLookOut):
+    id: str
+    text: str
+
+
 class FontFamilyOut(BaseModel):
     """One family an operator can pick, and the weights actually vendored.
 

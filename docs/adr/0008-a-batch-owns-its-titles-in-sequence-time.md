@@ -1,7 +1,7 @@
 # A Batch owns its Titles, in Sequence time
 
-Adds a **Title** — authored text burned over the picture — and a **Title Style**, the saved
-look a Title is made from. Amends the sentence in `CONTEXT.md`, and in
+Adds a **Title** — authored text burned over the picture — a **Title Style**, the saved
+look a Title is made from, and a **Phrase**, the same saving with the words kept. Amends the sentence in `CONTEXT.md`, and in
 [ADR 0002](0002-batches-group-clips-for-parallel-work.md), saying a Batch holds no edit
 settings of its own. [ADR 0006](0006-a-batch-carries-the-format-it-renders-to.md) already bent
 that line for Format on the grounds that a Format is an output target rather than an edit.
@@ -55,6 +55,36 @@ The seam is invisible because every piece is drawn by the same libass, at the sa
 put identical glyphs on identical pixels; only the video behind them changes. A second pass
 that drew Titles over the joined file would be the obvious alternative, and would cost a full
 re-encode of the whole Sequence to avoid a problem that arithmetic already solves.
+
+## A Phrase is the same saving, with the words kept
+
+A Title Style deliberately drops the words, which is right when the next Title
+says something else and wrong when it says the same thing. A sign-off, a
+location card, a call to action — these get typed, sized and placed once and
+then wanted verbatim on every Batch after. So a **Phrase** is a Title saved
+whole: its words together with the same look and placement a Style stores.
+
+It is a separate table rather than an optional `text` column on `title_styles`,
+because the two are applied by different gestures. A Style restyles the Title in
+front of you; a Phrase rewrites it. Sharing a row would put both behind the same
+swatch grid, where clicking a look would sometimes overwrite the sentence just
+typed — a control whose effect depends on which entry it is is not one control.
+
+A Phrase has no name. The words are the label, and a name that was not the words
+would be a second thing to keep in step with the first. Saving words that are
+already saved therefore rewrites that Phrase rather than adding a second reading
+identically, which is also what an operator who nudged one and saved it again
+meant.
+
+It has no timing either. A Style leaves a Title's span alone and so does a
+Phrase: where text sits in a Sequence and how long it runs are facts about that
+Sequence, and the block was dragged there on purpose. What is saved is what
+survives being carried to a Batch that does not exist yet.
+
+Applying one copies, exactly as applying a Style does, for the same reason and
+with the same consequence: forgetting a Phrase leaves every Title written from
+it untouched. Unlike a Style it does not even leave a label behind — nothing
+records which Phrase a Title came from, because the words already say.
 
 ## The fonts are vendored, and each face is named uniquely
 

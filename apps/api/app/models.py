@@ -273,6 +273,28 @@ class TitleStyle(TitleLook, Base):
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
+class Phrase(TitleLook, Base):
+    """Words saved whole — the text with its look and its place — to write again.
+
+    A Title Style saves the look without the words, which is the right thing
+    when the next Title says something else. A Phrase is for when it says the
+    same thing: a sign-off, a location card, a call to action typed once and
+    wanted verbatim on every Batch after (ADR 0008).
+
+    It carries no name of its own. The words are the label — a Phrase named
+    anything but what it says would be a second thing to keep in step with the
+    first. And no timing: where a Phrase lands in a Sequence is a fact about
+    that Sequence, not about the words.
+    """
+
+    __tablename__ = "phrases"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
 class Title(TitleLook, Base):
     """Text drawn over the picture for a span of a Batch's Sequence.
 
