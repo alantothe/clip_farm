@@ -41,8 +41,13 @@ def _rebuild_shots_without_unique_clip() -> None:
     nothing runs Alembic here — `init_db`'s additive ALTER list is the only
     upgrade path a real database sees. ADR 0002 declined this operation on
     `projects` and ADR 0003 on `renders`, both times because inbound foreign
-    keys would have been left dangling mid-rebuild on startup. Nothing declares
-    a foreign key to `shots.id`, so that risk is absent here.
+    keys would have been left dangling mid-rebuild on startup. Nothing declared
+    a foreign key to `shots.id`, so that risk was absent here.
+
+    ADR 0005 has since added `parent_shot_id`, which points at this same table,
+    so that argument is spent: this rebuild is safe because it already ran
+    before the self-reference existed, and a further one would have to handle
+    it. The columns added after this are ordinary additive ones.
 
     A database created after this change never has the old shape, so the DDL
     check below is what stops this running twice.
@@ -131,6 +136,13 @@ def init_db() -> None:
     shot_additions = {
         "trim_start_ms": "ALTER TABLE shots ADD COLUMN trim_start_ms INTEGER",
         "trim_end_ms": "ALTER TABLE shots ADD COLUMN trim_end_ms INTEGER",
+        # SQLite only accepts a REFERENCES column through ADD COLUMN when it
+        # defaults to NULL, which a Shot that is not a Cutaway does anyway.
+        "parent_shot_id": (
+            "ALTER TABLE shots ADD COLUMN parent_shot_id VARCHAR "
+            "REFERENCES shots(id) ON DELETE CASCADE"
+        ),
+        "offset_ms": "ALTER TABLE shots ADD COLUMN offset_ms INTEGER",
     }
     render_columns = {column["name"] for column in inspect(engine).get_columns("renders")}
     render_additions = {

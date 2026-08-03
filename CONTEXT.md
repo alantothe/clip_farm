@@ -22,6 +22,14 @@ _Avoid_: timeline, edit, montage
 One Clip's placement in a Sequence, at a position. The span that plays is the Shot's own Trim, or its Clip's Trim when the Shot has none of its own. One Clip can have several Shots.
 _Avoid_: item, entry, segment, clip instance
 
+**Cutaway**:
+A Shot that covers another for a span, showing its picture while the covered Shot's audio keeps playing. It sits at an offset into the Shot it covers, and travels with it. A Cutaway's own Subtitles are not burned in — nobody hears the words they transcribe.
+_Avoid_: b-roll, overlay, insert, PiP
+
+**Base Shot**:
+The Shot a Cutaway covers. Only a Shot in the Sequence can be one; a Cutaway cannot cover a Cutaway.
+_Avoid_: parent, host, underlying clip
+
 **Timeline**:
 The strip that presents a Sequence for editing — reordering Shots, trimming them, and scrubbing the Sequence. Horizontal space is time: a Shot is as wide as it is long. UI, not a model — as Mode Library is to Mode.
 _Avoid_: track, storyboard, editor

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import math
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -507,6 +508,63 @@ audio is exactly as long as its video.
 
 JOIN_SAMPLE_RATE = "48000"
 JOIN_CHANNELS = "2"
+
+
+def replace_audio(
+    *,
+    video: Path,
+    audio_source: Path,
+    audio_start_ms: int,
+    audio_end_ms: int,
+    output: Path,
+) -> None:
+    """Put a Cutaway's picture over its Base Shot's sound.
+
+    The picture is copied, never re-encoded — the Cutaway has already been
+    rendered to the Sequence's format, and this only swaps which audio stream
+    travels with it (ADR 0005). `render_vertical` maps the Source Video's audio
+    straight through under `-ss`/`-t`, so taking the Base Shot's audio from its
+    source at the same offsets is the same sound its own render would carry.
+
+    A Base Shot with no audio leaves the stretch silent rather than failing;
+    `normalize_for_join` generates the silence exactly as it does for any Shot
+    that has none.
+    """
+    duration_seconds = max(0, audio_end_ms - audio_start_ms) / 1000
+    if not inspect_media(audio_source)["has_audio"]:
+        shutil.copyfile(video, output)
+        return
+
+    run_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video),
+            "-ss",
+            f"{audio_start_ms / 1000:.3f}",
+            "-t",
+            f"{duration_seconds:.3f}",
+            "-i",
+            str(audio_source),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ar",
+            "48000",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
 
 
 def normalize_for_join(source: Path, output: Path, *, has_audio: bool) -> None:

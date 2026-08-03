@@ -67,6 +67,11 @@ class Shot(Base):
     what lets one Clip earn several Shots: the same source at two different
     in/out points is an ordinary edit (ADR 0004).
 
+    A Shot with a `parent_shot_id` is a Cutaway: it covers that Shot for a span
+    starting `offset_ms` into it, showing its picture while the covered Shot's
+    audio keeps playing (ADR 0005). A Shot without one is in the Sequence, and
+    `position` is where.
+
     Positions are renumbered to 0..n-1 whenever the Sequence is edited. A gap
     left by deleting a Clip elsewhere is harmless — order is what is read, not
     contiguity.
@@ -85,10 +90,29 @@ class Shot(Base):
     # Null is the Shot following its Clip's Trim, not an absent value.
     trim_start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trim_end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Set on a Cutaway: the Shot it covers, and how far into that Shot it lands.
+    parent_shot_id: Mapped[str | None] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    offset_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     batch: Mapped[Batch] = relationship(back_populates="shots")
     clip: Mapped["Project"] = relationship(back_populates="shots")
+    # Removing a Base Shot takes the Cutaways covering it with it.
+    cutaways: Mapped[list["Shot"]] = relationship(
+        back_populates="base_shot",
+        cascade="all, delete-orphan",
+        order_by="Shot.offset_ms",
+        remote_side=None,
+    )
+    base_shot: Mapped["Shot | None"] = relationship(
+        back_populates="cutaways", remote_side="Shot.id"
+    )
+
+    @property
+    def is_cutaway(self) -> bool:
+        return self.parent_shot_id is not None
 
     def span(self) -> tuple[int, int | None]:
         """The span this Shot plays: its own Trim, falling back to its Clip's.

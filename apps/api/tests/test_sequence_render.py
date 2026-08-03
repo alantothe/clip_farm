@@ -403,3 +403,104 @@ def test_the_worker_renders_each_shots_own_span(tmp_path, monkeypatch) -> None:
     assert spans == [(1_000, 9_000), (3_000, 4_500)]
     with factory() as session:
         assert session.get(SequenceRender, render_id).status == "complete"
+
+
+def test_a_cutaway_renders_as_three_stretches_with_the_base_audio(tmp_path, monkeypatch) -> None:
+    """A covered Shot flattens into base, cutaway, base — still a concatenation.
+
+    That is what keeps ADR 0003's join applying unchanged: nothing is
+    composited, and the video is never encoded twice.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app import tasks
+    from app.models import Artifact, Shot
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'cutaway.db'}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    base_source = tmp_path / "base.mp4"
+    cutaway_source = tmp_path / "cutaway.mp4"
+    for path in (base_source, cutaway_source):
+        path.write_bytes(b"not really a video")
+
+    with factory() as session:
+        batch = Batch(name="Monday")
+        session.add(batch)
+        session.flush()
+        clips = {}
+        for name, path in (("base", base_source), ("cover", cutaway_source)):
+            clip = Project(
+                batch_id=batch.id,
+                origin_kind="upload",
+                title=name,
+                status="ready",
+                trim_start_ms=1_000,
+                trim_end_ms=9_000,
+                captions_enabled=True,
+            )
+            session.add(clip)
+            session.flush()
+            session.add(
+                Artifact(project_id=clip.id, kind="source", path=str(path), mime_type="video/mp4")
+            )
+            clips[name] = clip
+        base_shot = Shot(batch_id=batch.id, project_id=clips["base"].id, position=0)
+        session.add(base_shot)
+        session.flush()
+        session.add(
+            Shot(
+                batch_id=batch.id,
+                project_id=clips["cover"].id,
+                parent_shot_id=base_shot.id,
+                offset_ms=3_000,
+                trim_start_ms=0,
+                trim_end_ms=2_000,
+            )
+        )
+        sequence_render = SequenceRender(batch_id=batch.id, shot_count=1)
+        session.add(sequence_render)
+        session.commit()
+        batch_id, render_id = batch.id, sequence_render.id
+
+    rendered: list[dict] = []
+    muxed: list[dict] = []
+
+    def fake_render_vertical(**kwargs):
+        rendered.append(kwargs)
+        Path(kwargs["output"]).write_bytes(b"rendered")
+
+    def fake_replace_audio(**kwargs):
+        muxed.append(kwargs)
+        Path(kwargs["output"]).write_bytes(b"muxed")
+
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+    monkeypatch.setattr(tasks, "settings", SimpleNamespace(batches_dir=tmp_path / "batches"))
+    monkeypatch.setattr(tasks, "render_vertical", fake_render_vertical)
+    monkeypatch.setattr(tasks, "replace_audio", fake_replace_audio)
+    monkeypatch.setattr(
+        tasks, "join_shots", lambda **kwargs: Path(kwargs["output"]).write_bytes(b"joined")
+    )
+    monkeypatch.setattr(
+        tasks, "inspect_media", lambda _path: {"width": 1080, "height": 1920, "duration_ms": 8_000}
+    )
+    monkeypatch.setattr(tasks, "sha256_file", lambda _path: "checksum")
+
+    tasks.render_sequence_task.call_local(batch_id, render_id)
+
+    # 1.0s–4.0s of the base, the cutaway's own 0–2.0s, then 6.0s–9.0s.
+    assert [(item["start_ms"], item["end_ms"]) for item in rendered] == [
+        (1_000, 4_000),
+        (0, 2_000),
+        (6_000, 9_000),
+    ]
+    # The cutaway's subtitles transcribe audio nobody hears under it.
+    assert [item["captions_enabled"] for item in rendered] == [True, False, True]
+    # Only the covered stretch swaps its audio, and it takes the base's.
+    assert len(muxed) == 1
+    assert muxed[0]["audio_source"] == base_source
+    assert (muxed[0]["audio_start_ms"], muxed[0]["audio_end_ms"]) == (4_000, 6_000)
+
+    with factory() as session:
+        assert session.get(SequenceRender, render_id).status == "complete"

@@ -254,6 +254,42 @@ class ShotUpdate(BaseModel):
     trim_end_ms: int | None = Field(default=None, ge=0)
 
 
+class CutawayCreate(BaseModel):
+    """Place a Clip over a Shot for a span."""
+
+    clip_id: str
+    base_shot_id: str
+    offset_ms: int = Field(ge=0)
+    trim_start_ms: int | None = Field(default=None, ge=0)
+    trim_end_ms: int | None = Field(default=None, ge=0)
+
+
+class CutawayUpdate(BaseModel):
+    """Move a Cutaway, re-anchor it to another Base Shot, or trim it.
+
+    Same absent-versus-null rule as `ShotUpdate`: a null trim resets that edge
+    to following the Clip, and an omitted one leaves it alone.
+    """
+
+    base_shot_id: str | None = None
+    offset_ms: int | None = Field(default=None, ge=0)
+    trim_start_ms: int | None = Field(default=None, ge=0)
+    trim_end_ms: int | None = Field(default=None, ge=0)
+
+
+class CutawayOut(BaseModel):
+    """One Cutaway: which Clip covers which Base Shot, and where."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: str
+    clip_id: str = Field(validation_alias="project_id")
+    base_shot_id: str = Field(validation_alias="parent_shot_id")
+    offset_ms: int
+    trim_start_ms: int | None = None
+    trim_end_ms: int | None = None
+
+
 class ShotOut(BaseModel):
     """One Shot. The Clip itself travels in the Batch's `clips`, not here."""
 
@@ -295,8 +331,10 @@ class BatchOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     clips: list[ProjectOut] = []
-    # The Sequence, in play order.
+    # The Sequence, in play order. Cutaways are not in it — each one sits on a
+    # Base Shot at an offset rather than in the running order (ADR 0005).
     shots: list[ShotOut] = []
+    cutaways: list[CutawayOut] = []
     # The most recent export, if this Batch has ever been rendered.
     sequence_render: SequenceRenderOut | None = None
 
