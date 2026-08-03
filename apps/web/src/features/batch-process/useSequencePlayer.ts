@@ -44,8 +44,9 @@ export function shotIsOver(
 
 /** Everything the Player renders, and everything that drives it. */
 export interface SequencePlayer {
-  /** Echoed back so the Player reads the playhead from one place. */
+  /** Echoed back so the Player reads and moves the playhead from one place. */
   playheadMs: number
+  onScrub: (ms: number) => void
   playing: boolean
   setPlaying: (playing: boolean) => void
   /** Index of the visible element; the other one is holding the next Shot. */
@@ -56,8 +57,12 @@ export interface SequencePlayer {
   totalMs: number
   /** The Shot under the playhead, and how far into it the playhead sits. */
   current: { item: Placed; intoShotMs: number } | null
+  /** The Shot the idle element is holding, so the stage can frame it too. */
+  next: Placed | null
   /** Its position in the running order, or -1 when nothing is placed. */
   index: number
+  /** Every Cutaway against the Sequence, for the scrub bar to mark. */
+  placedCutaways: PlacedCutaway[]
   /** Whichever Cutaway is over the playhead, if any. */
   covering: PlacedCutaway | null
   /** True when the Shot under the playhead has no preview to play. */
@@ -209,6 +214,7 @@ export function useSequencePlayer({
 
   return {
     playheadMs,
+    onScrub,
     playing,
     setPlaying,
     slot,
@@ -217,7 +223,9 @@ export function useSequencePlayer({
     placed,
     totalMs,
     current,
+    next,
     index,
+    placedCutaways,
     covering,
     missingPreview: current ? !previewUrl(current.item.clip) : false,
     onTimeUpdate,

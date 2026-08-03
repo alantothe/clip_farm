@@ -451,8 +451,11 @@ export function BatchProcessPage() {
           {renameMutation.error && <div className="toast-error">{renameMutation.error.message}</div>}
 
           {clips.length > 0 ? (
-            <>
-              <Player player={player} />
+            <div className="batch-editor">
+              <div className="batch-editor__player">
+                <Player player={player} format={batch.format} />
+              </div>
+              <div className="batch-editor__timeline">
               <Timeline
                 shots={shots}
                 cutaways={cutaways}
@@ -488,6 +491,8 @@ export function BatchProcessPage() {
                 onPlaceEnd={() => setPlacingClipId(null)}
                 busy={sequenceMutation.isPending}
               />
+              </div>
+              <div className="batch-editor__panels">
               {selectedClip && (selectedShot || selectedCutaway) && (
                 <ShotInspector
                   shot={selectedShot ?? selectedCutaway!}
@@ -568,7 +573,8 @@ export function BatchProcessPage() {
                 placedCounts={placedCounts}
                 adding={sequenceMutation.isPending}
               />
-            </>
+              </div>
+            </div>
           ) : (
             <p className="batch-empty">
               No clips yet. Add videos above and each one imports on its own — you can start

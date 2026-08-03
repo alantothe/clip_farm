@@ -132,13 +132,13 @@ afterEach(() => vi.unstubAllGlobals())
 
 /** The two swapping elements, in DOM order. The third is the Cutaway cover. */
 function stageVideos(): HTMLVideoElement[] {
-  return Array.from(document.querySelectorAll<HTMLVideoElement>('.preview__video')).filter(
-    (video) => !video.classList.contains('preview__video--cover'),
+  return Array.from(document.querySelectorAll<HTMLVideoElement>('.player__video')).filter(
+    (video) => !video.classList.contains('player__video--cover'),
   )
 }
 
 const coverVideo = () =>
-  document.querySelector<HTMLVideoElement>('.preview__video--cover')!
+  document.querySelector<HTMLVideoElement>('.player__video--cover')!
 
 /** Move a media element to a point and tell React, as the browser would. */
 function tick(video: HTMLVideoElement, seconds: number) {
@@ -307,4 +307,115 @@ test('the cutaway uncovers again once its span is over', async () => {
   // Past the Cutaway's two-second span, back on the Base Shot's own picture.
   tick(active, 3.5)
   await waitFor(() => expect(cover).not.toHaveClass('is-active'))
+})
+
+test('the stage is the shape the batch renders to', async () => {
+  await openPlayer(makeBatch())
+
+  const stage = document.querySelector<HTMLElement>('.player__stage')!
+  // Vertical: the stage is the deliverable's shape, not the source's.
+  expect(stage.style.aspectRatio).toBe('1080 / 1920')
+  expect(stage).toHaveClass('player__stage--format')
+})
+
+test('each shot is framed on the stage the way its layout will render it', async () => {
+  const cropped = makeClip({
+    id: 'clip-a',
+    title: 'first',
+    layout: 'smart_crop',
+    crop_center_x: 30,
+  })
+  await openPlayer(makeBatch({ clips: [cropped, second] }))
+
+  const [active] = stageVideos()
+  await waitFor(() => expect(active).toHaveClass('player__video--smart_crop'))
+  // The crop centre the operator chose is what the stage crops to.
+  expect(active.style.getPropertyValue('--crop-x')).toBe('30%')
+})
+
+test('the source view shows the whole frame and outlines what survives', async () => {
+  const cropped = makeClip({
+    id: 'clip-a',
+    title: 'first',
+    layout: 'smart_crop',
+    crop_center_x: 50,
+  })
+  const player = await openPlayer(makeBatch({ clips: [cropped, second] }))
+
+  fireEvent.click(within(player).getByRole('button', { name: /Source/ }))
+
+  const stage = document.querySelector<HTMLElement>('.player__stage')!
+  // Now the source's own shape, uncropped, with the kept slice drawn on it.
+  expect(stage.style.aspectRatio).toBe('1920 / 1080')
+  const [active] = stageVideos()
+  expect(active).toHaveClass('player__video--whole')
+
+  const kept = document.querySelector<HTMLElement>('.player__kept')!
+  expect(kept).toBeTruthy()
+  expect(parseFloat(kept.style.width)).toBeCloseTo(31.64, 1)
+  expect(within(player).getByText(/what the vertical crop keeps/)).toBeVisible()
+})
+
+test('a fitted shot outlines nothing, because it discards nothing', async () => {
+  // fit_background pads the whole frame in rather than cropping it, so an
+  // outline would claim a loss that does not happen.
+  const player = await openPlayer(makeBatch())
+
+  fireEvent.click(within(player).getByRole('button', { name: /Source/ }))
+
+  expect(document.querySelector('.player__kept')).toBeNull()
+})
+
+test('the scrub bar reports the whole sequence, whatever the timeline shows', async () => {
+  const player = await openPlayer(makeBatch())
+
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  // Two Shots, five and three seconds.
+  expect(scrub).toHaveAttribute('aria-valuemax', '8000')
+  expect(scrub).toHaveAttribute('aria-valuenow', '0')
+
+  fireEvent.keyDown(scrub, { key: 'End' })
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '8000'))
+  expect(within(player).getByText('00:08.0 / 00:08.0')).toBeVisible()
+})
+
+test('the scrub bar ticks every join and shades every cutaway', async () => {
+  const player = await openPlayer(
+    makeBatch({
+      shots: [makeShot({ id: 'shot-1', clip_id: 'clip-a', position: 0 })],
+      cutaways: [cutaway],
+    }),
+  )
+
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  // One Shot, so no join to tick — the Sequence's own start is the bar's edge.
+  expect(scrub.querySelectorAll('.scrub__join')).toHaveLength(0)
+  // The Cutaway runs 1s to 3s of a 5s Shot.
+  const shaded = scrub.querySelector<HTMLElement>('.scrub__cutaway')!
+  expect(shaded.style.left).toBe('20%')
+  expect(shaded.style.width).toBe('40%')
+})
+
+test('two shots put a join on the scrub bar where the cut falls', async () => {
+  const player = await openPlayer(makeBatch())
+
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  const joins = scrub.querySelectorAll<HTMLElement>('.scrub__join')
+  expect(joins).toHaveLength(1)
+  // The cut is five seconds into an eight-second Sequence.
+  expect(joins[0].style.left).toBe('62.5%')
+})
+
+test('scrubbing moves the playhead and the shot it lands on', async () => {
+  const player = await openPlayer(makeBatch())
+
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  fireEvent.keyDown(scrub, { key: 'ArrowRight' })
+
+  // A tenth of an eight-second Sequence, capped at a second.
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '800'))
+  expect(within(player).getByText('shot 1 of 2')).toBeVisible()
+
+  fireEvent.keyDown(scrub, { key: 'End' })
+  await waitFor(() => expect(within(player).getByText('shot 2 of 2')).toBeVisible())
 })
