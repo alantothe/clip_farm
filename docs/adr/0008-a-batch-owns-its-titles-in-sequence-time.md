@@ -86,6 +86,20 @@ with the same consequence: forgetting a Phrase leaves every Title written from
 it untouched. Unlike a Style it does not even leave a label behind — nothing
 records which Phrase a Title came from, because the words already say.
 
+## Three simultaneous text slots
+
+Titles may overlap because two pieces of text can both draw without making the
+finished picture undefined. The editor exposes three stacked text rows and the
+API caps overlap at those same three slots. Titles that only touch at an edge
+reuse a slot because Title end times are exclusive. A later Title can therefore
+reuse any row that has finished; the limit is three at one instant, not three in
+the whole Batch.
+
+A fourth simultaneous Title is rejected rather than hidden underneath another
+block on the Timeline. Keeping this rule in the API as well as the editor means
+imports and future clients cannot create a Sequence the editor cannot honestly
+show.
+
 ## The fonts are vendored, and each face is named uniquely
 
 `tools/vendor_fonts.py` commits 60 static faces across 27 families into `apps/api/fonts/`,

@@ -39,7 +39,7 @@ The screen that plays a Sequence as one video, with its transport and guides. It
 _Avoid_: preview, monitor, viewer, rough cut
 
 **Title Track**:
-The lane on the Timeline that holds a Batch's Titles, above the Shots and the Cutaways. UI, not a model — as Timeline is.
+The three-row lane on the Timeline that holds a Batch's Titles, above the Shots and the Cutaways. UI, not a model — as Timeline is.
 _Avoid_: text track, text layer, caption track, title lane
 
 **Review Range**:
@@ -85,7 +85,7 @@ An image placed on top of the video for a defined span of the Clip. Always an im
 _Avoid_: sticker, watermark, image
 
 **Title**:
-Text an operator writes, drawn over the picture for a span of a Sequence and burned into the Sequence Render. It belongs to the Batch, not to any Clip, and holds its own time, place, size and look. A Batch has as many as it likes, and they may overlap. A Title transcribes nothing — that is a Subtitle — and is not posted beside the video — that is a Caption.
+Text an operator writes, drawn over the picture for a span of a Sequence and burned into the Sequence Render. It belongs to the Batch, not to any Clip, and holds its own time, place, size and look. A Batch has as many as it likes, and up to three may overlap at one instant. A Title transcribes nothing — that is a Subtitle — and is not posted beside the video — that is a Caption.
 _Avoid_: text overlay, text, lower third, sticker, graphic, headline
 
 **Title Style**:

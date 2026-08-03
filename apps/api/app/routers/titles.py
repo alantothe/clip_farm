@@ -43,6 +43,11 @@ router = APIRouter()
 # every export. This is a sanity bound, not a design limit.
 MAX_TITLES_PER_BATCH = 200
 
+# Three independent text rows are visible in the editor. Titles can overlap,
+# but a fourth Title at the same instant would have no row of its own and would
+# hide another edit on the Timeline.
+MAX_SIMULTANEOUS_TITLES = 3
+
 # Every Phrase is drawn in its own face on the panel, so the list is a download
 # as well as a list. Past this many it stops being something an operator picks
 # from by eye, which is the only thing it is for.
@@ -60,6 +65,36 @@ def _get_title_or_404(session: Session, batch: Batch, title_id: str) -> Title:
     if not title or title.batch_id != batch.id:
         raise HTTPException(status_code=404, detail="Title not found")
     return title
+
+
+def _reject_title_slot_overflow(
+    titles: list[Title], start_ms: int, end_ms: int, *, replacing_id: str | None = None
+) -> None:
+    """Reject a span that would need a fourth simultaneous text row.
+
+    Endpoints are half-open, as they are in the renderer: one Title ending at
+    3s and another starting at 3s reuse the same slot. Existing Titles are
+    clipped to the proposed span so unrelated legacy data cannot block an edit.
+    """
+    events = [(start_ms, 1), (end_ms, -1)]
+    for title in titles:
+        if title.id == replacing_id or title.start_ms >= end_ms or title.end_ms <= start_ms:
+            continue
+        events.extend(
+            (
+                (max(start_ms, title.start_ms), 1),
+                (min(end_ms, title.end_ms), -1),
+            )
+        )
+
+    active = 0
+    for _at_ms, change in sorted(events, key=lambda event: (event[0], event[1])):
+        active += change
+        if active > MAX_SIMULTANEOUS_TITLES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Up to {MAX_SIMULTANEOUS_TITLES} text slots can play at once",
+            )
 
 
 def _resolve_style(session: Session, style_id: str) -> TitleStyle | dict:
@@ -89,11 +124,13 @@ def add_title(
     request can start from a Style and depart from it.
     """
     batch = get_batch_or_404(session, batch_id)
-    if len(batch_titles(session, batch.id)) >= MAX_TITLES_PER_BATCH:
+    titles = batch_titles(session, batch.id)
+    if len(titles) >= MAX_TITLES_PER_BATCH:
         raise HTTPException(
             status_code=409,
             detail=f"A batch holds up to {MAX_TITLES_PER_BATCH} titles",
         )
+    _reject_title_slot_overflow(titles, payload.start_ms, payload.end_ms)
 
     title = Title(
         batch_id=batch.id,
@@ -132,6 +169,10 @@ def update_title(
         # Caught here rather than at export, where the Title would silently
         # render as nothing after every other segment had been rebuilt.
         raise HTTPException(status_code=422, detail="A title has to end after it starts")
+    if "start_ms" in sent or "end_ms" in sent:
+        _reject_title_slot_overflow(
+            batch_titles(session, batch.id), start, end, replacing_id=title.id
+        )
     title.start_ms, title.end_ms = start, end
     if payload.text is not None:
         title.text = payload.text

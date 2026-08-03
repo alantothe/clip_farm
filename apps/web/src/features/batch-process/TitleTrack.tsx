@@ -7,6 +7,63 @@ import type { Title } from '../../types'
 const MIN_TITLE_MS = 400
 const SNAP_MS = 100
 const DRAG_THRESHOLD_PX = 3
+export const MAX_TITLE_SLOTS = 3
+export const NEW_TITLE_MS = 3000
+
+/** The editor row assigned to each Title by interval partitioning. */
+export function titleSlots(titles: Title[]): Map<string, number> {
+  const availableAt = Array.from({ length: MAX_TITLE_SLOTS }, () => -Infinity)
+  const slots = new Map<string, number>()
+  const ordered = titles
+    .map((title, index) => ({ title, index }))
+    .sort(
+      (a, b) =>
+        a.title.start_ms - b.title.start_ms ||
+        a.title.end_ms - b.title.end_ms ||
+        a.index - b.index,
+    )
+
+  for (const { title } of ordered) {
+    const open = availableAt.findIndex((endMs) => endMs <= title.start_ms)
+    // Old data may contain more than three overlaps. Keep it inside the third
+    // row; every new or retimed Title is protected by the API limit.
+    const slot = open === -1 ? MAX_TITLE_SLOTS - 1 : open
+    slots.set(title.id, slot)
+    availableAt[slot] = Math.max(availableAt[slot], title.end_ms)
+  }
+  return slots
+}
+
+/** Whether another half-open Title span fits in the three visible rows. */
+export function hasTitleSlot(
+  titles: Title[],
+  startMs: number,
+  endMs: number,
+  replacingId?: string,
+): boolean {
+  const events: [number, number][] = [
+    [startMs, 1],
+    [endMs, -1],
+  ]
+  for (const title of titles) {
+    if (
+      title.id === replacingId ||
+      title.start_ms >= endMs ||
+      title.end_ms <= startMs
+    ) {
+      continue
+    }
+    events.push([Math.max(startMs, title.start_ms), 1])
+    events.push([Math.min(endMs, title.end_ms), -1])
+  }
+
+  let active = 0
+  for (const [, change] of events.sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
+    active += change
+    if (active > MAX_TITLE_SLOTS) return false
+  }
+  return true
+}
 
 const snap = (ms: number) => Math.round(ms / SNAP_MS) * SNAP_MS
 
@@ -86,6 +143,8 @@ export function TitleTrack({
       ? { ...title, start_ms: draft.start, end_ms: draft.end }
       : title,
   )
+  const slots = titleSlots(drafted)
+  const canAdd = hasTitleSlot(titles, playheadMs, playheadMs + NEW_TITLE_MS)
 
   function msAtX(clientX: number) {
     const rect = laneRef.current?.getBoundingClientRect()
@@ -190,7 +249,11 @@ export function TitleTrack({
               orphaned ? 'is-orphaned' : ''
             } ${clipped ? 'is-clipped' : ''}`}
             key={title.id}
-            style={{ left: Math.max(0, orphaned ? pxOf(totalMs) - ORPHAN_PX : pxOf(start)), width }}
+            style={{
+              left: Math.max(0, orphaned ? pxOf(totalMs) - ORPHAN_PX : pxOf(start)),
+              top: (slots.get(title.id) ?? 0) * 24,
+              width,
+            }}
           >
             <button
               className="sequence__title-body"
@@ -267,8 +330,12 @@ export function TitleTrack({
         className="sequence__titles-add"
         type="button"
         onClick={() => onAdd(playheadMs)}
-        disabled={busy}
-        title="Add text at the playhead"
+        disabled={busy || !canAdd}
+        title={
+          canAdd
+            ? 'Add text at the playhead'
+            : `All ${MAX_TITLE_SLOTS} text slots are occupied here`
+        }
       >
         <Type size={11} />
         Add text

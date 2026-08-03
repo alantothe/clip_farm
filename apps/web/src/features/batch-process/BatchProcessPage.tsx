@@ -18,7 +18,7 @@ import { Player } from './Player'
 import { ShotInspector } from './ShotInspector'
 import { MIN_SPAN_MS, Timeline, sequenceDurationMs, shotTrim, sourceTimeMs } from './Timeline'
 import { TitleInspector, lookOf } from './TitleInspector'
-import type { TitleSpan } from './TitleTrack'
+import { NEW_TITLE_MS, type TitleSpan } from './TitleTrack'
 import { useSequencePlayer } from './useSequencePlayer'
 import type {
   Batch,
@@ -39,9 +39,6 @@ const batchKey = (id: string) => ['batch', id] as const
 const TITLE_STYLES_KEY = ['title-styles'] as const
 const PHRASES_KEY = ['phrases'] as const
 const FONTS_KEY = ['fonts'] as const
-
-/** How long a new Title runs, before the operator drags either edge. */
-const NEW_TITLE_MS = 3000
 
 /** What a Title edit sends, alongside which one it is about. */
 type TitleEdit =

@@ -15,7 +15,7 @@ import type {
 } from '../../types'
 import { applyTitleEdit } from './BatchProcessPage'
 import { centreAt } from './TitleStage'
-import { slideTo } from './TitleTrack'
+import { hasTitleSlot, slideTo, titleSlots } from './TitleTrack'
 
 // --- The arithmetic the stage and the renderer share --------------------
 
@@ -146,6 +146,31 @@ test('dragging a title never pushes it off either end of the sequence', () => {
   expect(slideTo(9000, 10_000 - 4_000)).toBe(6_000)
   // A title longer than the sequence has nowhere to stop but the front.
   expect(slideTo(3000, 10_000 - 12_000)).toBe(0)
+})
+
+test('overlapping titles fill three rows and later text reuses the first open row', () => {
+  const titles = [
+    look({ id: 'one', start_ms: 0, end_ms: 3000 }),
+    look({ id: 'two', start_ms: 1000, end_ms: 4000 }),
+    look({ id: 'three', start_ms: 2000, end_ms: 5000 }),
+    look({ id: 'later', start_ms: 5000, end_ms: 6000 }),
+  ]
+
+  expect([...titleSlots(titles)]).toEqual([
+    ['one', 0],
+    ['two', 1],
+    ['three', 2],
+    ['later', 0],
+  ])
+})
+
+test('only three title slots can cover the same instant', () => {
+  const titles = ['one', 'two', 'three'].map((id) =>
+    look({ id, start_ms: 0, end_ms: 3000 }),
+  )
+
+  expect(hasTitleSlot(titles, 1000, 2000)).toBe(false)
+  expect(hasTitleSlot(titles, 3000, 4000)).toBe(true)
 })
 
 test('dragging on the stage keeps a title inside the frame', () => {
@@ -302,20 +327,40 @@ test('the timeline gives titles a track of their own', async () => {
   expect(screen.getByRole('list', { name: 'Cutaways' })).toBeVisible()
 })
 
-test('a batch carries more than one title at a time', async () => {
+test('a batch carries three visible title slots at a time', async () => {
   stubApi(
     makeBatch([
       look({ id: 'title-1', text: 'FIRST', start_ms: 0, end_ms: 2000 }),
       look({ id: 'title-2', text: 'SECOND', start_ms: 1000, end_ms: 4000 }),
+      look({ id: 'title-3', text: 'THIRD', start_ms: 1500, end_ms: 3500 }),
     ]),
   )
 
   renderBatch(newClient())
 
   const track = await screen.findByRole('list', { name: 'Titles' })
-  // Overlapping is allowed: unlike two Cutaways, two Titles simply both draw.
-  expect(within(track).getByRole('button', { name: /FIRST/ })).toBeVisible()
-  expect(within(track).getByRole('button', { name: /SECOND/ })).toBeVisible()
+  const first = within(track).getByRole('button', { name: /FIRST/ }).closest('li')
+  const second = within(track).getByRole('button', { name: /SECOND/ }).closest('li')
+  const third = within(track).getByRole('button', { name: /THIRD/ }).closest('li')
+  expect(first).toHaveStyle({ top: '0px' })
+  expect(second).toHaveStyle({ top: '24px' })
+  expect(third).toHaveStyle({ top: '48px' })
+})
+
+test('adding text is unavailable where all three slots are occupied', async () => {
+  stubApi(
+    makeBatch(
+      ['FIRST', 'SECOND', 'THIRD'].map((text, index) =>
+        look({ id: `title-${index}`, text, start_ms: 0, end_ms: 4000 }),
+      ),
+    ),
+  )
+
+  renderBatch(newClient())
+
+  const add = await screen.findByRole('button', { name: /Add text/ })
+  expect(add).toBeDisabled()
+  expect(add).toHaveAttribute('title', 'All 3 text slots are occupied here')
 })
 
 test('adding text puts a title at the playhead and opens it for editing', async () => {

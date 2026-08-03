@@ -125,18 +125,70 @@ def test_removing_a_title_leaves_it_out_of_the_response(tmp_path):
     assert [title.text for title in out.titles] == ["two"]
 
 
-def test_a_batch_holds_several_titles_and_they_may_overlap(tmp_path):
+def test_a_batch_holds_three_titles_at_once(tmp_path):
     session = make_session(tmp_path)
     batch = make_batch(session)
 
     titles_router.add_title(batch.id, TitleCreate(text="one", start_ms=0, end_ms=4000), session)
-    out = titles_router.add_title(
+    titles_router.add_title(
         batch.id, TitleCreate(text="two", start_ms=2000, end_ms=6000), session
     )
+    out = titles_router.add_title(
+        batch.id, TitleCreate(text="three", start_ms=3000, end_ms=5000), session
+    )
 
-    # Overlapping is allowed where a Cutaway's is not: two Cutaways would leave
-    # "whose picture" undefined, and two Titles simply both draw.
-    assert [title.text for title in out.titles] == ["one", "two"]
+    assert [title.text for title in out.titles] == ["one", "two", "three"]
+
+
+def test_a_fourth_simultaneous_title_is_rejected(tmp_path):
+    session = make_session(tmp_path)
+    batch = make_batch(session)
+    for text in ("one", "two", "three"):
+        titles_router.add_title(
+            batch.id, TitleCreate(text=text, start_ms=0, end_ms=4000), session
+        )
+
+    with pytest.raises(HTTPException) as caught:
+        titles_router.add_title(
+            batch.id, TitleCreate(text="four", start_ms=1000, end_ms=2000), session
+        )
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "Up to 3 text slots can play at once"
+
+
+def test_touching_titles_reuse_a_text_slot(tmp_path):
+    session = make_session(tmp_path)
+    batch = make_batch(session)
+    for text in ("one", "two", "three"):
+        titles_router.add_title(
+            batch.id, TitleCreate(text=text, start_ms=0, end_ms=1000), session
+        )
+
+    out = titles_router.add_title(
+        batch.id, TitleCreate(text="next", start_ms=1000, end_ms=2000), session
+    )
+
+    assert [title.text for title in out.titles] == ["one", "two", "three", "next"]
+
+
+def test_retiming_cannot_create_a_fourth_simultaneous_title(tmp_path):
+    session = make_session(tmp_path)
+    batch = make_batch(session)
+    for text in ("one", "two", "three"):
+        titles_router.add_title(
+            batch.id, TitleCreate(text=text, start_ms=0, end_ms=4000), session
+        )
+    later = titles_router.add_title(
+        batch.id, TitleCreate(text="later", start_ms=4000, end_ms=6000), session
+    ).titles[-1]
+
+    with pytest.raises(HTTPException) as caught:
+        titles_router.update_title(
+            batch.id, later.id, TitleUpdate(start_ms=1000, end_ms=2000), session
+        )
+
+    assert caught.value.status_code == 409
 
 
 def test_a_title_cannot_end_before_it_starts(tmp_path):
