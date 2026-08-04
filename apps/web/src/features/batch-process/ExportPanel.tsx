@@ -1,4 +1,4 @@
-import { Download, FileOutput, LoaderCircle, TriangleAlert } from 'lucide-react'
+import { Download, FileOutput, LoaderCircle, Send, TriangleAlert } from 'lucide-react'
 import { API_BASE } from '../../api'
 import { formatBytes, formatTime } from '../../lib/format'
 import type { SequenceRender } from '../../types'
@@ -20,20 +20,26 @@ export function ExportPanel({
   sequenceRender,
   shotCount,
   onExport,
+  onPublish,
+  publishedCount,
   starting,
   error,
 }: {
   sequenceRender: SequenceRender | null
   shotCount: number
   onExport: () => void
+  onPublish: () => void
+  /** How many Platforms this export has already gone out to. */
+  publishedCount: number
   starting: boolean
   error: Error | null
 }) {
   const running = sequenceRender != null && RUNNING.includes(sequenceRender.status)
   const busy = running || starting
-  // A Sequence that changed since the export is no longer what that file holds.
-  const stale =
-    sequenceRender?.status === 'complete' && sequenceRender.shot_count !== shotCount
+  // A Sequence edited since the export is no longer what that file holds. The
+  // API works this out from when the Batch was last touched, so a retrim or a
+  // Title counts and not only a Shot added or removed.
+  const stale = sequenceRender?.status === 'complete' && sequenceRender.stale
   const failedMessage = sequenceRender?.status === 'failed' ? sequenceRender.message : error?.message
   const exportTooltip =
     shotCount === 0
@@ -86,6 +92,31 @@ export function ExportPanel({
 
       {failedMessage && (
         <span className="export-control__message" role="alert">{failedMessage}</span>
+      )}
+
+      {/*
+       * The file is not the end of the work — a finished export still has to be
+       * written up and sent somewhere. That stage opens from here, beside the
+       * download, because both are things you do with the same finished cut.
+       */}
+      {sequenceRender?.status === 'complete' && (
+        <span className="export-control__action">
+          <button
+            className="export-control__publish"
+            type="button"
+            onClick={onPublish}
+            aria-describedby="publish-action-tooltip"
+          >
+            <Send size={16} />
+            Publish
+            {publishedCount > 0 && <i aria-hidden="true">{publishedCount}</i>}
+          </button>
+          <span className="control-tooltip" id="publish-action-tooltip" role="tooltip">
+            {publishedCount > 0
+              ? `Posted to ${publishedCount} ${publishedCount === 1 ? 'platform' : 'platforms'} — open to post again`
+              : 'Write the caption and send this to Instagram'}
+          </span>
+        </span>
       )}
 
       {sequenceRender?.status === 'complete' && sequenceRender.download_url && (

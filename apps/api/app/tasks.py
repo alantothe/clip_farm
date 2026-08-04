@@ -18,6 +18,7 @@ from app.models import (
     Project,
     Publication,
     Render,
+    SequencePublication,
     SequenceRender,
 )
 from app.queue import huey
@@ -43,6 +44,7 @@ from app.publishers import (
     check_account,
     get_publisher,
 )
+from app.publishers.targets import video_for_render, video_for_sequence_render
 from app.services.instagram import InstagramConnectionError
 
 
@@ -548,7 +550,8 @@ def publish_task(publication_id: str, job_id: str) -> None:
         try:
             publisher = get_publisher(publication.platform)
             check_account(publisher, account)
-            publisher.check_render(render)
+            video = video_for_render(render)
+            publisher.check_video(video)
 
             publication.started_at = _now()
             publication.status = "processing"
@@ -567,7 +570,7 @@ def publish_task(publication_id: str, job_id: str) -> None:
                 PublishContext(
                     publication=publication,
                     account=account,
-                    render=render,
+                    video=video,
                     access_token=publisher.access_token(session, account),
                     report=report,
                 )
@@ -601,6 +604,70 @@ def publish_task(publication_id: str, job_id: str) -> None:
 def publish_instagram_task(publication_id: str, job_id: str) -> None:
     """Kept so publications enqueued under the old task name still resolve."""
     publish_task.call_local(publication_id, job_id)
+
+
+@huey.task(retries=0)
+def publish_sequence_task(publication_id: str) -> None:
+    """Post a Batch's Sequence Render to the Platform its publication names.
+
+    The same shape as `publish_task`, against the row a Batch can actually
+    have: progress lands on the publication rather than a Job, because a Job
+    needs a Clip and a Sequence has none (ADR 0003, ADR 0012).
+    """
+    with SessionLocal() as session:
+        publication = session.get(SequencePublication, publication_id)
+        if not publication:
+            return
+        sequence_render = publication.sequence_render
+        account = session.get(PlatformAccount, publication.account_id)
+        label = publication.platform.title()
+        try:
+            publisher = get_publisher(publication.platform)
+            check_account(publisher, account)
+            video = video_for_sequence_render(sequence_render)
+            publisher.check_video(video)
+
+            publication.started_at = _now()
+            publication.status = "processing"
+            publication.progress = 5
+            publication.message = f"Preparing {label} upload"
+            publication.error_message = None
+            session.commit()
+
+            def report(progress: int, message: str) -> None:
+                publication.progress = max(0, min(100, progress))
+                publication.message = message
+                session.commit()
+
+            result = publisher.publish(
+                PublishContext(
+                    publication=publication,
+                    account=account,
+                    video=video,
+                    access_token=publisher.access_token(session, account),
+                    report=report,
+                )
+            )
+
+            publication.remote_media_id = result.remote_media_id
+            publication.permalink = result.permalink
+            publication.status = "complete"
+            publication.progress = 100
+            publication.message = f"Posted to {label}"
+            publication.completed_at = _now()
+            session.commit()
+        except Exception as exc:
+            publication.status = "failed"
+            publication.error_message = str(exc)
+            publication.message = f"{label} post failed"
+            publication.completed_at = _now()
+            session.commit()
+            logger.exception(
+                "Sequence publication failed (platform=%s, publication=%s, batch=%s)",
+                publication.platform,
+                publication_id,
+                publication.batch_id,
+            )
 
 
 @huey.periodic_task(crontab(hour="3", minute="15"))

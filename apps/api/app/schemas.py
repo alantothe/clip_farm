@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -491,6 +491,38 @@ class PublishRequest(BaseModel):
     share_to_feed: bool = True
 
 
+class SequencePublishRequest(BaseModel):
+    """What the operator filled in before posting a Batch to one Platform.
+
+    `options` is deliberately untyped here: what Instagram wants beside the
+    Caption is not what YouTube or TikTok will want, and the Publisher that owns
+    those rules narrows it through `prepare_post` (ADR 0012). This layer only
+    enforces the one field every Platform shares.
+    """
+
+    caption: str = Field(default="", max_length=2200)
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class SequencePublicationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    batch_id: str
+    sequence_render_id: str
+    platform: str
+    status: str
+    progress: int
+    message: str
+    caption: str
+    options: dict[str, Any]
+    permalink: str | None
+    remote_media_id: str | None
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
 class RenderOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -675,6 +707,11 @@ class SequenceRenderOut(BaseModel):
     created_at: datetime
     completed_at: datetime | None
     download_url: str | None = None
+    # The Batch was edited after this export started, so the file no longer
+    # matches the Sequence it came from. Computed rather than stored: it is a
+    # fact about two timestamps, and storing it would need invalidating on
+    # every edit.
+    stale: bool = False
 
 
 class BatchOut(BaseModel):
@@ -697,6 +734,10 @@ class BatchOut(BaseModel):
     media: list[BatchMediaOut] = []
     # The most recent export, if this Batch has ever been rendered.
     sequence_render: SequenceRenderOut | None = None
+    # What that export has been posted to, one row per Platform. Carried on the
+    # Batch so the page already polling it watches posting without a second
+    # request per destination.
+    sequence_publications: list[SequencePublicationOut] = []
 
 
 class BatchSummaryOut(BaseModel):

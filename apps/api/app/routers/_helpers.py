@@ -1,5 +1,6 @@
 """Shared query, serialization, and filesystem helpers used across routers."""
 
+from datetime import datetime, timezone
 import logging
 import shutil
 
@@ -25,6 +26,7 @@ from app.schemas import (
     CutawayOut,
     JobOut,
     ProjectOut,
+    SequencePublicationOut,
     SequenceRenderOut,
     ShotOut,
     TitleOut,
@@ -143,12 +145,30 @@ def latest_sequence_render(batch: Batch) -> SequenceRender | None:
     return max(batch.sequence_renders, key=lambda item: item.created_at)
 
 
-def serialize_sequence_render(sequence_render: SequenceRender) -> SequenceRenderOut:
+def _naive_utc(value: datetime) -> datetime:
+    """SQLite hands back naive datetimes; a value just set in-session is aware.
+
+    Both turn up while serializing one request, and comparing the two raises.
+    """
+    return value.replace(tzinfo=None) if value.tzinfo is None else value.astimezone(
+        timezone.utc
+    ).replace(tzinfo=None)
+
+
+def serialize_sequence_render(
+    sequence_render: SequenceRender, batch: Batch | None = None
+) -> SequenceRenderOut:
     output = SequenceRenderOut.model_validate(sequence_render)
     if sequence_render.status == "complete":
         output.download_url = (
             f"{settings.api_prefix}/batches/{sequence_render.batch_id}/render/download"
         )
+    # Whether the Batch has been edited since this export started, which is the
+    # only honest way to know the file still matches the Sequence. Counting
+    # Shots catches one added or removed and misses every other edit — a retrim,
+    # a reframe, a Title, an image — all of which change what renders.
+    owner = batch or sequence_render.batch
+    output.stale = _naive_utc(owner.updated_at) > _naive_utc(sequence_render.created_at)
     return output
 
 
@@ -171,7 +191,17 @@ def serialize_batch(session: Session, batch: Batch) -> BatchOut:
         serialized.url = f"{settings.api_prefix}/batches/{batch.id}/media/{item.id}/file"
         output.media.append(serialized)
     newest = latest_sequence_render(batch)
-    output.sequence_render = serialize_sequence_render(newest) if newest else None
+    output.sequence_render = serialize_sequence_render(newest, batch) if newest else None
+    # Only the newest export's publications: an older one's are history about a
+    # file the operator can no longer post from this page.
+    output.sequence_publications = (
+        [
+            SequencePublicationOut.model_validate(publication)
+            for publication in newest.publications
+        ]
+        if newest
+        else []
+    )
     return output
 
 

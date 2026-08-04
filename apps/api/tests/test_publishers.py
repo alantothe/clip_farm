@@ -10,6 +10,7 @@ from app.database import Base
 from app.models import PlatformAccount, Project, Render
 from app.publishers import (
     AccountNotReady,
+    PostableVideo,
     PublishError,
     RenderNotPostable,
     available_platforms,
@@ -63,11 +64,16 @@ def test_check_account_requires_the_publishing_scope() -> None:
     ],
 )
 def test_reel_duration_rules_live_in_the_publisher(tmp_path, duration_ms, expected) -> None:
-    video = tmp_path / "render.mp4"
-    video.write_bytes(b"x")
-    render = SimpleNamespace(status="complete", path=str(video), duration_ms=duration_ms)
+    file = tmp_path / "render.mp4"
+    file.write_bytes(b"x")
+    video = PostableVideo(
+        id="render-1",
+        path=str(file),
+        duration_ms=duration_ms,
+        media_path="/api/media/instagram/render-1",
+    )
     with pytest.raises(RenderNotPostable, match=expected):
-        get_publisher("instagram").check_render(render)
+        get_publisher("instagram").check_video(video)
 
 
 def test_publish_route_rejects_an_unsupported_platform(tmp_path, monkeypatch) -> None:

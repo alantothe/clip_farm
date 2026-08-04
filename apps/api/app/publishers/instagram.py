@@ -7,7 +7,9 @@ They live here now.
 
 from __future__ import annotations
 
+import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,6 +17,8 @@ from typing import TYPE_CHECKING
 from app.config import get_settings
 from app.publishers.base import (
     AccountNotReady,
+    PostRejected,
+    PostableVideo,
     PublishContext,
     PublisherNotConfigured,
     PublishError,
@@ -36,7 +40,7 @@ from app.services.instagram import (
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from sqlalchemy.orm import Session
 
-    from app.models import PlatformAccount, Render
+    from app.models import PlatformAccount
 
 
 settings = get_settings()
@@ -47,6 +51,57 @@ MAX_SIZE_BYTES = 1_000_000_000
 
 # Refresh a long-lived token once it is inside this window of expiring.
 REFRESH_WINDOW = timedelta(days=7)
+
+# What Instagram accepts beside the video and caption. Reels take no alt text,
+# and branded-content fields are Facebook Login only, so neither is reachable
+# from the Instagram Login this app connects through.
+MAX_CAPTION_LENGTH = 2_200
+MAX_HASHTAGS = 30
+MAX_MENTIONS = 20
+
+# Counted the way Instagram counts them: a run of word characters behind the
+# marker, not preceded by one, so an email address is not twenty mentions.
+HASHTAG_RE = re.compile(r"(?<!\w)#\w+")
+MENTION_RE = re.compile(r"(?<!\w)@[\w.]+")
+
+
+@dataclass(frozen=True)
+class InstagramOptions:
+    """What Instagram is told beyond the caption.
+
+    A Clip's Publication keeps `share_to_feed` in a column and has no cover
+    frame; a Batch's Sequence Publication keeps both in its `options` JSON, so
+    a second Platform costs no migration (ADR 0012). Reading either into one
+    shape keeps that split out of `publish`.
+    """
+
+    share_to_feed: bool = True
+    thumb_offset_ms: int | None = None
+
+
+def _options(publication) -> InstagramOptions:
+    raw = getattr(publication, "options", None)
+    if not isinstance(raw, dict):
+        return InstagramOptions(
+            share_to_feed=bool(getattr(publication, "share_to_feed", True))
+        )
+    offset = raw.get("thumb_offset_ms")
+    return InstagramOptions(
+        share_to_feed=bool(raw.get("share_to_feed", True)),
+        thumb_offset_ms=int(offset) if isinstance(offset, (int, float)) else None,
+    )
+
+
+def _cover_offset(offset_ms: int | None, video: PostableVideo) -> int | None:
+    """Keep the chosen cover frame inside the video.
+
+    An offset past the last frame is not a frame, and Instagram answers that
+    with a container error rather than falling back to one.
+    """
+    if offset_ms is None:
+        return None
+    last_frame = max(0, (video.duration_ms or 0) - 1)
+    return min(max(0, int(offset_ms)), last_frame)
 
 
 def _now() -> datetime:
@@ -71,15 +126,39 @@ class InstagramPublisher:
                 "Set PUBLIC_BASE_URL to the public HTTPS address of Clip Farm before posting"
             )
 
-    def check_render(self, render: "Render") -> None:
-        if render.status != "complete" or not render.path or not Path(render.path).is_file():
+    def prepare_post(self, caption: str, options: dict) -> tuple[str, dict]:
+        text = caption.strip()
+        if len(text) > MAX_CAPTION_LENGTH:
+            raise PostRejected(
+                f"Instagram captions stop at {MAX_CAPTION_LENGTH:,} characters"
+            )
+        hashtags = len(HASHTAG_RE.findall(text))
+        if hashtags > MAX_HASHTAGS:
+            raise PostRejected(
+                f"Instagram allows {MAX_HASHTAGS} hashtags; this caption has {hashtags}"
+            )
+        mentions = len(MENTION_RE.findall(text))
+        if mentions > MAX_MENTIONS:
+            raise PostRejected(
+                f"Instagram allows {MAX_MENTIONS} @mentions; this caption has {mentions}"
+            )
+        offset = options.get("thumb_offset_ms")
+        if offset is not None and (not isinstance(offset, (int, float)) or offset < 0):
+            raise PostRejected("The cover frame has to be a time inside the video")
+        return text, {
+            "share_to_feed": bool(options.get("share_to_feed", True)),
+            "thumb_offset_ms": int(offset) if offset is not None else None,
+        }
+
+    def check_video(self, video: PostableVideo) -> None:
+        if not video.path or not Path(video.path).is_file():
             raise RenderNotPostable("The rendered video is no longer available")
-        if render.duration_ms is not None:
-            if render.duration_ms < MIN_DURATION_MS:
+        if video.duration_ms is not None:
+            if video.duration_ms < MIN_DURATION_MS:
                 raise RenderNotPostable("Instagram Reels must be at least 3 seconds")
-            if render.duration_ms > MAX_DURATION_MS:
+            if video.duration_ms > MAX_DURATION_MS:
                 raise RenderNotPostable("Instagram Reels cannot exceed 15 minutes")
-        if Path(render.path).stat().st_size > MAX_SIZE_BYTES:
+        if Path(video.path).stat().st_size > MAX_SIZE_BYTES:
             raise RenderNotPostable("Instagram Reels must be smaller than 1 GB")
 
     def access_token(self, session: "Session", account: "PlatformAccount") -> str:
@@ -99,26 +178,27 @@ class InstagramPublisher:
             session.commit()
         return access_token
 
-    def _signed_media_url(self, render_id: str) -> str:
+    def _signed_media_url(self, video: PostableVideo) -> str:
         expires = int(time.time()) + settings.instagram_media_url_ttl_seconds
-        signature = sign_media_url(render_id, expires, settings.token_encryption_key or "")
+        signature = sign_media_url(video.id, expires, settings.token_encryption_key or "")
         return (
-            f"{settings.external_base_url}{settings.api_prefix}/media/instagram/{render_id}"
+            f"{settings.external_base_url}{video.media_path}"
             f"?expires={expires}&signature={signature}"
         )
 
     def publish(self, context: PublishContext) -> PublishResult:
         publication = context.publication
-        render = context.render
         token = context.access_token
+        options = _options(publication)
 
         context.report(12, "Sending video to Instagram")
         container_id = create_reel_container(
             remote_user_id=context.account.remote_user_id,
             access_token=token,
-            video_url=self._signed_media_url(render.id),
+            video_url=self._signed_media_url(context.video),
             caption=publication.caption,
-            share_to_feed=publication.share_to_feed,
+            share_to_feed=options.share_to_feed,
+            thumb_offset_ms=_cover_offset(options.thumb_offset_ms, context.video),
             settings=settings,
         )
         # Persisted before the poll loop so a later failure still records which

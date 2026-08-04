@@ -1406,8 +1406,11 @@ test('offers the finished video for download, and flags a timeline changed since
         message: 'Sequence ready',
         size_bytes: 4_200_000,
         duration_ms: 8000,
-        // Rendered from one clip; the timeline now holds two.
-        shot_count: 1,
+        // The count is untouched: the edit was a retrim, a Title, an image —
+        // anything but a Shot added or removed. The API is what decides, by
+        // comparing the export against when the Batch was last edited.
+        shot_count: 2,
+        stale: true,
         error_message: null,
         created_at: '2026-08-02T12:00:00Z',
         completed_at: '2026-08-02T12:02:00Z',
@@ -1421,6 +1424,219 @@ test('offers the finished video for download, and flags a timeline changed since
   const link = await screen.findByRole('link', { name: /Download MP4/ })
   expect(link).toHaveAttribute('href', '/api/batches/batch-1/render/download')
   expect(screen.getByText(/timeline changed since this export/i)).toBeInTheDocument()
+})
+
+const finishedExport = {
+  id: 'seq-1',
+  batch_id: 'batch-1',
+  status: 'complete' as const,
+  progress: 100,
+  message: 'Sequence ready',
+  size_bytes: 4_200_000,
+  duration_ms: 8000,
+  shot_count: 2,
+  error_message: null,
+  created_at: '2026-08-02T12:00:00Z',
+  completed_at: '2026-08-02T12:02:00Z',
+  download_url: '/api/batches/batch-1/render/download',
+}
+
+const connectedInstagram = {
+  platform: 'instagram',
+  display_name: 'Instagram',
+  configured: true,
+  missing_configuration: [],
+  account: {
+    id: 'account-1',
+    platform: 'instagram',
+    remote_user_id: 'ig-1',
+    username: 'clipfarmer',
+    display_name: 'Clip Farmer',
+    scopes: ['instagram_business_basic', 'instagram_business_content_publish'],
+    status: 'connected',
+    token_expires_at: null,
+    connected_at: '2026-08-01T12:00:00Z',
+    updated_at: '2026-08-01T12:00:00Z',
+  },
+}
+
+test('publishing asks where first, then what to say, and posts each destination on its own', async () => {
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      sequence_render: finishedExport,
+    }),
+    'GET /api/platforms': [connectedInstagram],
+    'POST /api/batches/batch-1/publish/instagram': {
+      id: 'publication-1',
+      batch_id: 'batch-1',
+      sequence_render_id: 'seq-1',
+      platform: 'instagram',
+      status: 'queued',
+      progress: 0,
+      message: 'Queued for Instagram',
+      caption: 'Ship it',
+      options: { share_to_feed: true, thumb_offset_ms: null },
+      permalink: null,
+      remote_media_id: null,
+      error_message: null,
+      created_at: '2026-08-02T12:05:00Z',
+      completed_at: null,
+    },
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: /^Publish/ }))
+
+  // Destinations first: only the ones Clip Farm can actually reach are pickable.
+  const dialog = await screen.findByRole('dialog')
+  expect(await within(dialog).findByText('Posting as @clipfarmer')).toBeVisible()
+  expect(within(dialog).getByRole('button', { name: /Instagram · Reels/ })).toBeEnabled()
+  expect(within(dialog).getByRole('button', { name: /TikTok/ })).toBeDisabled()
+
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Write the caption' }))
+
+  const caption = within(dialog).getByRole('textbox')
+  fireEvent.change(caption, { target: { value: 'Ship it' } })
+  expect(within(dialog).getByText('0 / 30 hashtags')).toBeVisible()
+
+  fireEvent.click(within(dialog).getByRole('button', { name: /Post to Instagram/ }))
+
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.some(
+        ([path, init]) =>
+          String(path) === '/api/batches/batch-1/publish/instagram' &&
+          init?.method === 'POST' &&
+          JSON.parse(String(init?.body)).caption === 'Ship it',
+      ),
+    ).toBe(true),
+  )
+  expect(await within(dialog).findByRole('progressbar', { name: /Instagram posting/ })).toBeVisible()
+})
+
+test('an export made before the last edit is called out before it is posted', async () => {
+  stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      // Same Shot count as the timeline: only the API's comparison against the
+      // Batch's last edit can catch this, which is the point.
+      sequence_render: { ...finishedExport, stale: true },
+    }),
+    'GET /api/platforms': [connectedInstagram],
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: /^Publish/ }))
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText('Posting as @clipfarmer')
+  expect(within(dialog).getByText('Edited since this export')).toBeVisible()
+
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Write the caption' }))
+  expect(within(dialog).getByText(/posts the older cut/i)).toBeVisible()
+  // Still allowed — posting the previous cut is a choice, not a mistake to block.
+  expect(within(dialog).getByRole('button', { name: /Post the older cut/ })).toBeEnabled()
+})
+
+test('checking for changes pulls the batch again without closing the dialog', async () => {
+  // Flipped once the dialog is already open and settled: nothing polls while
+  // idle, so only asking can find this out.
+  let edited = false
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input)
+    if (path === '/api/batches/batch-1' && (init?.method ?? 'GET') === 'GET') {
+      return {
+        ok: true,
+        json: async () =>
+          sequencedBatch({
+            shots: placed.shots,
+            sequence_render: { ...finishedExport, stale: edited },
+          }),
+      }
+    }
+    if (path === '/api/batches') return { ok: true, json: async () => [summary] }
+    if (path === '/api/platforms') return { ok: true, json: async () => [connectedInstagram] }
+    return { ok: true, json: async () => [] }
+  })
+  vi.stubGlobal('fetch', fetchMock)
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: /^Publish/ }))
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText('Posting as @clipfarmer')
+  expect(within(dialog).queryByText('Edited since this export')).toBeNull()
+
+  edited = true
+  fireEvent.click(within(dialog).getByRole('button', { name: /Check for changes/ }))
+
+  expect(await within(dialog).findByText('Edited since this export')).toBeVisible()
+  // Still open, and still on the step it was on.
+  expect(within(dialog).getByRole('button', { name: 'Write the caption' })).toBeVisible()
+})
+
+test('reopening the dialog pulls the batch again, same as asking it to check', async () => {
+  // Flipped by hand between the two openings, standing in for an edit made
+  // while the dialog was shut.
+  let edited = false
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input)
+    if (path === '/api/batches/batch-1' && (init?.method ?? 'GET') === 'GET') {
+      return {
+        ok: true,
+        json: async () =>
+          sequencedBatch({
+            shots: placed.shots,
+            sequence_render: { ...finishedExport, stale: edited },
+          }),
+      }
+    }
+    if (path === '/api/batches') return { ok: true, json: async () => [summary] }
+    if (path === '/api/platforms') return { ok: true, json: async () => [connectedInstagram] }
+    return { ok: true, json: async () => [] }
+  })
+  vi.stubGlobal('fetch', fetchMock)
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const publish = await screen.findByRole('button', { name: /^Publish/ })
+  fireEvent.click(publish)
+  const first = await screen.findByRole('dialog')
+  await within(first).findByText('Posting as @clipfarmer')
+  expect(within(first).queryByText('Edited since this export')).toBeNull()
+
+  fireEvent.click(within(first).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  edited = true
+
+  fireEvent.click(screen.getByRole('button', { name: /^Publish/ }))
+  const second = await screen.findByRole('dialog')
+  expect(await within(second).findByText('Edited since this export')).toBeVisible()
+})
+
+test('a caption over Instagram limits cannot be posted', async () => {
+  stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      sequence_render: finishedExport,
+    }),
+    'GET /api/platforms': [connectedInstagram],
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: /^Publish/ }))
+  const dialog = await screen.findByRole('dialog')
+  await within(dialog).findByText('Posting as @clipfarmer')
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Write the caption' }))
+  fireEvent.change(within(dialog).getByRole('textbox'), {
+    target: { value: Array.from({ length: 31 }, (_, index) => `#tag${index}`).join(' ') },
+  })
+
+  expect(within(dialog).getByText('31 / 30 hashtags')).toBeVisible()
+  expect(within(dialog).getByRole('button', { name: /Post to Instagram/ })).toBeDisabled()
 })
 
 test('reports a failed export instead of a download', async () => {

@@ -9,13 +9,55 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import Artifact, Render
+from app.models import Artifact, Render, SequenceRender
 from app.services.instagram import media_signature_is_valid
 
 
 settings = get_settings()
 
 router = APIRouter()
+
+
+def _check_media_signature(media_id: str, expires: int, signature: str) -> None:
+    """Instagram fetches the file itself, so the URL is the only credential."""
+    if expires < int(time.time()):
+        raise HTTPException(status_code=403, detail="Media URL expired")
+    signing_secret = settings.token_encryption_key or ""
+    if not signing_secret or not media_signature_is_valid(
+        media_id, expires, signature, signing_secret
+    ):
+        raise HTTPException(status_code=403, detail="Invalid media signature")
+
+
+# Declared before the Render route so a Sequence Render's two-segment path is
+# never read as a Render id called "sequences".
+@router.get(
+    f"{settings.api_prefix}/media/instagram/sequences/{{sequence_render_id}}",
+    include_in_schema=False,
+)
+def serve_instagram_sequence_render(
+    sequence_render_id: str,
+    expires: int,
+    signature: str,
+    session: Session = Depends(get_db),
+) -> FileResponse:
+    _check_media_signature(sequence_render_id, expires, signature)
+    sequence_render = session.get(SequenceRender, sequence_render_id)
+    if not sequence_render or sequence_render.status != "complete" or not sequence_render.path:
+        raise HTTPException(status_code=404, detail="Completed render not found")
+    path = Path(sequence_render.path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Rendered file is missing")
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": (
+                f'inline; filename="clip-farm-{sequence_render.batch_id[:8]}.mp4"'
+            ),
+        },
+    )
 
 
 @router.get(f"{settings.api_prefix}/media/instagram/{{render_id}}", include_in_schema=False)
@@ -25,13 +67,7 @@ def serve_instagram_render(
     signature: str,
     session: Session = Depends(get_db),
 ) -> FileResponse:
-    if expires < int(time.time()):
-        raise HTTPException(status_code=403, detail="Media URL expired")
-    signing_secret = settings.token_encryption_key or ""
-    if not signing_secret or not media_signature_is_valid(
-        render_id, expires, signature, signing_secret
-    ):
-        raise HTTPException(status_code=403, detail="Invalid media signature")
+    _check_media_signature(render_id, expires, signature)
     render = session.get(Render, render_id)
     if not render or render.status != "complete" or not render.path:
         raise HTTPException(status_code=404, detail="Completed render not found")

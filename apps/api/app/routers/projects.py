@@ -192,6 +192,23 @@ def update_social_caption(
     return serialize_project(get_project_or_404(session, project.id))
 
 
+@router.post(f"{settings.api_prefix}/captions/rewrite", response_model=SocialCaptionOut)
+def rewrite_caption(payload: SocialCaptionRewriteRequest) -> SocialCaptionOut:
+    """Rewrite a Caption that belongs to nothing yet.
+
+    A Batch's Caption is written in the publish dialog and stored on the
+    Publication it is posted with, so there is no row to save a draft against —
+    unlike a Clip's, which this route deliberately does not touch.
+    """
+    try:
+        return SocialCaptionOut(
+            text=rewrite_social_caption(caption=payload.text, settings=settings)
+        )
+    except CaptionRewriteError as exc:
+        status_code = 503 if not settings.google_cloud_project else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
 @router.post(
     f"{settings.api_prefix}/projects/{{project_id}}/social-caption/rewrite",
     response_model=SocialCaptionOut,

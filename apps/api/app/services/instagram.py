@@ -174,18 +174,24 @@ def create_reel_container(
     video_url: str,
     caption: str,
     share_to_feed: bool,
+    thumb_offset_ms: int | None = None,
     settings,
 ) -> str:
+    data = {
+        "media_type": "REELS",
+        "video_url": video_url,
+        "caption": caption,
+        "share_to_feed": str(share_to_feed).lower(),
+    }
+    # The frame Instagram shows on the Reels tab. Omitted rather than sent as 0
+    # so an operator who never chose one keeps Instagram's own default.
+    if thumb_offset_ms is not None:
+        data["thumb_offset"] = str(int(thumb_offset_ms))
     try:
         with httpx.Client(timeout=30.0) as client:
             response = client.post(
                 _graph_url(settings, f"{remote_user_id}/media"),
-                data={
-                    "media_type": "REELS",
-                    "video_url": video_url,
-                    "caption": caption,
-                    "share_to_feed": str(share_to_feed).lower(),
-                },
+                data=data,
                 headers=_bearer(access_token),
             )
             payload = _json_or_error(response, "creating the Reel upload")

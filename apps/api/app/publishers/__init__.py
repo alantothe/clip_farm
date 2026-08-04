@@ -6,6 +6,8 @@ straight to `get_publisher(platform)`.
 
 from app.publishers.base import (
     AccountNotReady,
+    PostRejected,
+    PostableVideo,
     PublishContext,
     PublisherNotConfigured,
     PublishError,
@@ -20,6 +22,8 @@ from app.publishers import instagram as _instagram  # noqa: F401 - registers Ins
 
 __all__ = [
     "AccountNotReady",
+    "PostRejected",
+    "PostableVideo",
     "PublishContext",
     "PublishError",
     "PublishResult",

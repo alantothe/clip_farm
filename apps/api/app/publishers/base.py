@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from sqlalchemy.orm import Session
 
-    from app.models import PlatformAccount, Publication, Render
+    from app.models import PlatformAccount, Publication, SequencePublication
 
 
 class PublishError(RuntimeError):
@@ -32,7 +32,14 @@ class PublishError(RuntimeError):
 
 
 class RenderNotPostable(PublishError):
-    """The render violates a platform rule (duration, size, format)."""
+    """The video violates a platform rule (duration, size, format)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, status_code=422)
+
+
+class PostRejected(PublishError):
+    """What the operator filled in breaks a platform rule (caption, options)."""
 
     def __init__(self, message: str) -> None:
         super().__init__(message, status_code=422)
@@ -52,17 +59,40 @@ class AccountNotReady(PublishError):
         super().__init__(message, status_code=409)
 
 
+@dataclass(frozen=True)
+class PostableVideo:
+    """The finished file to upload, whatever produced it.
+
+    A Clip's Render and a Batch's Sequence Render are separate tables with
+    separate owners (ADR 0003), and a publisher has no reason to care which one
+    it was handed — only how long the video runs, where the file is, and where
+    the platform can fetch it. Naming that here is what let publishing reach a
+    Batch without a second copy of every publisher (ADR 0012).
+
+    `media_path` is the API path serving the file, unsigned and without the
+    external host. Whoever builds the video knows which route serves its table;
+    the publisher only signs and prefixes it.
+    """
+
+    id: str
+    path: str | None
+    duration_ms: int | None
+    media_path: str
+
+
 @dataclass
 class PublishContext:
     """Everything a publisher needs for one upload attempt.
 
-    `report` persists incremental progress to the job row; publishers call it
-    instead of touching job or session plumbing themselves.
+    `report` persists incremental progress to whichever row is tracking this
+    attempt — a Job for a Clip, the publication itself for a Sequence, which is
+    the same split ADR 0003 made for rendering. Publishers call it instead of
+    touching that plumbing themselves.
     """
 
-    publication: "Publication"
+    publication: "Publication | SequencePublication"
     account: "PlatformAccount"
-    render: "Render"
+    video: PostableVideo
     access_token: str
     report: Callable[[int, str], None]
 
@@ -82,14 +112,23 @@ class Publisher(Protocol):
     def check_configured(self) -> None:
         """Raise PublisherNotConfigured if the deployment cannot post at all."""
 
-    def check_render(self, render: "Render") -> None:
+    def check_video(self, video: PostableVideo) -> None:
         """Raise RenderNotPostable if this platform would reject the file."""
+
+    def prepare_post(self, caption: str, options: dict) -> tuple[str, dict]:
+        """Validate the filled-in form and narrow it to what this platform takes.
+
+        The Caption travels to every destination, so it is passed separately;
+        everything else is a dict because no two platforms want the same set.
+        Returns what to store. Raise PostRejected if the operator has to fix
+        something first.
+        """
 
     def access_token(self, session: "Session", account: "PlatformAccount") -> str:
         """Return a usable token, refreshing and persisting it when needed."""
 
     def publish(self, context: PublishContext) -> PublishResult:
-        """Upload the render. Raise PublishError on failure."""
+        """Upload the video. Raise PublishError on failure."""
 
 
 _PUBLISHERS: dict[str, Publisher] = {}

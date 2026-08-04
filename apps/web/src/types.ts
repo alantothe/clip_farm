@@ -348,6 +348,12 @@ export interface SequenceRender {
   created_at: string
   completed_at: string | null
   download_url: string | null
+  /**
+   * The Batch was edited after this export started, so the file is no longer
+   * the current cut. Counting Shots only catches one added or removed; this
+   * catches a retrim, a reframe, a Title, or an image too.
+   */
+  stale: boolean
 }
 
 /** A named set of Clips imported and worked on together. */
@@ -368,6 +374,40 @@ export interface Batch {
   /** Still images timed against the Sequence rather than any one Clip. */
   media: BatchMedia[]
   sequence_render: SequenceRender | null
+  /** One row per Platform the newest export has been posted to. */
+  sequence_publications: SequencePublication[]
+}
+
+/**
+ * What one Platform is told beyond the Caption.
+ *
+ * Instagram's fields today; YouTube's and TikTok's will sit beside them rather
+ * than replace them, which is why this is one loose bag per destination and not
+ * a column each (ADR 0012).
+ */
+export interface PublishOptions {
+  /** Instagram: show the Reel in the main feed as well as the Reels tab. */
+  share_to_feed?: boolean
+  /** Instagram: which frame of the video becomes the Reels-tab cover. */
+  thumb_offset_ms?: number | null
+}
+
+/** One attempt to publish a Batch's Sequence Render to one Platform. */
+export interface SequencePublication {
+  id: string
+  batch_id: string
+  sequence_render_id: string
+  platform: string
+  status: 'queued' | 'processing' | 'publishing' | 'complete' | 'failed'
+  progress: number
+  message: string
+  caption: string
+  options: PublishOptions
+  permalink: string | null
+  remote_media_id: string | null
+  error_message: string | null
+  created_at: string
+  completed_at: string | null
 }
 
 /** A Batch without its Clips, for the list that picks between Batches. */

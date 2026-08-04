@@ -446,12 +446,15 @@ def render_sequence(batch_id: str, session: Session = Depends(get_db)) -> Sequen
         message="Queued for export",
     )
     session.add(sequence_render)
-    batch.updated_at = datetime.now(timezone.utc)
+    # `updated_at` deliberately not touched: exporting reads the Batch, it does
+    # not edit it, and it is the comparison that tells an export apart from the
+    # Sequence it was made from. Stamping it here would date every export to
+    # the same instant as the edit it supposedly followed.
     session.commit()
 
     # Queued after the commit, so the worker can load what it was handed.
     render_sequence_task(batch.id, sequence_render.id)
-    return serialize_sequence_render(sequence_render)
+    return serialize_sequence_render(sequence_render, batch)
 
 
 @router.get(
@@ -464,7 +467,7 @@ def get_sequence_render(batch_id: str, session: Session = Depends(get_db)) -> Se
     sequence_render = latest_sequence_render(batch)
     if not sequence_render:
         raise HTTPException(status_code=404, detail="This batch has not been exported")
-    return serialize_sequence_render(sequence_render)
+    return serialize_sequence_render(sequence_render, batch)
 
 
 @router.get(f"{settings.api_prefix}/batches/{{batch_id}}/render/download")

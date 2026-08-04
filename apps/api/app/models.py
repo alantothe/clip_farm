@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -97,6 +97,11 @@ class Batch(Base):
         back_populates="batch",
         cascade="all, delete-orphan",
         order_by="SequenceRender.created_at",
+    )
+    sequence_publications: Mapped[list["SequencePublication"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        order_by="SequencePublication.created_at",
     )
     # Titles are timed in Sequence milliseconds and belong to the Batch rather
     # than to any Clip in it (ADR 0008). They may overlap, so this is the order
@@ -223,6 +228,11 @@ class SequenceRender(Base):
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     batch: Mapped[Batch] = relationship(back_populates="sequence_renders")
+    publications: Mapped[list["SequencePublication"]] = relationship(
+        back_populates="sequence_render",
+        cascade="all, delete-orphan",
+        order_by="SequencePublication.created_at",
+    )
 
 
 class TitleLook:
@@ -668,3 +678,56 @@ class Publication(Base):
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
     render: Mapped[Render] = relationship(back_populates="publications")
+
+
+class SequencePublication(Base):
+    """One attempt to publish a Batch's Sequence Render to one Platform.
+
+    Its own table rather than a `Publication`, for the reason ADR 0003 gave for
+    `sequence_renders`: `publications.render_id` is NOT NULL and points at a
+    Clip's Render, and relaxing that in SQLite means rebuilding the table under
+    live foreign keys on startup. A new table costs `create_all` and nothing
+    else (ADR 0012).
+
+    It carries its own status, progress, and message for the same reason a
+    Sequence Render does — a Job needs a Clip, and a Batch has no single one.
+
+    `options` holds what one Platform wants and the others have no word for:
+    Instagram's cover frame and feed sharing today, YouTube's privacy and
+    TikTok's comment settings tomorrow. The Caption is a column because every
+    Platform posts text beside the video, and the seam should not make each new
+    one re-invent the field the operator actually writes in.
+    """
+
+    __tablename__ = "sequence_publications"
+    __table_args__ = (UniqueConstraint("sequence_render_id", "platform"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("batches.id", ondelete="CASCADE"), index=True
+    )
+    sequence_render_id: Mapped[str] = mapped_column(
+        ForeignKey("sequence_renders.id", ondelete="CASCADE"), index=True
+    )
+    account_id: Mapped[str | None] = mapped_column(
+        ForeignKey("platform_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    platform: Mapped[str] = mapped_column(String, index=True)
+    status: Mapped[str] = mapped_column(String, default="queued", index=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(String, default="Queued")
+    caption: Mapped[str] = mapped_column(Text, default="")
+    options: Mapped[dict] = mapped_column(JSON, default=dict)
+    remote_container_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    remote_media_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    permalink: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    batch: Mapped[Batch] = relationship(back_populates="sequence_publications")
+    sequence_render: Mapped[SequenceRender] = relationship(
+        back_populates="publications"
+    )

@@ -17,6 +17,7 @@ import { ClipGrid } from './ClipGrid'
 import { ExportPanel } from './ExportPanel'
 import { NewBatchDialog } from './NewBatchDialog'
 import { LayerProfilesDialog } from './LayerProfilesDialog'
+import { PublishDialog } from './PublishDialog'
 import { Player } from './Player'
 import { ShotInspector } from './ShotInspector'
 import { MIN_SPAN_MS, Timeline, sequenceDurationMs, shotTrim, sourceTimeMs } from './Timeline'
@@ -33,6 +34,7 @@ import type {
   Phrase,
   LayerProfile,
   Project,
+  PublishOptions,
   Shot,
   ShotFraming,
   ShotTrim,
@@ -48,6 +50,7 @@ const TITLE_STYLES_KEY = ['title-styles'] as const
 const PHRASES_KEY = ['phrases'] as const
 const FONTS_KEY = ['fonts'] as const
 const LAYER_PROFILES_KEY = ['layer-profiles'] as const
+const PLATFORMS_KEY = ['platforms'] as const
 
 /** What a Title edit sends, alongside which one it is about. */
 type TitleEdit =
@@ -286,6 +289,8 @@ export function BatchProcessPage() {
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null)
   const [addMediaOpen, setAddMediaOpen] = useState(false)
   const [layerProfilesOpen, setLayerProfilesOpen] = useState(false)
+  const [publishOpen, setPublishOpen] = useState(false)
+  const [publishing, setPublishing] = useState<string[]>([])
   // An inspector control still under the operator's finger. Local only, so the
   // stage follows a slider without a request per pixel.
   const [titlePreview, setTitlePreview] = useState<({ titleId: string } & TitlePatch) | null>(
@@ -314,7 +319,12 @@ export function BatchProcessPage() {
       const exporting =
         current?.sequence_render != null &&
         ['queued', 'running'].includes(current.sequence_render.status)
-      return importing || exporting ? 1500 : false
+      // A Sequence Publication reports its own progress for the same reason
+      // (ADR 0012), and rides the same poll.
+      const posting = current?.sequence_publications?.some((publication) =>
+        ['queued', 'processing', 'publishing'].includes(publication.status),
+      )
+      return importing || exporting || posting ? 1500 : false
     },
   })
   // Styles and the font catalog belong to the app rather than to a Batch, so
@@ -325,6 +335,13 @@ export function BatchProcessPage() {
   const layerProfilesQuery = useQuery({
     queryKey: LAYER_PROFILES_KEY,
     queryFn: api.listLayerProfiles,
+  })
+  // Which Platforms are connected belongs to the app, not this Batch, and is
+  // only read when the publish dialog is open.
+  const platformsQuery = useQuery({
+    queryKey: PLATFORMS_KEY,
+    queryFn: api.listPlatformConnections,
+    enabled: publishOpen,
   })
   const fontsQuery = useQuery({
     queryKey: FONTS_KEY,
@@ -628,6 +645,36 @@ export function BatchProcessPage() {
   const exportMutation = useMutation({
     mutationFn: () => api.renderSequence(batchId!),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) }),
+  })
+
+  /**
+   * Everything the publish dialog reasons about, pulled again.
+   *
+   * The Batch is only polled while something is running, so once work stops
+   * what is on screen can predate the last edit — and whether a Platform is
+   * connected is not polled at all. Opening the dialog and asking it to check
+   * run the same refresh, so reopening can never be the more thorough of the
+   * two.
+   */
+  const refreshPublishData = () => {
+    void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) })
+    void queryClient.invalidateQueries({ queryKey: PLATFORMS_KEY })
+  }
+
+  // One request per destination, so three Platforms are three posts that
+  // succeed or fail on their own (ADR 0012). Which are in flight is tracked
+  // here rather than read off the mutation, which only remembers the last.
+  const publishMutation = useMutation({
+    mutationFn: (post: { platform: string; caption: string; options: PublishOptions }) =>
+      api.publishSequence(batchId!, post.platform, post.caption, post.options),
+    onSettled: (_data, _error, post) => {
+      setPublishing((current) => current.filter((platform) => platform !== post.platform))
+      void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) })
+    },
+  })
+
+  const rewriteMutation = useMutation({
+    mutationFn: (text: string) => api.rewriteCaption(text),
   })
 
   const renameMutation = useMutation({
@@ -980,6 +1027,16 @@ export function BatchProcessPage() {
                     sequenceRender={batch.sequence_render}
                     shotCount={shots.length}
                     onExport={() => exportMutation.mutate()}
+                    onPublish={() => {
+                      publishMutation.reset()
+                      refreshPublishData()
+                      setPublishOpen(true)
+                    }}
+                    publishedCount={
+                      (batch.sequence_publications ?? []).filter(
+                        (publication) => publication.status === 'complete',
+                      ).length
+                    }
                     starting={exportMutation.isPending}
                     error={exportMutation.error}
                   />
@@ -1245,6 +1302,29 @@ export function BatchProcessPage() {
           }
           onApply={(profile) => layerProfileMutation.mutate({ kind: 'apply', profile })}
           onDelete={(profile) => layerProfileMutation.mutate({ kind: 'delete', profile })}
+        />
+      )}
+      {publishOpen && batch?.sequence_render?.status === 'complete' && (
+        <PublishDialog
+          batch={batch}
+          sequenceRender={batch.sequence_render}
+          publications={batch.sequence_publications ?? []}
+          connections={platformsQuery.data ?? []}
+          publishing={publishing}
+          error={publishMutation.error ?? platformsQuery.error}
+          onPublish={(platform, caption, options) => {
+            setPublishing((current) =>
+              current.includes(platform) ? current : [...current, platform],
+            )
+            publishMutation.mutate({ platform, caption, options })
+          }}
+          onRewriteCaption={(text) =>
+            rewriteMutation.mutateAsync(text).then((result) => result.text)
+          }
+          rewriting={rewriteMutation.isPending}
+          onRefresh={refreshPublishData}
+          refreshing={batchQuery.isFetching || platformsQuery.isFetching}
+          onClose={() => setPublishOpen(false)}
         />
       )}
     </>

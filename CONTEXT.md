@@ -138,7 +138,21 @@ _Avoid_: account, connection, integration
 
 **Publication**:
 One attempt to publish one Render to one Platform. A given Render reaches a given Platform once.
+Publishing a Batch's Sequence Render is a **Sequence Publication** — a separate row for the same
+reason a Sequence Render is not a Render (ADR 0012). Choosing several Platforms makes one per
+Platform, each posting, failing, and retrying on its own.
 _Avoid_: post, upload, publish
+
+**Publish Options**:
+What one Platform is told beyond the Caption — Instagram's cover frame and whether the Reel also
+reaches the feed. They belong to a Publication rather than to the Batch, because they are what a
+Platform asks for rather than anything about the edit, and no two Platforms ask the same.
+_Avoid_: settings, metadata, post config
+
+**Cover Frame**:
+The moment in a Sequence Render that a Platform shows as the video's still image. Chosen as a time,
+not an uploaded picture, so it always comes from the video being posted.
+_Avoid_: thumbnail, poster, preview image
 
 ### Process
 
