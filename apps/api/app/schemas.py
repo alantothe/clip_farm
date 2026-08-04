@@ -706,6 +706,10 @@ class SequenceRenderOut(BaseModel):
     error_message: str | None
     created_at: datetime
     completed_at: datetime | None
+    # Set the moment the operator asks an export to stop, and still set while
+    # the worker is winding down. The UI needs both facts, so it is sent rather
+    # than folded into `status`.
+    cancel_requested_at: datetime | None = None
     download_url: str | None = None
     # The Batch was edited after this export started, so the file no longer
     # matches the Sequence it came from. Computed rather than stored: it is a

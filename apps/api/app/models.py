@@ -226,6 +226,12 @@ class SequenceRender(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    #: When the operator asked for this export to stop. A request rather than a
+    #: status, because `status` belongs to the worker and is rewritten at every
+    #: stage: setting it from the API would be overwritten by whatever ffmpeg
+    #: pass was already in flight. Written only by the API and read only by the
+    #: worker, so neither can lose to the other.
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     batch: Mapped[Batch] = relationship(back_populates="sequence_renders")
     publications: Mapped[list["SequencePublication"]] = relationship(

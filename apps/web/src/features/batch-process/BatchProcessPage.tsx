@@ -647,6 +647,15 @@ export function BatchProcessPage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) }),
   })
 
+  // Stopping is its own request, so the export button can go on reporting the
+  // export while this one is in flight. Settled rather than succeeded: a stop
+  // the API refused — the worker having finished in the meantime — still leaves
+  // the Batch the stale thing on screen.
+  const cancelExportMutation = useMutation({
+    mutationFn: () => api.cancelSequenceRender(batchId!),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) }),
+  })
+
   /**
    * Everything the publish dialog reasons about, pulled again.
    *
@@ -1026,7 +1035,11 @@ export function BatchProcessPage() {
                   <ExportPanel
                     sequenceRender={batch.sequence_render}
                     shotCount={shots.length}
-                    onExport={() => exportMutation.mutate()}
+                    onExport={() => {
+                      cancelExportMutation.reset()
+                      exportMutation.mutate()
+                    }}
+                    onCancel={() => cancelExportMutation.mutate()}
                     onPublish={() => {
                       publishMutation.reset()
                       refreshPublishData()
@@ -1038,6 +1051,14 @@ export function BatchProcessPage() {
                       ).length
                     }
                     starting={exportMutation.isPending}
+                    // Sticky once it has landed, not just while it is in
+                    // flight. The row does not carry the request until the
+                    // next poll, and reverting to the exporting look in the
+                    // gap would read as the click having been thrown away.
+                    // Cleared when a new export is asked for.
+                    cancelling={
+                      cancelExportMutation.isPending || cancelExportMutation.isSuccess
+                    }
                     error={exportMutation.error}
                   />
                 )}

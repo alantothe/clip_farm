@@ -73,7 +73,9 @@ def test_fitted_video_zoom_and_position_are_built_into_the_filter(tmp_path, monk
     source = tmp_path / "source.mp4"
     source.write_bytes(b"video")
     commands: list[list[str]] = []
-    monkeypatch.setattr(media, "run_command", lambda command: commands.append(command))
+    monkeypatch.setattr(
+        media, "run_command", lambda command, **_kwargs: commands.append(command)
+    )
 
     media.render_vertical(
         source=source,
@@ -105,7 +107,9 @@ def test_sequence_image_uses_the_render_segments_local_clock(tmp_path, monkeypat
     image = tmp_path / "brand.png"
     image.write_bytes(b"image")
     commands: list[list[str]] = []
-    monkeypatch.setattr(media, "run_command", lambda command: commands.append(command))
+    monkeypatch.setattr(
+        media, "run_command", lambda command, **_kwargs: commands.append(command)
+    )
     overlay = SimpleNamespace(
         path=str(image),
         width_percent=65,

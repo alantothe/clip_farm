@@ -338,7 +338,7 @@ export type ShotTrim = Partial<{
 export interface SequenceRender {
   id: string
   batch_id: string
-  status: 'queued' | 'running' | 'complete' | 'failed'
+  status: 'queued' | 'running' | 'complete' | 'failed' | 'cancelled'
   progress: number
   message: string
   size_bytes: number | null
@@ -347,6 +347,12 @@ export interface SequenceRender {
   error_message: string | null
   created_at: string
   completed_at: string | null
+  /**
+   * When the operator asked this export to stop. Still set while the worker is
+   * winding down, which is the window where the status says `running` and the
+   * only truthful thing to show is that it is stopping.
+   */
+  cancel_requested_at: string | null
   download_url: string | null
   /**
    * The Batch was edited after this export started, so the file is no longer

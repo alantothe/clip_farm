@@ -17,6 +17,22 @@ class MediaProcessingError(RuntimeError):
     pass
 
 
+class RenderCancelled(RuntimeError):
+    """The operator stopped the work this command was part of.
+
+    Not a failure: nothing went wrong, the answer stopped being wanted. Callers
+    tell it apart from `MediaProcessingError` so a cancelled export is not
+    reported as a broken one.
+    """
+
+
+#: How often a cancellable command looks up whether it is still wanted. One
+#: ffmpeg pass over a long Shot runs for minutes, so waiting for it to finish
+#: would make cancelling feel ignored; asking twice a second costs nothing
+#: beside the encode itself.
+CANCEL_POLL_SECONDS = 0.5
+
+
 def validate_overlay_image(path: Path) -> None:
     image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
     if image is None:
@@ -26,8 +42,19 @@ def validate_overlay_image(path: Path) -> None:
         raise MediaProcessingError("Images must be no larger than 8192 px or 40 megapixels")
 
 
-def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+def run_command(
+    command: list[str], *, should_cancel: Callable[[], bool] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run one media command to completion, or until it stops being wanted.
+
+    Without `should_cancel` this simply waits, which is what every probe and
+    thumbnail wants. With it, the child is killed as soon as the caller says
+    the work has been abandoned; a half-written intermediate is no loss,
+    because whoever cancels throws the whole render directory away.
+    """
     try:
+        if should_cancel is not None:
+            return _run_cancellable(command, should_cancel)
         return subprocess.run(
             command,
             check=True,
@@ -39,6 +66,35 @@ def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "Media command failed").strip().splitlines()
         raise MediaProcessingError(detail[-1] if detail else "Media command failed") from exc
+
+
+def _run_cancellable(
+    command: list[str], should_cancel: Callable[[], bool]
+) -> subprocess.CompletedProcess[str]:
+    """`subprocess.run` with a way out, raising what `run_command` expects.
+
+    `communicate` is what drains the pipes, so it has to keep being called
+    rather than polled around — a long ffmpeg fills its stderr buffer and
+    blocks otherwise. Timing it out is the documented way to do both.
+    """
+    with subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    ) as process:
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=CANCEL_POLL_SECONDS)
+                break
+            except subprocess.TimeoutExpired:
+                if not should_cancel():
+                    continue
+                process.kill()
+                process.communicate()
+                raise RenderCancelled("This export was cancelled") from None
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(
+            process.returncode, command, output=stdout, stderr=stderr
+        )
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def parse_fraction(value: str | None) -> float:
@@ -386,6 +442,7 @@ def create_smart_crop_video(
     end_ms: int,
     fallback_center_x: float,
     progress: Callable[[int], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> None:
     capture = cv2.VideoCapture(str(source))
     if not capture.isOpened():
@@ -415,6 +472,12 @@ def create_smart_crop_video(
                 break
             height, width = frame.shape[:2]
             if (frame_number - start_frame) % detect_interval == 0:
+                # This loop is the one stage ffmpeg does not own, so it has to
+                # look up for itself whether the export is still wanted. Asked
+                # on the detection beat rather than every frame: a quarter of a
+                # second of video is soon enough, and the check reads a row.
+                if should_cancel and should_cancel():
+                    raise RenderCancelled("This export was cancelled")
                 faces = detect_faces(frame)
                 if faces:
                     target_x = max(
@@ -472,6 +535,7 @@ def render_vertical(
     sequence_images: list[tuple] | None = None,
     titles: list[tuple] | None = None,
     progress: Callable[[int], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> None:
     duration_seconds = (end_ms - start_ms) / 1000
     captions_path = temp_dir / "captions.ass"
@@ -596,6 +660,7 @@ def render_vertical(
             end_ms=end_ms,
             fallback_center_x=crop_center_x,
             progress=progress,
+            should_cancel=should_cancel,
         )
         command = [
             "ffmpeg",
@@ -669,7 +734,7 @@ def render_vertical(
             "0:a?",
         ])
         command.extend(common_output)
-    run_command(command)
+    run_command(command, should_cancel=should_cancel)
 
 
 """Joining Shots into a Sequence.
@@ -693,6 +758,7 @@ def replace_audio(
     audio_start_ms: int,
     audio_end_ms: int,
     output: Path,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> None:
     """Put a Cutaway's picture over its Base Shot's sound.
 
@@ -739,11 +805,18 @@ def replace_audio(
             "-movflags",
             "+faststart",
             str(output),
-        ]
+        ],
+        should_cancel=should_cancel,
     )
 
 
-def normalize_for_join(source: Path, output: Path, *, has_audio: bool) -> None:
+def normalize_for_join(
+    source: Path,
+    output: Path,
+    *,
+    has_audio: bool,
+    should_cancel: Callable[[], bool] | None = None,
+) -> None:
     """Rewrite one finished Shot into the form the join expects.
 
     Video is copied untouched. Audio becomes PCM at a fixed rate and channel
@@ -783,7 +856,7 @@ def normalize_for_join(source: Path, output: Path, *, has_audio: bool) -> None:
         # anullsrc never ends on its own.
         command.append("-shortest")
     command.append(str(output))
-    run_command(command)
+    run_command(command, should_cancel=should_cancel)
 
 
 def _concat_list(sources: list[Path], output: Path) -> None:
@@ -802,6 +875,7 @@ def join_shots(
     output: Path,
     temp_dir: Path,
     progress: Callable[[int], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> None:
     """Join finished Shots, in order, into one video.
 
@@ -815,7 +889,12 @@ def join_shots(
         if not shot.is_file():
             raise MediaProcessingError(f"Shot {index + 1} is missing its rendered video")
         target = temp_dir / f"join-{index:03d}.mkv"
-        normalize_for_join(shot, target, has_audio=inspect_media(shot)["has_audio"])
+        normalize_for_join(
+            shot,
+            target,
+            has_audio=inspect_media(shot)["has_audio"],
+            should_cancel=should_cancel,
+        )
         normalized.append(target)
         if progress:
             progress(round((index + 1) / len(shots) * 100))
@@ -845,7 +924,8 @@ def join_shots(
             "-movflags",
             "+faststart",
             str(output),
-        ]
+        ],
+        should_cancel=should_cancel,
     )
     for target in normalized:
         target.unlink(missing_ok=True)

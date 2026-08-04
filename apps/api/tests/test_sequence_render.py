@@ -327,6 +327,262 @@ def test_deleting_a_batch_takes_its_exports(tmp_path, monkeypatch) -> None:
     session.close()
 
 
+# --- stopping an export --------------------------------------------------
+
+
+def test_cancelling_a_queued_export_stops_it_outright(tmp_path, monkeypatch) -> None:
+    """Nothing has started, so there is no worker that has to hear about it."""
+    session = make_session(tmp_path)
+    use_dirs(monkeypatch, tmp_path)
+    batch_id = seed(session, ["ready"])
+    batches_router.render_sequence(batch_id, session)
+
+    stopped = batches_router.cancel_sequence_render(batch_id, session)
+
+    assert stopped.status == "cancelled"
+    # Left on the row anyway, so a worker that picks the task up late still
+    # finds out the answer stopped being wanted.
+    assert stopped.cancel_requested_at is not None
+    session.close()
+
+
+def test_cancelling_a_running_export_leaves_the_status_to_the_worker(
+    tmp_path, monkeypatch
+) -> None:
+    """The worker rewrites `status` at every stage and would win the race."""
+    session = make_session(tmp_path)
+    use_dirs(monkeypatch, tmp_path)
+    batch_id = seed(session, ["ready"])
+    queued = batches_router.render_sequence(batch_id, session)
+    session.get(SequenceRender, queued.id).status = "running"
+    session.commit()
+
+    stopping = batches_router.cancel_sequence_render(batch_id, session)
+
+    assert stopping.status == "running"
+    assert stopping.cancel_requested_at is not None
+    session.close()
+
+
+def test_a_stopped_export_can_be_asked_for_again(tmp_path, monkeypatch) -> None:
+    session = make_session(tmp_path)
+    use_dirs(monkeypatch, tmp_path)
+    batch_id = seed(session, ["ready"])
+    batches_router.render_sequence(batch_id, session)
+    batches_router.cancel_sequence_render(batch_id, session)
+
+    second = batches_router.render_sequence(batch_id, session)
+
+    assert second.status == "queued"
+    assert second.cancel_requested_at is None
+    session.close()
+
+
+def test_exporting_again_before_the_stop_lands_says_so(tmp_path, monkeypatch) -> None:
+    """A running export being torn down is not the same as one still going."""
+    session = make_session(tmp_path)
+    use_dirs(monkeypatch, tmp_path)
+    batch_id = seed(session, ["ready"])
+    queued = batches_router.render_sequence(batch_id, session)
+    session.get(SequenceRender, queued.id).status = "running"
+    session.commit()
+    batches_router.cancel_sequence_render(batch_id, session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        batches_router.render_sequence(batch_id, session)
+
+    assert exc_info.value.status_code == 409
+    assert "still stopping" in exc_info.value.detail
+    session.close()
+
+
+def test_cancelling_when_nothing_is_exporting_is_refused(tmp_path, monkeypatch) -> None:
+    session = make_session(tmp_path)
+    use_dirs(monkeypatch, tmp_path)
+    batch_id = seed(session, ["ready"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        batches_router.cancel_sequence_render(batch_id, session)
+
+    assert exc_info.value.status_code == 409
+    session.close()
+
+
+def test_cancelling_twice_says_the_same_thing(tmp_path, monkeypatch) -> None:
+    """A second click is not an error, and does not move the goalposts."""
+    session = make_session(tmp_path)
+    use_dirs(monkeypatch, tmp_path)
+    batch_id = seed(session, ["ready"])
+    queued = batches_router.render_sequence(batch_id, session)
+    session.get(SequenceRender, queued.id).status = "running"
+    session.commit()
+
+    first = batches_router.cancel_sequence_render(batch_id, session)
+    second = batches_router.cancel_sequence_render(batch_id, session)
+
+    assert second.cancel_requested_at == first.cancel_requested_at
+    session.close()
+
+
+def test_the_worker_abandons_a_cancelled_export_and_clears_up(tmp_path, monkeypatch) -> None:
+    """Cancelling between Shots: nothing joins, and no half-render survives.
+
+    Filed as cancelled rather than failed — the operator asked for this, and an
+    error message would be the wrong thing to hand them.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app import tasks
+    from app.models import Artifact, Shot
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'cancel.db'}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"not really a video")
+    with factory() as session:
+        batch = Batch(name="Monday")
+        session.add(batch)
+        session.flush()
+        clip = Project(
+            batch_id=batch.id,
+            origin_kind="upload",
+            title="Clip",
+            status="ready",
+            trim_start_ms=0,
+            trim_end_ms=4_000,
+        )
+        session.add(clip)
+        session.flush()
+        session.add(
+            Artifact(project_id=clip.id, kind="source", path=str(source), mime_type="video/mp4")
+        )
+        for position in range(3):
+            session.add(Shot(batch_id=batch.id, project_id=clip.id, position=position))
+        sequence_render = SequenceRender(batch_id=batch.id, shot_count=3)
+        session.add(sequence_render)
+        session.commit()
+        batch_id, render_id = batch.id, sequence_render.id
+
+    rendered: list[dict] = []
+    joined: list[dict] = []
+
+    def fake_render_vertical(**kwargs):
+        rendered.append(kwargs)
+        Path(kwargs["output"]).write_bytes(b"rendered")
+        # The stop arrives while the first Shot is being written, which is the
+        # realistic case: it is the stage an export spends its time in.
+        if len(rendered) == 1:
+            with factory() as other:
+                other.get(SequenceRender, render_id).cancel_requested_at = tasks._now()
+                other.commit()
+
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+    monkeypatch.setattr(tasks, "settings", SimpleNamespace(batches_dir=tmp_path / "batches"))
+    monkeypatch.setattr(tasks, "render_vertical", fake_render_vertical)
+    monkeypatch.setattr(tasks, "join_shots", lambda **kwargs: joined.append(kwargs))
+    monkeypatch.setattr(tasks, "sha256_file", lambda _path: "checksum")
+
+    tasks.render_sequence_task.call_local(batch_id, render_id)
+
+    # Stopped at the next Shot rather than running the other two out.
+    assert len(rendered) == 1
+    assert joined == []
+    with factory() as session:
+        stopped = session.get(SequenceRender, render_id)
+        assert stopped.status == "cancelled"
+        assert stopped.error_message is None
+        assert stopped.completed_at is not None
+    assert not (tmp_path / "batches" / batch_id / "sequences" / render_id).exists()
+
+
+def test_the_worker_never_starts_an_export_cancelled_while_queued(tmp_path, monkeypatch) -> None:
+    """The window the API cannot close on its own: cancelled, then picked up."""
+    from sqlalchemy.orm import sessionmaker
+
+    from app import tasks
+    from app.models import Artifact, Shot
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'late.db'}")
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"not really a video")
+    with factory() as session:
+        batch = Batch(name="Monday")
+        session.add(batch)
+        session.flush()
+        clip = Project(
+            batch_id=batch.id,
+            origin_kind="upload",
+            title="Clip",
+            status="ready",
+            trim_start_ms=0,
+            trim_end_ms=4_000,
+        )
+        session.add(clip)
+        session.flush()
+        session.add(
+            Artifact(project_id=clip.id, kind="source", path=str(source), mime_type="video/mp4")
+        )
+        session.add(Shot(batch_id=batch.id, project_id=clip.id, position=0))
+        sequence_render = SequenceRender(
+            batch_id=batch.id, shot_count=1, cancel_requested_at=tasks._now()
+        )
+        session.add(sequence_render)
+        session.commit()
+        batch_id, render_id = batch.id, sequence_render.id
+
+    rendered: list[dict] = []
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+    monkeypatch.setattr(tasks, "settings", SimpleNamespace(batches_dir=tmp_path / "batches"))
+    monkeypatch.setattr(tasks, "render_vertical", lambda **kwargs: rendered.append(kwargs))
+
+    tasks.render_sequence_task.call_local(batch_id, render_id)
+
+    assert rendered == []
+    with factory() as session:
+        assert session.get(SequenceRender, render_id).status == "cancelled"
+
+
+def test_a_cancelled_command_kills_its_child_rather_than_waiting(tmp_path) -> None:
+    """What makes a stop feel immediate: the encode does not run to the end.
+
+    `sleep` stands in for an ffmpeg pass long enough that waiting it out would
+    be the bug — the point is that the call returns in well under its runtime.
+    """
+    import time
+
+    from app.services import media
+
+    started = time.monotonic()
+    with pytest.raises(media.RenderCancelled):
+        media.run_command(["sleep", "30"], should_cancel=lambda: True)
+
+    assert time.monotonic() - started < 5
+
+
+def test_a_command_nobody_cancels_still_runs_to_completion(tmp_path) -> None:
+    from app.services import media
+
+    result = media.run_command(["echo", "still here"], should_cancel=lambda: False)
+
+    assert result.stdout.strip() == "still here"
+
+
+def test_a_cancellable_command_that_fails_still_reports_why(tmp_path) -> None:
+    """The cancellable path raises what every caller already handles."""
+    from app.services import media
+
+    with pytest.raises(media.MediaProcessingError):
+        media.run_command(
+            ["ffprobe", "-v", "error", str(tmp_path / "missing.mp4")],
+            should_cancel=lambda: False,
+        )
+
+
 def test_a_batch_name_becomes_a_safe_download_filename() -> None:
     assert batches_router._download_name("Monday pulls") == "Monday-pulls"
     assert batches_router._download_name("../../etc/passwd") == "etc-passwd"

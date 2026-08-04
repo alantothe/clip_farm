@@ -1346,6 +1346,7 @@ test('exports the timeline as one video', async () => {
     error_message: null,
     created_at: '2026-08-02T12:00:00Z',
     completed_at: null,
+    cancel_requested_at: null,
     download_url: null,
   }
   const fetchMock = stubApi({
@@ -1381,6 +1382,7 @@ test('shows export progress while the sequence renders', async () => {
         error_message: null,
         created_at: '2026-08-02T12:00:00Z',
         completed_at: null,
+        cancel_requested_at: null,
         download_url: null,
       },
     }),
@@ -1391,7 +1393,128 @@ test('shows export progress while the sequence renders', async () => {
   const bar = await screen.findByRole('progressbar', { name: 'Export progress' })
   expect(bar).toHaveAttribute('aria-valuenow', '45')
   expect(screen.getByRole('tooltip', { name: /Rendering clip 1 of 2/ })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /Exporting/ })).toBeDisabled()
+  // An export that has started cannot be started again, so the button spends
+  // the wait offering the only thing left to do with it.
+  expect(screen.getByRole('button', { name: 'Stop export' })).toBeEnabled()
+  expect(screen.queryByRole('button', { name: 'Export video' })).not.toBeInTheDocument()
+})
+
+test('stops a running export from the button that started it', async () => {
+  const exporting = {
+    id: 'seq-1',
+    batch_id: 'batch-1',
+    status: 'running' as const,
+    progress: 45,
+    message: 'Rendering clip 1 of 2',
+    size_bytes: null,
+    duration_ms: null,
+    shot_count: 2,
+    error_message: null,
+    created_at: '2026-08-02T12:00:00Z',
+    completed_at: null,
+    cancel_requested_at: null,
+    download_url: null,
+    stale: false,
+  }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      sequence_render: exporting,
+    }),
+    'POST /api/batches/batch-1/render/cancel': exporting,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Stop export' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/render/cancel',
+      expect.objectContaining({ method: 'POST' }),
+    ),
+  )
+
+  // The Batch still reports the export as running — the row does not carry the
+  // request until the worker's next poll, and the reply is not what the panel
+  // reads. Falling back to the exporting look in that gap would say the click
+  // had been thrown away.
+  expect(await screen.findByText('Stopping…')).toBeInTheDocument()
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: 'Stop export' })).not.toBeInTheDocument(),
+  )
+  expect(screen.getByRole('button', { name: 'Stopping export' })).toBeDisabled()
+})
+
+test('waits out a stop rather than offering a second one', async () => {
+  // The window the worker owns: the request is recorded, and it still has an
+  // ffmpeg pass to kill before the status can honestly change.
+  stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      sequence_render: {
+        id: 'seq-1',
+        batch_id: 'batch-1',
+        status: 'running',
+        progress: 45,
+        message: 'Rendering clip 1 of 2',
+        size_bytes: null,
+        duration_ms: null,
+        shot_count: 2,
+        error_message: null,
+        created_at: '2026-08-02T12:00:00Z',
+        completed_at: null,
+        cancel_requested_at: '2026-08-02T12:01:00Z',
+        download_url: null,
+        stale: false,
+      },
+    }),
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  expect(await screen.findByText('Stopping…')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Stopping export' })).toBeDisabled()
+  // A percentage that kept climbing would say it was still being made.
+  expect(screen.queryByRole('progressbar', { name: 'Export progress' })).not.toBeInTheDocument()
+})
+
+test('a stopped export can be asked for again, and is not reported as failed', async () => {
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      sequence_render: {
+        id: 'seq-1',
+        batch_id: 'batch-1',
+        status: 'cancelled',
+        progress: 0,
+        message: 'Export cancelled',
+        size_bytes: null,
+        duration_ms: null,
+        shot_count: 2,
+        error_message: null,
+        created_at: '2026-08-02T12:00:00Z',
+        completed_at: '2026-08-02T12:01:00Z',
+        cancel_requested_at: '2026-08-02T12:01:00Z',
+        download_url: null,
+        stale: false,
+      },
+    }),
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  expect(await screen.findByText('Export stopped')).toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Export video' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/render',
+      expect.objectContaining({ method: 'POST' }),
+    ),
+  )
 })
 
 test('offers the finished video for download, and flags a timeline changed since', async () => {
@@ -1414,6 +1537,7 @@ test('offers the finished video for download, and flags a timeline changed since
         error_message: null,
         created_at: '2026-08-02T12:00:00Z',
         completed_at: '2026-08-02T12:02:00Z',
+        cancel_requested_at: null,
         download_url: '/api/batches/batch-1/render/download',
       },
     }),
@@ -1438,6 +1562,7 @@ const finishedExport = {
   error_message: null,
   created_at: '2026-08-02T12:00:00Z',
   completed_at: '2026-08-02T12:02:00Z',
+  cancel_requested_at: null,
   download_url: '/api/batches/batch-1/render/download',
 }
 
@@ -1655,6 +1780,7 @@ test('reports a failed export instead of a download', async () => {
         error_message: 'Stage: Rendering clip 2 of 2',
         created_at: '2026-08-02T12:00:00Z',
         completed_at: '2026-08-02T12:01:00Z',
+        cancel_requested_at: null,
         download_url: null,
       },
     }),

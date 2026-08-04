@@ -6171,6 +6171,52 @@ input[type='range']::-webkit-slider-thumb {
   color: #a43120;
 }
 
+/* An export already running is the one thing this button can still act on, so
+   it carries the stop rather than growing a neighbour to reach for. The two
+   icons share a grid cell and trade places, which keeps the button the same
+   size under the pointer — nothing moves, only what it is offering changes. */
+.export-control__button.is-stoppable > * { grid-area: 1 / 1; }
+
+.export-control__button.is-stoppable:hover,
+.export-control__button.is-stoppable:focus-visible {
+  border-color: #d99488;
+  background: #fff0ed;
+  color: #a43120;
+}
+
+.export-control__working,
+.export-control__stop { transition: opacity 120ms ease; }
+
+.export-control__stop { opacity: 0; }
+
+.export-control__button.is-stoppable:hover .export-control__working,
+.export-control__button.is-stoppable:focus-visible .export-control__working { opacity: 0; }
+
+.export-control__button.is-stoppable:hover .export-control__stop,
+.export-control__button.is-stoppable:focus-visible .export-control__stop { opacity: 1; }
+
+/* Between the click and the worker letting go. It keeps the red the button
+   turned when it was pressed rather than falling back to the blue of an export
+   in progress, which would read as the click having been ignored. Overriding
+   the disabled dim on purpose: this is the state the operator is waiting on,
+   so it has to be the most legible thing here, not the faintest. */
+.export-control__button.is-stopping {
+  border-color: #b64c3a;
+  background: #fff0ed;
+  color: #a43120;
+  opacity: 1;
+  cursor: default;
+}
+
+/* Nothing is being made any more, so nothing spins. The pulse is what says
+   the work is still winding down rather than already over. */
+.export-control__button.is-stopping svg { animation: pulse 1.1s ease-in-out infinite; }
+
+.export-control__progress.is-stopping {
+  background: #fff0ed;
+  color: #a43120;
+}
+
 .export-control__download {
   width: 32px;
   height: 32px;

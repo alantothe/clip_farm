@@ -425,7 +425,14 @@ def render_sequence(batch_id: str, session: Session = Depends(get_db)) -> Sequen
         )
     existing = latest_sequence_render(batch)
     if existing and existing.status in ACTIVE_SEQUENCE_STATUSES:
-        raise HTTPException(status_code=409, detail="This batch is already exporting")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This batch is still stopping its last export"
+                if existing.cancel_requested_at
+                else "This batch is already exporting"
+            ),
+        )
     # A Cutaway's Clip has to be ready too — it is rendered like any other, just
     # as part of the Shot it covers rather than on its own.
     placed = shots + batch_cutaways(session, batch.id)
@@ -454,6 +461,43 @@ def render_sequence(batch_id: str, session: Session = Depends(get_db)) -> Sequen
 
     # Queued after the commit, so the worker can load what it was handed.
     render_sequence_task(batch.id, sequence_render.id)
+    return serialize_sequence_render(sequence_render, batch)
+
+
+@router.post(
+    f"{settings.api_prefix}/batches/{{batch_id}}/render/cancel",
+    response_model=SequenceRenderOut,
+)
+def cancel_sequence_render(
+    batch_id: str, session: Session = Depends(get_db)
+) -> SequenceRenderOut:
+    """Stop the export this Batch is running.
+
+    Recorded as a request rather than applied as a status. The worker owns
+    `status` and rewrites it at every stage, so setting it here would be
+    overwritten by whatever ffmpeg pass was already in flight; the worker
+    watches `cancel_requested_at` instead and settles the status itself once it
+    has actually stopped and cleared up. An export still queued has no worker
+    listening, so nothing has to hear it — it is stopped outright, and the
+    request stays on the row in case one picks it up anyway.
+
+    Asking twice is not an error. The second says the same thing as the first.
+    """
+    batch = get_batch_or_404(session, batch_id)
+    sequence_render = latest_sequence_render(batch)
+    if not sequence_render or sequence_render.status not in ACTIVE_SEQUENCE_STATUSES:
+        raise HTTPException(status_code=409, detail="This batch is not exporting")
+
+    if sequence_render.cancel_requested_at is None:
+        sequence_render.cancel_requested_at = datetime.now(timezone.utc)
+    if sequence_render.status == "queued":
+        sequence_render.status = "cancelled"
+        sequence_render.message = "Export cancelled"
+        sequence_render.progress = 0
+        sequence_render.completed_at = datetime.now(timezone.utc)
+    # `updated_at` untouched for the reason it is untouched when the export
+    # starts: stopping one reads the Batch, it does not edit it.
+    session.commit()
     return serialize_sequence_render(sequence_render, batch)
 
 

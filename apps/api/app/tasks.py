@@ -6,6 +6,7 @@ from pathlib import Path
 
 from huey import crontab
 from sqlalchemy import delete
+from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import SessionLocal
@@ -23,6 +24,7 @@ from app.models import (
 )
 from app.queue import huey
 from app.services.media import (
+    RenderCancelled,
     create_preview,
     create_thumbnail,
     extract_audio,
@@ -388,6 +390,18 @@ def _update_sequence(
         sequence_render.message = message
 
 
+def _cancel_requested(session: Session, sequence_render: SequenceRender) -> bool:
+    """Has the operator asked for this export to stop?
+
+    Read from the row every time rather than remembered: the request arrives in
+    the API process, so the database is the only place the worker can hear it.
+    Refreshing one column keeps that to a single small SELECT, which matters
+    because an ffmpeg pass asks twice a second.
+    """
+    session.refresh(sequence_render, ["cancel_requested_at"])
+    return sequence_render.cancel_requested_at is not None
+
+
 @huey.task(retries=0)
 def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
     """Render every Shot in a Batch's Sequence, then join them into one video.
@@ -397,6 +411,12 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
     of its own (ADR 0002). The trim is the exception: a Shot can carry its own,
     which is what lets one Clip appear twice at different in/out points (ADR
     0004). Joining is where the Sequence exists.
+
+    An export is minutes of work the operator can change their mind about, so
+    every stage is cancellable: `should_cancel` lets ffmpeg and the smart-crop
+    loop be stopped part-way, and `guard` catches a request that lands between
+    them. Either way the work is abandoned rather than failed — nothing went
+    wrong, it stopped being wanted.
     """
     with SessionLocal() as session:
         batch = session.get(Batch, batch_id)
@@ -404,8 +424,18 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
         if not batch or not sequence_render:
             return
 
+        def should_cancel() -> bool:
+            return _cancel_requested(session, sequence_render)
+
+        def guard() -> None:
+            if should_cancel():
+                raise RenderCancelled("This export was cancelled")
+
         render_dir = settings.batches_dir / batch.id / "sequences" / sequence_render.id
         try:
+            # Asked before any work: a render cancelled while it was still
+            # queued has been waiting for exactly this moment.
+            guard()
             # The relationship holds Cutaways too. They are rendered as part of
             # the Base Shot they cover, never as entries in the running order.
             shots = sorted(
@@ -432,6 +462,7 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
             rendered: list[Path] = []
             # Segments are the bulk of the work; the join is comparatively quick.
             for index, segment in enumerate(segments):
+                guard()
                 clip = segment.picture.clip
                 _update_sequence(
                     sequence_render,
@@ -469,6 +500,7 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
                     titles=titles_in_span(
                         batch.titles, segment.sequence_start_ms, segment.duration_ms
                     ),
+                    should_cancel=should_cancel,
                 )
 
                 if segment.audio is not None:
@@ -479,17 +511,25 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
                         audio_start_ms=segment.audio_start_ms,
                         audio_end_ms=segment.audio_end_ms,
                         output=covered,
+                        should_cancel=should_cancel,
                     )
                     shot_output.unlink(missing_ok=True)
                     shot_output = covered
 
                 rendered.append(shot_output)
 
+            guard()
             _update_sequence(sequence_render, progress=88, message="Joining clips")
             session.commit()
             output = render_dir / "clip-farm-sequence.mp4"
-            join_shots(shots=rendered, output=output, temp_dir=render_dir)
+            join_shots(
+                shots=rendered,
+                output=output,
+                temp_dir=render_dir,
+                should_cancel=should_cancel,
+            )
 
+            guard()
             _update_sequence(sequence_render, progress=95, message="Validating MP4")
             session.commit()
             metadata = inspect_media(output)
@@ -509,6 +549,22 @@ def render_sequence_task(batch_id: str, sequence_render_id: str) -> None:
                 sequence_render, status="complete", progress=100, message="Sequence ready"
             )
             session.commit()
+        except RenderCancelled:
+            # Nothing half-finished is worth keeping: the render directory only
+            # ever held inputs to a join that will not happen. Caught ahead of
+            # the generic handler below, which would otherwise file a cancel as
+            # a failure and leave the operator an error to read.
+            shutil.rmtree(render_dir, ignore_errors=True)
+            sequence_render.completed_at = _now()
+            _update_sequence(
+                sequence_render, status="cancelled", progress=0, message="Export cancelled"
+            )
+            session.commit()
+            logger.info(
+                "Sequence render cancelled (batch=%s, sequence_render=%s)",
+                batch_id,
+                sequence_render_id,
+            )
         except Exception as exc:
             failed_stage = sequence_render.message
             sequence_render.error_message = (

@@ -173,6 +173,16 @@ def init_db() -> None:
             "BOOLEAN NOT NULL DEFAULT 0"
         ),
     }
+    sequence_render_columns = {
+        column["name"] for column in inspect(engine).get_columns("sequence_renders")
+    }
+    sequence_render_additions = {
+        # Nothing that predates cancelling was ever cancelled, so NULL is both
+        # the default and the honest backfill.
+        "cancel_requested_at": (
+            "ALTER TABLE sequence_renders ADD COLUMN cancel_requested_at DATETIME"
+        ),
+    }
     batch_media_columns = {
         column["name"] for column in inspect(engine).get_columns("batch_media")
     }
@@ -200,6 +210,9 @@ def init_db() -> None:
                 connection.exec_driver_sql(statement)
         for name, statement in title_additions.items():
             if name not in title_columns:
+                connection.exec_driver_sql(statement)
+        for name, statement in sequence_render_additions.items():
+            if name not in sequence_render_columns:
                 connection.exec_driver_sql(statement)
         for name, statement in batch_media_additions.items():
             if name not in batch_media_columns:

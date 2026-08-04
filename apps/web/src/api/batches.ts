@@ -113,6 +113,16 @@ export const removeCutaway = (batchId: string, cutawayId: string) =>
 export const renderSequence = (batchId: string) =>
   request<SequenceRender>(`/api/batches/${batchId}/render`, { method: 'POST' })
 
+/**
+ * Ask the running export to stop.
+ *
+ * Returns as soon as the request is recorded, not once the work has actually
+ * stopped — the worker has an ffmpeg pass to kill and a directory to clear
+ * first, and reports that itself through the Batch.
+ */
+export const cancelSequenceRender = (batchId: string) =>
+  request<SequenceRender>(`/api/batches/${batchId}/render/cancel`, { method: 'POST' })
+
 export const getSequenceRender = (batchId: string) =>
   request<SequenceRender>(`/api/batches/${batchId}/render`)
 

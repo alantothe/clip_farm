@@ -1,4 +1,4 @@
-import { Download, FileOutput, LoaderCircle, Send, TriangleAlert } from 'lucide-react'
+import { Download, FileOutput, LoaderCircle, Send, Square, TriangleAlert } from 'lucide-react'
 import { API_BASE } from '../../api'
 import { formatBytes, formatTime } from '../../lib/format'
 import type { SequenceRender } from '../../types'
@@ -15,57 +15,120 @@ const RUNNING = ['queued', 'running']
  * The control lives beside playback: both actions operate on the same rough
  * cut, and neither needs a permanent toolbar of its own. Its tooltip carries
  * the detailed state; only progress and a finished download add visible UI.
+ *
+ * While an export runs, the one button is the way to stop it. It does not
+ * sprout a second control to hover for: an export that has started cannot be
+ * started again, so the button has nothing else left to mean, and one that
+ * changed what it did depending on the pointer would be a trap for anyone
+ * reaching it by keyboard or touch. Hovering only swaps the spinner for a stop
+ * icon, so the shape says what the click has been doing all along.
  */
 export function ExportPanel({
   sequenceRender,
   shotCount,
   onExport,
+  onCancel,
   onPublish,
   publishedCount,
   starting,
+  cancelling,
   error,
 }: {
   sequenceRender: SequenceRender | null
   shotCount: number
   onExport: () => void
+  /** Ask the export that is running to stop. */
+  onCancel: () => void
   onPublish: () => void
   /** How many Platforms this export has already gone out to. */
   publishedCount: number
   starting: boolean
+  /**
+   * A stop has been asked for from here and not yet come back on the row.
+   * Stays true after the request succeeds, because the Batch is only polled
+   * every second and a half and the answer arrives on it, not on the reply.
+   */
+  cancelling: boolean
   error: Error | null
 }) {
   const running = sequenceRender != null && RUNNING.includes(sequenceRender.status)
   const busy = running || starting
+  // Cancelling covers both sides of the wait: the request in flight, and the
+  // one already recorded on the row while the worker kills its ffmpeg pass and
+  // clears the render directory. Neither is a moment to offer a second stop.
+  const stopping = running && (cancelling || sequenceRender.cancel_requested_at != null)
+  // Only a started export can be stopped. The moment between the click and the
+  // row existing has nothing to cancel yet, so `starting` waits it out.
+  const canCancel = running && !stopping
   // A Sequence edited since the export is no longer what that file holds. The
   // API works this out from when the Batch was last touched, so a retrim or a
   // Title counts and not only a Shot added or removed.
   const stale = sequenceRender?.status === 'complete' && sequenceRender.stale
   const failedMessage = sequenceRender?.status === 'failed' ? sequenceRender.message : error?.message
+  const cancelled = sequenceRender?.status === 'cancelled'
   const exportTooltip =
     shotCount === 0
       ? 'Add clips to the timeline before exporting'
-      : running && sequenceRender
-        ? `Exporting ${sequenceRender.progress}% — ${sequenceRender.message}`
-        : starting
-          ? 'Starting export…'
-          : failedMessage
-            ? `${failedMessage} — try exporting again`
-            : 'Export the timeline as one video'
+      : stopping
+        ? 'Stopping the export…'
+        : canCancel && sequenceRender
+          ? `Exporting ${sequenceRender.progress}% — ${sequenceRender.message}. Click to stop`
+          : starting
+            ? 'Starting export…'
+            : failedMessage
+              ? `${failedMessage} — try exporting again`
+              : cancelled
+                ? 'Last export was stopped — export the timeline as one video'
+                : 'Export the timeline as one video'
 
   return (
     <section className="export-control" aria-label="Export controls">
       <span className="export-control__action">
         <button
-          className={`export-control__button ${failedMessage ? 'is-failed' : ''}`}
+          className={[
+            'export-control__button',
+            failedMessage ? 'is-failed' : '',
+            canCancel ? 'is-stoppable' : '',
+            stopping ? 'is-stopping' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
           type="button"
-          onClick={onExport}
-          disabled={busy || shotCount === 0}
-          aria-label={busy ? 'Exporting video' : 'Export video'}
+          onClick={canCancel ? onCancel : onExport}
+          disabled={stopping || starting || (!running && shotCount === 0)}
+          aria-label={
+            canCancel
+              ? 'Stop export'
+              : stopping
+                ? 'Stopping export'
+                : busy
+                  ? 'Exporting video'
+                  : 'Export video'
+          }
           aria-describedby="export-action-tooltip"
           title={exportTooltip}
         >
-          {busy ? (
-            <LoaderCircle className="spin" size={17} />
+          {stopping ? (
+            /* The click has landed and will not be taken back, so the icon
+               stops turning: a spinner here would say the export was still
+               being made, which is the one thing it is no longer doing. It
+               holds the stop the operator pressed, in red, and pulses while
+               the worker kills its ffmpeg pass and clears up. */
+            <Square size={11} fill="currentColor" />
+          ) : busy ? (
+            <>
+              <LoaderCircle className="spin export-control__working" size={17} />
+              {/* Only drawn on hover or keyboard focus, by CSS: the spinner is
+                  what an export at rest should look like. */}
+              {canCancel && (
+                <Square
+                  className="export-control__stop"
+                  size={11}
+                  fill="currentColor"
+                  aria-hidden="true"
+                />
+              )}
+            </>
           ) : failedMessage ? (
             <TriangleAlert size={17} />
           ) : (
@@ -77,7 +140,11 @@ export function ExportPanel({
         </span>
       </span>
 
-      {running && sequenceRender && (
+      {/* A percentage that keeps climbing would say the export is still being
+          made. Once it is being torn down, the honest reading is the wait. */}
+      {stopping ? (
+        <span className="export-control__progress is-stopping">Stopping…</span>
+      ) : running && sequenceRender ? (
         <span
           className="export-control__progress"
           role="progressbar"
@@ -88,10 +155,16 @@ export function ExportPanel({
         >
           {sequenceRender.progress}%
         </span>
-      )}
+      ) : null}
 
       {failedMessage && (
         <span className="export-control__message" role="alert">{failedMessage}</span>
+      )}
+
+      {/* Not an alert: the operator asked for this, and knows. It is here so a
+          stopped export does not read as one that quietly never happened. */}
+      {cancelled && !failedMessage && (
+        <span className="export-control__message">Export stopped</span>
       )}
 
       {/*
