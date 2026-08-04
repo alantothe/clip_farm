@@ -1,7 +1,9 @@
-import { Maximize2, Move } from 'lucide-react'
+import { Crosshair, Maximize2, Move } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { api } from '../../api'
 import type { BatchMedia, BatchMediaPatch } from '../../types'
+import { CentreLines, NOT_CENTRED, magnetOn, snappedCentre } from './snapping'
+import type { Centred } from './snapping'
 
 const WIDTH_LIMITS = { min: 10, max: 100 }
 
@@ -47,6 +49,7 @@ export function MediaStage({
   editable: boolean
 }) {
   const [draft, setDraft] = useState<({ mediaId: string } & BatchMediaPatch) | null>(null)
+  const [centred, setCentred] = useState<Centred>(NOT_CENTRED)
   const stageRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
 
@@ -78,14 +81,19 @@ export function MediaStage({
     if (!item) return
 
     if (current.kind === 'move') {
-      setDraft({
-        mediaId: item.id,
-        ...mediaCentreAt(
+      // The pointer places it; the magnet takes it to the frame's centre if it
+      // came within reach, and says which axis so the line can be drawn.
+      const { centred: axes, ...placed } = snappedCentre(
+        mediaCentreAt(
           { x: event.clientX, y: event.clientY },
           { x: current.grabX, y: current.grabY },
           rect,
         ),
-      })
+        rect,
+        magnetOn(event),
+      )
+      setDraft({ mediaId: item.id, ...placed })
+      setCentred(axes)
       return
     }
 
@@ -106,6 +114,7 @@ export function MediaStage({
   function finish() {
     const current = gesture.current
     gesture.current = null
+    setCentred(NOT_CENTRED)
     if (!current || !draft || draft.mediaId !== current.mediaId) {
       setDraft(null)
       return
@@ -118,6 +127,7 @@ export function MediaStage({
 
   function cancel() {
     gesture.current = null
+    setCentred(NOT_CENTRED)
     setDraft(null)
   }
 
@@ -125,6 +135,7 @@ export function MediaStage({
 
   return (
     <div className="player__media" ref={stageRef}>
+      <CentreLines centred={centred} />
       {drafted.map((item) => {
         const selected = editable && item.id === selectedMediaId
         return (
@@ -182,7 +193,15 @@ export function MediaStage({
             {selected && (
               <>
                 <span className="player__media-hint">
-                  <Move size={10} /> Drag image
+                  {centred.x || centred.y ? (
+                    <>
+                      <Crosshair size={10} /> Centred · Alt to slip past
+                    </>
+                  ) : (
+                    <>
+                      <Move size={10} /> Drag image
+                    </>
+                  )}
                 </span>
                 {(['nw', 'ne', 'se', 'sw'] as const).map((corner) => (
                   <span

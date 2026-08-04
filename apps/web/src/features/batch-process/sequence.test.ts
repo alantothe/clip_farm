@@ -11,11 +11,13 @@ import { applySequenceEdit, trimCutawayEdit } from './BatchProcessPage'
 import { shotIsOver } from './useSequencePlayer'
 import {
   fitInside,
+  frameCentrePerPx,
   keptLeftPercent,
   keptWidthFraction,
   movedFrameCenter,
   pulledFrameZoom,
 } from './Player'
+import { snapToCentre } from './snapping'
 import {
   MIN_SPAN_MS,
   anchorAt,
@@ -467,6 +469,47 @@ describe('direct Shot framing', () => {
     expect(pulledFrameZoom(1, 100, 175)).toBe(1.75)
     expect(pulledFrameZoom(2, 100, 200)).toBe(3)
     expect(pulledFrameZoom(2, 100, 25)).toBe(1)
+  })
+
+  test('a dragged pixel is worth more of the centre the less room there is to pan', () => {
+    const axis = { stagePx: 300, layout: 'smart_crop' as const, fitFraction: 1 }
+    // At 2× the picture is one Format wider than the frame, so a pixel of
+    // pointer travel is a pixel of picture. At 3× it is two, so the same pixel
+    // moves half as much of the centre. Negative because pulling the picture
+    // right shows what was on its left.
+    expect(frameCentrePerPx({ ...axis, zoom: 2 })).toBeCloseTo(-100 / 300, 6)
+    expect(frameCentrePerPx({ ...axis, zoom: 3 })).toBeCloseTo(-50 / 300, 6)
+    // Nowhere to pan: at 1× a smart crop already fills the Format, and an
+    // unmeasured stage has no pixels to have dragged.
+    expect(frameCentrePerPx({ ...axis, zoom: 1 })).toBe(0)
+    expect(frameCentrePerPx({ ...axis, stagePx: 0, zoom: 2 })).toBe(0)
+  })
+
+  test('the picture snaps back to centred when the pan comes near it', () => {
+    const axis = { stagePx: 300, zoom: 2, layout: 'smart_crop' as const, fitFraction: 1 }
+    const rate = frameCentrePerPx(axis)
+    const panned = (deltaPx: number) =>
+      snapToCentre(movedFrameCenter({ center: 50, deltaPx, ...axis }), rate)
+
+    // Five pixels off the middle is inside the magnet's seven, so the framing
+    // goes back to the exact 50 the sliders show, not 51.67.
+    expect(panned(5)).toEqual({ value: 50, snapped: true })
+    // Twenty is a pan the operator meant, and is left alone.
+    expect(panned(20).snapped).toBe(false)
+    expect(panned(20).value).toBeCloseTo(50 - (20 * 100) / 300, 6)
+  })
+
+  test('a fitted picture snaps from either direction it travels', () => {
+    // A fitted Shot smaller than the Format moves with the pointer; enlarged
+    // past it, the same drag moves the centre the other way, so the rate turns
+    // negative. The magnet is a distance either way.
+    const room = { stagePx: 300, layout: 'fit_background' as const, fitFraction: 0.6 }
+    const roomy = frameCentrePerPx({ ...room, zoom: 1 })
+    const overflowing = frameCentrePerPx({ ...room, zoom: 2 })
+    expect(roomy).toBeGreaterThan(0)
+    expect(overflowing).toBeLessThan(0)
+    expect(snapToCentre(50 + Math.abs(roomy) * 3, roomy).value).toBe(50)
+    expect(snapToCentre(50 - Math.abs(overflowing) * 3, overflowing).value).toBe(50)
   })
 })
 

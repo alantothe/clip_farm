@@ -20,6 +20,10 @@
   --blue-deep: #2f4bbd;
   --blue-soft: #dde4fc;
   --dark: #0b0e0c;
+  /* The centre lines the Player's snapping draws. Deliberately not the acid the
+     rest of the stage furniture uses: that is what the operator is holding, and
+     this is the stage answering back. */
+  --snap: #ff4fd8;
   --radius: 6px;
 }
 
@@ -5025,6 +5029,44 @@ input[type='range']::-webkit-slider-thumb {
   transform: translateX(-50%);
   white-space: nowrap;
 }
+
+/*
+ * The centre lines, drawn only while a drag is actually resting on one.
+ *
+ * They live inside whichever stage layer is dragging — the Titles, the Sequence
+ * images, or the framing cage — so `inset` here means that layer's own extent.
+ * The cage is inset from the stage by 8px on every side, which is symmetric and
+ * so leaves its lines on the same two centres; the rule at the end only reaches
+ * them back out to the picture's edges so a line looks like one line.
+ */
+.player__centre-line {
+  position: absolute;
+  z-index: 10;
+  background: var(--snap);
+  box-shadow: 0 0 0 1px rgba(8, 10, 9, 0.45);
+  pointer-events: none;
+}
+
+/* Named for the axis each marks, not the way it runs: a centred `center_x`
+   shows the upright line down the middle of the frame. */
+.player__centre-line--x {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+
+.player__centre-line--y {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
+.player__framing-cage .player__centre-line--x { top: -8px; bottom: -8px; }
+.player__framing-cage .player__centre-line--y { left: -8px; right: -8px; }
 
 /* Over the top, muted: the base element below still carries the sound. */
 .player__video--cover { z-index: 3; }

@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { resolveFace, titleCss, titleIsVisible } from '../../lib/titles'
 import type { FontCatalog, Title, TitlePatch } from '../../types'
+import { CentreLines, NOT_CENTRED, magnetOn, snappedCentre } from './snapping'
+import type { Centred } from './snapping'
 
 /** The same bounds the API enforces, so a drag cannot ask for a rejected edit. */
 const SIZE_LIMITS = { min: 1, max: 40 }
@@ -18,7 +20,8 @@ const clamp = (value: number, min: number, max: number) =>
  * Where a drag puts a Title's centre, as a percent of the frame.
  *
  * Exported because it is the whole of the arithmetic, and testable here without
- * the layout jsdom does not have.
+ * the layout jsdom does not have. The magnet in `snapping` is applied to what
+ * this returns, so the placement and the pull to the centre stay separable.
  */
 export function centreAt(
   pointer: { x: number; y: number },
@@ -62,6 +65,7 @@ export function TitleStage({
   editable: boolean
 }) {
   const [draft, setDraft] = useState<({ titleId: string } & TitlePatch) | null>(null)
+  const [centred, setCentred] = useState<Centred>(NOT_CENTRED)
   const stageRef = useRef<HTMLDivElement>(null)
   const gesture = useRef<Gesture | null>(null)
 
@@ -77,7 +81,9 @@ export function TitleStage({
   function begin(event: React.PointerEvent<HTMLElement>, next: Gesture) {
     event.preventDefault()
     event.stopPropagation()
-    event.currentTarget.setPointerCapture(event.pointerId)
+    // Optional like its sibling on the image stage: jsdom has no pointer
+    // capture, and a drag it cannot claim is still a drag worth following.
+    event.currentTarget.setPointerCapture?.(event.pointerId)
     gesture.current = next
     onSelect(next.titleId)
   }
@@ -90,14 +96,19 @@ export function TitleStage({
     if (!title) return
 
     if (current.kind === 'move') {
-      setDraft({
-        titleId: title.id,
-        ...centreAt(
+      // Placed by the pointer, then pulled to the frame's centre if it came
+      // close enough — with the lines that say which axis it landed on.
+      const { centred: axes, ...placed } = snappedCentre(
+        centreAt(
           { x: event.clientX, y: event.clientY },
           { x: current.grabX, y: current.grabY },
           rect,
         ),
-      })
+        rect,
+        magnetOn(event),
+      )
+      setDraft({ titleId: title.id, ...placed })
+      setCentred(axes)
       return
     }
 
@@ -136,6 +147,7 @@ export function TitleStage({
   function onPointerUp() {
     const current = gesture.current
     gesture.current = null
+    setCentred(NOT_CENTRED)
     if (!current || !draft) {
       setDraft(null)
       return
@@ -151,6 +163,7 @@ export function TitleStage({
 
   return (
     <div className="player__titles" ref={stageRef} aria-hidden="true">
+      <CentreLines centred={centred} />
       {drafted.map((title) => {
         const { box, text } = titleCss(title, resolveFace(catalog, title.font_family, title.font_weight))
         const selected = editable && title.id === selectedTitleId

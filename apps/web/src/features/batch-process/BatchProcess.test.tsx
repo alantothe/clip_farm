@@ -963,6 +963,105 @@ test('a Player border pans its own axis alone, however the drag wanders', async 
   })
 })
 
+test('a pan that comes back near the middle snaps the picture to centred', async () => {
+  // Panned off centre and 2× in, so there is picture either side to pull back.
+  const panned = sequencedBatch({
+    shots: [
+      makeShot({
+        id: 'shot-1',
+        clip_id: 'clip-ready',
+        position: 0,
+        frame_zoom: 2,
+        frame_center_x: 60,
+      }),
+    ],
+  })
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': panned })
+  Object.defineProperty(window, 'PointerEvent', {
+    configurable: true,
+    value: MouseEvent,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 1/)
+
+  const cage = screen.getByLabelText('Framing controls for first')
+  const stage = document.querySelector<HTMLElement>('.player__stage')!
+  stage.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width: 300, height: 533, right: 300, bottom: 533 }) as DOMRect
+  const left = cage.querySelector<HTMLElement>('.player__framing-edge--left')!
+
+  // On a 300px stage at 2×, a pixel of pointer travel is a third of a percent,
+  // so 27px lands on 51 — three pixels of picture short of the middle.
+  fireEvent.pointerDown(left, { pointerId: 1, clientX: 10, clientY: 260 })
+  fireEvent.pointerMove(left, { pointerId: 1, clientX: 37, clientY: 260 })
+
+  const activeVideo = document.querySelector<HTMLElement>('.player__video.is-active')!
+  expect(activeVideo.style.getPropertyValue('--frame-x')).toBe('50%')
+  expect(cage.querySelector('.player__centre-line--x')).not.toBeNull()
+  expect(within(cage).getByText('Centred · Alt to slip past')).toBeVisible()
+
+  fireEvent.pointerUp(left, { pointerId: 1, clientX: 37, clientY: 260 })
+  expect(cage.querySelector('.player__centre-line')).toBeNull()
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(
+      ([url, options]) =>
+        url === '/api/batches/batch-1/shots/shot-1' && options?.method === 'PATCH',
+    )
+    expect(call).toBeTruthy()
+    // Exactly 50, which is what the sliders and the renderer call centred.
+    expect(JSON.parse(String(call?.[1]?.body)).frame_center_x).toBe(50)
+  })
+})
+
+test('a sequence image dropped near the middle is taken to the exact centre', async () => {
+  const offCentre = { ...sequenceImage, center_x: 30, center_y: 70 }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': { ...placed, media: [offCentre] },
+    'PATCH /api/batches/batch-1/media/media-1': { ...placed, media: [sequenceImage] },
+  })
+  Object.defineProperty(window, 'PointerEvent', {
+    configurable: true,
+    value: MouseEvent,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const image = await screen.findByRole('button', { name: 'Move brand-mark.png' })
+  const mediaStage = document.querySelector<HTMLElement>('.player__media')!
+  vi.spyOn(mediaStage, 'getBoundingClientRect').mockReturnValue({
+    x: 10,
+    y: 20,
+    left: 10,
+    top: 20,
+    right: 210,
+    bottom: 420,
+    width: 200,
+    height: 400,
+    toJSON: () => ({}),
+  })
+
+  // It starts at 30% × 70%, which is (70, 300) here. Dropped two pixels left of
+  // the middle and two below it — inside the magnet on both axes.
+  fireEvent.pointerDown(image, { pointerId: 1, button: 0, clientX: 70, clientY: 300 })
+  fireEvent.pointerMove(image, { pointerId: 1, clientX: 108, clientY: 222 })
+
+  expect(document.querySelector('.player__centre-line--x')).not.toBeNull()
+  expect(document.querySelector('.player__centre-line--y')).not.toBeNull()
+  expect(screen.getByText('Centred · Alt to slip past')).toBeVisible()
+
+  fireEvent.pointerUp(image, { pointerId: 1, clientX: 108, clientY: 222 })
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(
+      ([path, init]) => String(path).endsWith('/media/media-1') && init?.method === 'PATCH',
+    )
+    expect(call).toBeTruthy()
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ center_x: 50, center_y: 50 })
+  })
+})
+
 test('a shot trimmed on the timeline can be reset to follow its clip', async () => {
   const trimmed = sequencedBatch({
     shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0, trim_end_ms: 2000 })],

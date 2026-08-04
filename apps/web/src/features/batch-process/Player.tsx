@@ -42,6 +42,15 @@ import type {
 import { ScrubBar } from './ScrubBar'
 import { MediaStage } from './MediaStage'
 import { TitleStage } from './TitleStage'
+import {
+  CENTRED_X,
+  CENTRED_Y,
+  CentreLines,
+  NOT_CENTRED,
+  magnetOn,
+  snapToCentre,
+} from './snapping'
+import type { Centred } from './snapping'
 import { usePlayerKeys } from './usePlayerKeys'
 import type { SequencePlayer } from './useSequencePlayer'
 
@@ -80,32 +89,42 @@ const EDGE_AXES = [
   ['left', 'x'],
 ] as const satisfies ReadonlyArray<readonly [string, 'x' | 'y']>
 
-/** Move one framing axis by the same geometry the Player and renderer use. */
-export function movedFrameCenter({
-  center,
-  deltaPx,
-  stagePx,
-  zoom,
-  layout,
-  fitFraction,
-}: {
-  center: number
-  deltaPx: number
+type FrameAxis = {
   stagePx: number
   zoom: number
   layout: Project['layout']
   fitFraction: number
-}): number {
-  if (stagePx <= 0) return center
-  const deltaPercent = (deltaPx / stagePx) * 100
+}
+
+/**
+ * How much of a framing centre one dragged stage pixel is worth on its axis.
+ *
+ * Signed, because a fitted picture already larger than the Format travels the
+ * other way, and 0 where the axis has nowhere to pan at all — which is also
+ * what stops the centre magnet acting where there is no movement to act on.
+ */
+export function frameCentrePerPx({ stagePx, zoom, layout, fitFraction }: FrameAxis): number {
+  if (stagePx <= 0) return 0
+  const perPx = 100 / stagePx
   if (layout === 'smart_crop') {
     // At 1× there is no picture outside the Format to pull into view.
-    if (zoom <= 1.001) return center
-    return clampPercent(center - deltaPercent / (zoom - 1))
+    if (zoom <= 1.001) return 0
+    return -perPx / (zoom - 1)
   }
   const travelPercent = 100 - fitFraction * 100 * zoom
-  if (Math.abs(travelPercent) < 0.01) return center
-  return clampPercent(center + (deltaPercent * 100) / travelPercent)
+  if (Math.abs(travelPercent) < 0.01) return 0
+  return (perPx * 100) / travelPercent
+}
+
+/** Move one framing axis by the same geometry the Player and renderer use. */
+export function movedFrameCenter({
+  center,
+  deltaPx,
+  ...axis
+}: { center: number; deltaPx: number } & FrameAxis): number {
+  const perPx = frameCentrePerPx(axis)
+  if (perPx === 0) return center
+  return clampPercent(center + deltaPx * perPx)
 }
 
 /** Pulling a corner radially scales the picture, capped to the slider's range. */
@@ -150,6 +169,7 @@ function FramingCage({
 }) {
   const gesture = useRef<FramingGesture | null>(null)
   const [grip, setGrip] = useState<{ mode: 'move' | 'zoom'; axis: 'x' | 'y' | null } | null>(null)
+  const [centred, setCentred] = useState<Centred>(NOT_CENTRED)
 
   function begin(
     event: ReactPointerEvent<HTMLElement>,
@@ -197,34 +217,42 @@ function FramingCage({
           Math.hypot(event.clientX - centerX, event.clientY - centerY),
         ),
       }
+      setCentred(NOT_CENTRED)
     } else {
-      const fitted = fittedVideoPercent(clip, 1)
       // Only the edge's own axis moves. The other centre is carried through
       // untouched, so a drag that strays sideways cannot nudge it.
-      next =
-        current.axis === 'x'
-          ? {
-              ...current.framing,
-              frame_center_x: movedFrameCenter({
-                center: current.framing.frame_center_x,
-                deltaPx: event.clientX - current.originX,
-                stagePx: current.rect.width,
-                zoom: current.framing.frame_zoom,
-                layout: current.layout,
-                fitFraction: fitted.width / 100,
-              }),
-            }
-          : {
-              ...current.framing,
-              frame_center_y: movedFrameCenter({
-                center: current.framing.frame_center_y,
-                deltaPx: event.clientY - current.originY,
-                stagePx: current.rect.height,
-                zoom: current.framing.frame_zoom,
-                layout: current.layout,
-                fitFraction: fitted.height / 100,
-              }),
-            }
+      const across = current.axis === 'x'
+      const fitted = fittedVideoPercent(clip, 1)
+      const axis = {
+        stagePx: across ? current.rect.width : current.rect.height,
+        zoom: current.framing.frame_zoom,
+        layout: current.layout,
+        fitFraction: (across ? fitted.width : fitted.height) / 100,
+      }
+      /*
+       * The same magnet the layers have, in the picture's own units.
+       *
+       * A framing centre is not a position on the stage — it says which part of
+       * an enlarged picture survives (ADR 0009), and how far the picture moves
+       * for a dragged pixel depends on the zoom and the Layout. So the reach is
+       * converted through that rate, and the pull is felt as the same few
+       * pixels of picture travel whatever the Shot is doing.
+       */
+      const snap = snapToCentre(
+        movedFrameCenter({
+          center: across ? current.framing.frame_center_x : current.framing.frame_center_y,
+          deltaPx: across
+            ? event.clientX - current.originX
+            : event.clientY - current.originY,
+          ...axis,
+        }),
+        frameCentrePerPx(axis),
+        magnetOn(event),
+      )
+      next = across
+        ? { ...current.framing, frame_center_x: snap.value }
+        : { ...current.framing, frame_center_y: snap.value }
+      setCentred(!snap.snapped ? NOT_CENTRED : across ? CENTRED_X : CENTRED_Y)
     }
     current.latest = next
     onPreview(next)
@@ -234,6 +262,7 @@ function FramingCage({
     const current = gesture.current
     gesture.current = null
     setGrip(null)
+    setCentred(NOT_CENTRED)
     onPreview(null)
     if (!current) return
     if (
@@ -246,6 +275,7 @@ function FramingCage({
   function cancel() {
     gesture.current = null
     setGrip(null)
+    setCentred(NOT_CENTRED)
     onPreview(null)
   }
 
@@ -276,11 +306,16 @@ function FramingCage({
           {...gestureProps}
         />
       ))}
+      <CentreLines centred={centred} />
       <span className="player__framing-hint">
         {grip?.mode === 'move'
-          ? grip.axis === 'x'
-            ? 'Positioning across'
-            : 'Positioning up and down'
+          ? // While the magnet has it, the hint says so — that is the only sign
+            // the exact number was taken out of the operator's hands.
+            centred.x || centred.y
+            ? 'Centred · Alt to slip past'
+            : grip.axis === 'x'
+              ? 'Positioning across'
+              : 'Positioning up and down'
           : grip?.mode === 'zoom'
             ? 'Scaling'
             : 'Drag edge · pull corner'}

@@ -807,3 +807,68 @@ test('typing lands on the picture before it lands on the server', async () => {
     })
   })
 })
+
+test('a title dropped near the middle is taken to the exact centre', async () => {
+  const batch = makeBatch([look({ id: 'title-1', text: 'WAIT FOR IT' })])
+  const fetchMock = stubApi(batch, { 'PATCH /api/batches/batch-1/titles/title-1': batch })
+  Object.defineProperty(window, 'PointerEvent', { configurable: true, value: MouseEvent })
+
+  renderBatch(newClient())
+  await screen.findByRole('list', { name: 'Titles' })
+
+  const layer = document.querySelector<HTMLElement>('.player__titles')!
+  layer.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width: 200, height: 400, right: 200, bottom: 400 }) as DOMRect
+  const title = document.querySelector<HTMLElement>('.player__title')!
+
+  // It starts at 50% × 30%, which is (100, 120) on this stage. Dropped 3px
+  // right of the middle and 5px below it — inside the magnet's reach on both
+  // axes, though 5px down is only 1.25% of a 400px stage and 3px across is
+  // 1.5% of a 200px one.
+  fireEvent.pointerDown(title, { pointerId: 1, button: 0, clientX: 100, clientY: 120 })
+  fireEvent.pointerMove(title, { pointerId: 1, clientX: 103, clientY: 205 })
+
+  // Both lines, because both axes came to rest on a centre.
+  expect(document.querySelector('.player__centre-line--x')).not.toBeNull()
+  expect(document.querySelector('.player__centre-line--y')).not.toBeNull()
+
+  fireEvent.pointerUp(title, { pointerId: 1, clientX: 103, clientY: 205 })
+  // The lines belong to the gesture, not to the placement.
+  expect(document.querySelector('.player__centre-line')).toBeNull()
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(([path]) => String(path).endsWith('/titles/title-1'))
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      center_x: 50,
+      center_y: 50,
+    })
+  })
+})
+
+test('holding Alt drops a title where the pointer actually is', async () => {
+  const batch = makeBatch([look({ id: 'title-1', text: 'WAIT FOR IT' })])
+  const fetchMock = stubApi(batch, { 'PATCH /api/batches/batch-1/titles/title-1': batch })
+  Object.defineProperty(window, 'PointerEvent', { configurable: true, value: MouseEvent })
+
+  renderBatch(newClient())
+  await screen.findByRole('list', { name: 'Titles' })
+
+  const layer = document.querySelector<HTMLElement>('.player__titles')!
+  layer.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width: 200, height: 400, right: 200, bottom: 400 }) as DOMRect
+  const title = document.querySelector<HTMLElement>('.player__title')!
+
+  fireEvent.pointerDown(title, { pointerId: 1, button: 0, clientX: 100, clientY: 120 })
+  fireEvent.pointerMove(title, { pointerId: 1, clientX: 103, clientY: 205, altKey: true })
+
+  expect(document.querySelector('.player__centre-line')).toBeNull()
+  fireEvent.pointerUp(title, { pointerId: 1, clientX: 103, clientY: 205, altKey: true })
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(([path]) => String(path).endsWith('/titles/title-1'))
+    const patch = JSON.parse((call?.[1] as RequestInit).body as string)
+    expect(Object.keys(patch).sort()).toEqual(['center_x', 'center_y'])
+    expect(patch.center_x).toBeCloseTo(51.5, 6)
+    expect(patch.center_y).toBeCloseTo(51.25, 6)
+  })
+})
