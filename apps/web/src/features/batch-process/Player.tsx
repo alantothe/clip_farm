@@ -541,6 +541,17 @@ export function Player({
         title.id === titlePreview.titleId ? { ...title, ...titlePreview } : title,
       )
     : titles
+  /*
+   * The instant the Sequence's layers are drawn at.
+   *
+   * A layer's span is half-open, so one ending at the Sequence end is not
+   * inside itself at `totalMs` — and that is exactly where `advance` parks the
+   * playhead when playback finishes, over a last frame the video is still
+   * showing. Drawing the final instant instead keeps a full-length Title or
+   * image on screen for as long as there is picture under it, while touching
+   * spans inside the Sequence stay non-overlapping as `titles_in_span` has it.
+   */
+  const layerMs = totalMs > 0 ? Math.min(player.playheadMs, totalMs - 1) : player.playheadMs
 
   return (
     <section className="player" aria-label="Player">
@@ -649,7 +660,7 @@ export function Player({
           {framed && (
             <MediaStage
               media={media}
-              playheadMs={player.playheadMs}
+              playheadMs={layerMs}
               selectedMediaId={selectedMediaId}
               onSelect={(mediaId) => onSelectMedia?.(mediaId)}
               onEdit={(item, patch) => onEditMedia?.(item, patch)}
@@ -687,7 +698,7 @@ export function Player({
             <TitleStage
               titles={drawnTitles}
               catalog={fontCatalog}
-              playheadMs={player.playheadMs}
+              playheadMs={layerMs}
               selectedTitleId={selectedTitleId}
               onSelect={(titleId) => onSelectTitle?.(titleId)}
               onEdit={(title, patch) => onEditTitle?.(title, patch)}

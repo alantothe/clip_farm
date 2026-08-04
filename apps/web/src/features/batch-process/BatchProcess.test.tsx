@@ -593,6 +593,31 @@ test('adds an image beside text and places it across the full timeline', async (
   )
 })
 
+test('a full-length title and image hold the last frame of the sequence', async () => {
+  stubApi({
+    'GET /api/batches/batch-1': { ...placed, titles: [sequenceTitle], media: [sequenceImage] },
+    'GET /api/fonts': { families: [], faces: [] },
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const player = await screen.findByRole('region', { name: 'Player' })
+  await waitFor(() =>
+    expect(document.querySelector('.player__title-text')).toHaveTextContent('Follow for more'),
+  )
+
+  // Exactly where `advance` parks the playhead when the sequence runs out, and
+  // where dragging the scrub bar to its right edge lands. Both layers end here,
+  // and a half-open span does not contain its own end — but the video is still
+  // showing a frame, so they have to still be on it.
+  const scrub = within(player).getByRole('slider', { name: 'Sequence position' })
+  fireEvent.keyDown(scrub, { key: 'End' })
+  await waitFor(() => expect(scrub).toHaveAttribute('aria-valuenow', '8000'))
+
+  expect(document.querySelector('.player__title-text')).toHaveTextContent('Follow for more')
+  expect(document.querySelector('.player__overlay--sequence img')).toBeInTheDocument()
+})
+
 test('saves the text and image visible on the player as one layer profile', async () => {
   const current = { ...placed, titles: [sequenceTitle], media: [sequenceImage] }
   const fetchMock = stubApi({

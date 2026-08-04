@@ -25,7 +25,13 @@ from app.schemas import PhraseWrite, TitleCreate, TitleStyleWrite, TitleUpdate
 from app.services import fonts
 from app.services.media import create_ass_titles
 from app.services.sequence import plan_sequence
-from app.services.titles import BUILTIN_STYLES, apply_style, look_of, titles_in_span
+from app.services.titles import (
+    BUILTIN_STYLES,
+    SEGMENT_TAIL_MS,
+    apply_style,
+    look_of,
+    titles_in_span,
+)
 
 
 def make_session(tmp_path) -> Session:
@@ -438,10 +444,23 @@ def test_a_title_crossing_a_cut_is_sliced_into_both_segments():
     second = titles_in_span([title], 2000, 2000)
     third = titles_in_span([title], 4000, 2000)
 
-    # Rebased onto each segment, and clamped to it.
-    assert [(start, end) for _, start, end in first] == [(1500, 2000)]
-    assert [(start, end) for _, start, end in second] == [(0, 2000)]
+    # Rebased onto each segment. The two pieces that run to their segment's end
+    # carry a tail past it so centisecond rounding cannot bare the last frame;
+    # ffmpeg's `-t` discards it. The piece ending mid-segment is untouched.
+    assert [(start, end) for _, start, end in first] == [(1500, 2000 + SEGMENT_TAIL_MS)]
+    assert [(start, end) for _, start, end in second] == [(0, 2000 + SEGMENT_TAIL_MS)]
     assert [(start, end) for _, start, end in third] == [(0, 500)]
+
+
+def test_a_title_bound_to_the_sequence_end_holds_the_final_frame():
+    """The whole point of the tail: 4000ms of ASS ends below a 3966ms frame."""
+    title = make_title(start_ms=0, end_ms=4000)
+
+    [(_, start, end)] = titles_in_span([title], 0, 4000)
+
+    assert (start, end) == (0, 4000 + SEGMENT_TAIL_MS)
+    # The last frame ffmpeg keeps under `-t 4.000` at 30fps, in milliseconds.
+    assert end > 3966
 
 
 def test_a_title_outside_a_segment_is_not_in_it():
@@ -680,9 +699,14 @@ def test_the_worker_slices_a_title_across_the_cut_it_crosses(tmp_path, monkeypat
 
     tasks.render_sequence_task.call_local(batch_id, render_id)
 
-    # The first segment carries its last half second, the second its first
-    # two-and-a-half — each timed from its own start.
-    assert drawn == [[("CROSSES", 1500, 2000)], [("CROSSES", 0, 2000)]]
+    # The first segment carries its last half second, the second all of itself
+    # — each timed from its own start. Both run to their segment's end, so both
+    # get the tail that keeps centisecond rounding off the last frame; ffmpeg's
+    # `-t` cuts it away again.
+    assert drawn == [
+        [("CROSSES", 1500, 2000 + SEGMENT_TAIL_MS)],
+        [("CROSSES", 0, 2000 + SEGMENT_TAIL_MS)],
+    ]
 
 
 # --- Reaching a font file ------------------------------------------------

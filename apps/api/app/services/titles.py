@@ -350,6 +350,17 @@ def apply_style(title: Title, source: TitleLook | dict[str, Any]) -> None:
         setattr(title, field, value)
 
 
+#: How far past its segment a Title that runs to the end of one is written.
+#:
+#: ASS timestamps are centiseconds and pysubs2 rounds to the nearest, so an end
+#: landing exactly on the segment end can be written up to 5ms short — which for
+#: about one segment duration in sixteen falls below the last frame's timestamp
+#: and leaves that frame bare. The tail cannot bleed anywhere: each segment is
+#: rendered as its own file and cut to length by ffmpeg's `-t`, so everything
+#: past the segment end is discarded with the file's own tail.
+SEGMENT_TAIL_MS = 100
+
+
 def titles_in_span(
     titles: list[Title], start_ms: int, duration_ms: int
 ) -> list[tuple[Title, int, int]]:
@@ -360,6 +371,11 @@ def titles_in_span(
     its times rebased (ADR 0008). The seam does not show because every piece
     positions the text identically in frame; only the picture behind it changes.
 
+    A Title reaching the segment's end is carried `SEGMENT_TAIL_MS` past it
+    rather than clamped to it, so it holds the last frame as well as every one
+    before it. That is what makes a Title bound to the Sequence end finish with
+    the picture instead of a frame early.
+
     Touching is not overlapping: a Title ending exactly where a segment begins
     is not in it, the same rule `plan_segments` uses for Cutaways.
     """
@@ -368,11 +384,12 @@ def titles_in_span(
     for title in titles:
         if not title.text.strip() or title.end_ms <= start_ms or title.start_ms >= end_ms:
             continue
+        local_end_ms = title.end_ms - start_ms
         visible.append(
             (
                 title,
                 max(0, title.start_ms - start_ms),
-                min(duration_ms, title.end_ms - start_ms),
+                duration_ms + SEGMENT_TAIL_MS if local_end_ms >= duration_ms else local_end_ms,
             )
         )
     return visible
