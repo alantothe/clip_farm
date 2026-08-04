@@ -4974,12 +4974,13 @@ input[type='range']::-webkit-slider-thumb {
   user-select: none;
 }
 
-.player__framing-edge { cursor: move; }
+/* Each border pans its own axis alone, and its cursor says which. */
 .player__framing-edge--top,
 .player__framing-edge--bottom {
   left: 14px;
   right: 14px;
   height: 12px;
+  cursor: ns-resize;
 }
 .player__framing-edge--top { top: -6px; }
 .player__framing-edge--bottom { bottom: -6px; }
@@ -4988,6 +4989,7 @@ input[type='range']::-webkit-slider-thumb {
   top: 14px;
   bottom: 14px;
   width: 12px;
+  cursor: ew-resize;
 }
 .player__framing-edge--left { left: -6px; }
 .player__framing-edge--right { right: -6px; }

@@ -923,6 +923,46 @@ test('the Player border can be pulled directly to zoom a selected shot', async (
   })
 })
 
+test('a Player border pans its own axis alone, however the drag wanders', async () => {
+  const zoomed = sequencedBatch({
+    shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0, frame_zoom: 2 })],
+  })
+  const fetchMock = stubApi({ 'GET /api/batches/batch-1': zoomed })
+  Object.defineProperty(window, 'PointerEvent', {
+    configurable: true,
+    value: MouseEvent,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 1/)
+
+  const cage = screen.getByLabelText('Framing controls for first')
+  const stage = document.querySelector<HTMLElement>('.player__stage')!
+  stage.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width: 300, height: 533, right: 300, bottom: 533 }) as DOMRect
+  const left = cage.querySelector<HTMLElement>('.player__framing-edge--left')!
+
+  // Deliberately diagonal: the vertical travel must be ignored entirely.
+  fireEvent.pointerDown(left, { pointerId: 1, clientX: 10, clientY: 260 })
+  fireEvent.pointerMove(left, { pointerId: 1, clientX: 70, clientY: 400 })
+  expect(within(cage).getByText('Positioning across')).toBeVisible()
+  const activeVideo = document.querySelector<HTMLElement>('.player__video.is-active')!
+  expect(activeVideo.style.getPropertyValue('--frame-y')).toBe('50%')
+  fireEvent.pointerUp(left, { pointerId: 1, clientX: 70, clientY: 400 })
+
+  await waitFor(() => {
+    const call = fetchMock.mock.calls.find(
+      ([url, options]) =>
+        url === '/api/batches/batch-1/shots/shot-1' && options?.method === 'PATCH',
+    )
+    expect(call).toBeTruthy()
+    const body = JSON.parse(String(call?.[1]?.body))
+    expect(body.frame_center_x).not.toBe(50)
+    expect(body.frame_center_y).toBe(50)
+    expect(body.frame_zoom).toBe(2)
+  })
+})
+
 test('a shot trimmed on the timeline can be reset to follow its clip', async () => {
   const trimmed = sequencedBatch({
     shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0, trim_end_ms: 2000 })],

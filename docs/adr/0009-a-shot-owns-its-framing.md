@@ -17,9 +17,12 @@ gutter.
 The centres describe which part of an enlarged picture survives. At 0% the
 left or top edge is held; at 100% the right or bottom edge is held. The Player
 uses the same geometry while a control is moving: pulling a corner changes the
-zoom and dragging the border changes the centres. The API saves only when the
-gesture ends. Sliders remain the exact, keyboard-accessible path to the same
-numbers. Existing databases receive the three fields additively.
+zoom, and dragging a border changes one centre — the side borders pan across,
+the top and bottom borders pan up and down. A border is a handle on its own
+axis, so a drag that wanders diagonally cannot disturb the centre the operator
+was not aiming at. The API saves only when the gesture ends. Sliders remain the
+exact, keyboard-accessible path to the same numbers, one axis each. Existing
+databases receive the three fields additively.
 
 Framing moves only the Shot's video. Overlays belong to the Clip's finished
 canvas and Titles belong to the Batch, so both stay where the operator placed

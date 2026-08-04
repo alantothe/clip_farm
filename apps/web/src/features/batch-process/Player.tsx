@@ -50,6 +50,13 @@ type View = 'format' | 'source'
 
 type FramingGesture = {
   mode: 'move' | 'zoom'
+  /**
+   * The one centre a move changes. An edge is a handle on its own axis — the
+   * left border pans across, the top border pans up and down — so a drag that
+   * wanders diagonally still moves the picture along a single axis. `null`
+   * while zooming, which moves neither.
+   */
+  axis: 'x' | 'y' | null
   originX: number
   originY: number
   startDistance: number
@@ -64,6 +71,14 @@ const RATES = [0.5, 1, 1.5, 2]
 
 const clampPercent = (value: number) => Math.min(100, Math.max(0, value))
 const clampZoom = (value: number) => Math.min(3, Math.max(1, value))
+
+/** Which centre each border of the cage pans, in the order they are drawn. */
+const EDGE_AXES = [
+  ['top', 'y'],
+  ['right', 'x'],
+  ['bottom', 'y'],
+  ['left', 'x'],
+] as const satisfies ReadonlyArray<readonly [string, 'x' | 'y']>
 
 /** Move one framing axis by the same geometry the Player and renderer use. */
 export function movedFrameCenter({
@@ -134,9 +149,13 @@ function FramingCage({
   onCommit: (framing: ShotFraming) => void
 }) {
   const gesture = useRef<FramingGesture | null>(null)
-  const [mode, setMode] = useState<'move' | 'zoom' | null>(null)
+  const [grip, setGrip] = useState<{ mode: 'move' | 'zoom'; axis: 'x' | 'y' | null } | null>(null)
 
-  function begin(event: ReactPointerEvent<HTMLElement>, nextMode: 'move' | 'zoom') {
+  function begin(
+    event: ReactPointerEvent<HTMLElement>,
+    nextMode: 'move' | 'zoom',
+    axis: 'x' | 'y' | null,
+  ) {
     const rect = stageRef.current?.getBoundingClientRect()
     if (!rect?.width || !rect.height) return
     event.preventDefault()
@@ -151,6 +170,7 @@ function FramingCage({
     }
     gesture.current = {
       mode: nextMode,
+      axis,
       originX: event.clientX,
       originY: event.clientY,
       startDistance: Math.hypot(event.clientX - centerX, event.clientY - centerY),
@@ -159,7 +179,7 @@ function FramingCage({
       rect,
       layout: clip.layout,
     }
-    setMode(nextMode)
+    setGrip({ mode: nextMode, axis })
   }
 
   function move(event: ReactPointerEvent<HTMLElement>) {
@@ -179,25 +199,32 @@ function FramingCage({
       }
     } else {
       const fitted = fittedVideoPercent(clip, 1)
-      next = {
-        ...current.framing,
-        frame_center_x: movedFrameCenter({
-          center: current.framing.frame_center_x,
-          deltaPx: event.clientX - current.originX,
-          stagePx: current.rect.width,
-          zoom: current.framing.frame_zoom,
-          layout: current.layout,
-          fitFraction: fitted.width / 100,
-        }),
-        frame_center_y: movedFrameCenter({
-          center: current.framing.frame_center_y,
-          deltaPx: event.clientY - current.originY,
-          stagePx: current.rect.height,
-          zoom: current.framing.frame_zoom,
-          layout: current.layout,
-          fitFraction: fitted.height / 100,
-        }),
-      }
+      // Only the edge's own axis moves. The other centre is carried through
+      // untouched, so a drag that strays sideways cannot nudge it.
+      next =
+        current.axis === 'x'
+          ? {
+              ...current.framing,
+              frame_center_x: movedFrameCenter({
+                center: current.framing.frame_center_x,
+                deltaPx: event.clientX - current.originX,
+                stagePx: current.rect.width,
+                zoom: current.framing.frame_zoom,
+                layout: current.layout,
+                fitFraction: fitted.width / 100,
+              }),
+            }
+          : {
+              ...current.framing,
+              frame_center_y: movedFrameCenter({
+                center: current.framing.frame_center_y,
+                deltaPx: event.clientY - current.originY,
+                stagePx: current.rect.height,
+                zoom: current.framing.frame_zoom,
+                layout: current.layout,
+                fitFraction: fitted.height / 100,
+              }),
+            }
     }
     current.latest = next
     onPreview(next)
@@ -206,7 +233,7 @@ function FramingCage({
   function finish() {
     const current = gesture.current
     gesture.current = null
-    setMode(null)
+    setGrip(null)
     onPreview(null)
     if (!current) return
     if (
@@ -218,7 +245,7 @@ function FramingCage({
 
   function cancel() {
     gesture.current = null
-    setMode(null)
+    setGrip(null)
     onPreview(null)
   }
 
@@ -230,14 +257,14 @@ function FramingCage({
 
   return (
     <div
-      className={`player__framing-cage ${mode ? `is-${mode}` : ''}`}
+      className={`player__framing-cage ${grip ? `is-${grip.mode}` : ''}`}
       aria-label={`Framing controls for ${clip.title}`}
     >
-      {(['top', 'right', 'bottom', 'left'] as const).map((edge) => (
+      {EDGE_AXES.map(([edge, axis]) => (
         <span
           key={edge}
           className={`player__framing-edge player__framing-edge--${edge}`}
-          onPointerDown={(event) => begin(event, 'move')}
+          onPointerDown={(event) => begin(event, 'move', axis)}
           {...gestureProps}
         />
       ))}
@@ -245,12 +272,18 @@ function FramingCage({
         <span
           key={corner}
           className={`player__framing-corner player__framing-corner--${corner}`}
-          onPointerDown={(event) => begin(event, 'zoom')}
+          onPointerDown={(event) => begin(event, 'zoom', null)}
           {...gestureProps}
         />
       ))}
       <span className="player__framing-hint">
-        {mode === 'move' ? 'Positioning' : mode === 'zoom' ? 'Scaling' : 'Drag edge · pull corner'}
+        {grip?.mode === 'move'
+          ? grip.axis === 'x'
+            ? 'Positioning across'
+            : 'Positioning up and down'
+          : grip?.mode === 'zoom'
+            ? 'Scaling'
+            : 'Drag edge · pull corner'}
       </span>
     </div>
   )
