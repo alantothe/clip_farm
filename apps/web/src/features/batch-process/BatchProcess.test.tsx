@@ -111,6 +111,7 @@ const batch: Batch = {
   titles: [],
   media: [],
   sequence_render: null,
+  sequence_publications: [],
 }
 
 function stubApi(overrides: Record<string, unknown> = {}) {
@@ -415,11 +416,13 @@ const sequenceImage: BatchMedia = {
   mime_type: 'image/png',
   size_bytes: 2048,
   url: '/api/batches/batch-1/media/media-1/file',
+  applied_profile_id: null,
 }
 
 const sequenceTitle: Title = {
   id: 'title-1',
   batch_id: 'batch-1',
+  applied_profile_id: null,
   text: 'Follow for more',
   start_ms: 0,
   end_ms: 8000,
@@ -680,6 +683,109 @@ test('applies a saved layer profile to the full target timeline', async () => {
   const mediaTrack = screen.getByRole('list', { name: 'Media' })
   expect(within(mediaTrack).getByRole('button', { name: /brand-mark.png, 00:00.0 to 00:08.0/ }))
     .toBeVisible()
+})
+
+test('swapping profiles replaces the old ones layers and keeps hand-made ones', async () => {
+  // A Batch already wearing profile-1, plus a Title the operator typed.
+  const byHand = { ...sequenceTitle, id: 'title-hand', text: 'link in bio', start_ms: 4000 }
+  const wearing = {
+    ...placed,
+    titles: [{ ...sequenceTitle, applied_profile_id: 'profile-1' }, byHand],
+    media: [{ ...sequenceImage, applied_profile_id: 'profile-1' }],
+  }
+  const second: LayerProfile = { ...layerProfile, id: 'profile-2', name: 'New hook' }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': wearing,
+    'GET /api/layer-profiles': [layerProfile, second],
+    'GET /api/fonts': { families: [], faces: [] },
+    'POST /api/batches/batch-1/layer-profiles/profile-2/apply': {
+      ...placed,
+      titles: [{ ...sequenceTitle, text: 'NEW HOOK', applied_profile_id: 'profile-2' }, byHand],
+      media: [{ ...sequenceImage, applied_profile_id: 'profile-2' }],
+    },
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Save or reuse layout' }))
+  const dialog = screen.getByRole('dialog', { name: 'Layer profiles' })
+
+  // The one already on says so, and offers a re-apply rather than a first one.
+  expect(within(dialog).getByText('On this Batch')).toBeVisible()
+  expect(within(dialog).getByRole('button', { name: /Re-apply/ })).toBeVisible()
+
+  // Applying the other asks first, and names what would come off.
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Apply/ }))
+  const asked = within(dialog).getByRole('alert')
+  expect(asked).toHaveTextContent('Brand close is already on this Batch.')
+  // Two, not three: the Title typed by hand is untagged and stays put.
+  expect(asked).toHaveTextContent('Swapping removes 2 layers')
+  expect(fetchMock).not.toHaveBeenCalledWith(
+    '/api/batches/batch-1/layer-profiles/profile-2/apply',
+    expect.anything(),
+  )
+
+  fireEvent.click(within(asked).getByRole('button', { name: 'Swap' }))
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/layer-profiles/profile-2/apply',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ mode: 'replace' }) }),
+    ),
+  )
+
+  const titleTrack = await screen.findByRole('list', { name: 'Titles' })
+  expect(within(titleTrack).getByRole('button', { name: /NEW HOOK/ })).toBeVisible()
+  expect(within(titleTrack).getByRole('button', { name: /link in bio/ })).toBeVisible()
+})
+
+test('a profile can still be stacked on top when that is what is wanted', async () => {
+  const wearing = {
+    ...placed,
+    titles: [{ ...sequenceTitle, applied_profile_id: 'profile-1' }],
+    media: [],
+  }
+  const second: LayerProfile = { ...layerProfile, id: 'profile-2', name: 'New hook' }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': wearing,
+    'GET /api/layer-profiles': [layerProfile, second],
+    'GET /api/fonts': { families: [], faces: [] },
+    'POST /api/batches/batch-1/layer-profiles/profile-2/apply': wearing,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Save or reuse layout' }))
+  const dialog = screen.getByRole('dialog', { name: 'Layer profiles' })
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Apply/ }))
+  fireEvent.click(within(within(dialog).getByRole('alert')).getByRole('button', {
+    name: 'Add on top',
+  }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/layer-profiles/profile-2/apply',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ mode: 'add' }) }),
+    ),
+  )
+})
+
+test('applying onto a Batch wearing nothing asks nothing', async () => {
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': placed,
+    'GET /api/layer-profiles': [layerProfile],
+    'GET /api/fonts': { families: [], faces: [] },
+    'POST /api/batches/batch-1/layer-profiles/profile-1/apply': placed,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Save or reuse layout' }))
+  const dialog = screen.getByRole('dialog', { name: 'Layer profiles' })
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Apply/ }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/layer-profiles/profile-1/apply',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ mode: 'add' }) }),
+    ),
+  )
 })
 
 test('reuses and deletes images from global Storage', async () => {
@@ -1348,6 +1454,7 @@ test('exports the timeline as one video', async () => {
     completed_at: null,
     cancel_requested_at: null,
     download_url: null,
+    stale: false,
   }
   const fetchMock = stubApi({
     'GET /api/batches/batch-1': placed,
@@ -1384,6 +1491,7 @@ test('shows export progress while the sequence renders', async () => {
         completed_at: null,
         cancel_requested_at: null,
         download_url: null,
+        stale: false,
       },
     }),
   })
@@ -1564,6 +1672,7 @@ const finishedExport = {
   completed_at: '2026-08-02T12:02:00Z',
   cancel_requested_at: null,
   download_url: '/api/batches/batch-1/render/download',
+  stale: false,
 }
 
 const connectedInstagram = {
@@ -1782,6 +1891,7 @@ test('reports a failed export instead of a download', async () => {
         completed_at: '2026-08-02T12:01:00Z',
         cancel_requested_at: null,
         download_url: null,
+        stale: false,
       },
     }),
   })

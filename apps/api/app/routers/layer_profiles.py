@@ -22,6 +22,7 @@ from app.models import (
 from app.schemas import (
     BatchOut,
     DeletionOut,
+    LayerProfileApply,
     LayerProfileCreate,
     LayerProfileMediaOut,
     LayerProfileOut,
@@ -180,32 +181,62 @@ def create_layer_profile(
     status_code=201,
 )
 def apply_layer_profile(
-    batch_id: str, profile_id: str, session: Session = Depends(get_db)
+    batch_id: str,
+    profile_id: str,
+    payload: LayerProfileApply | None = None,
+    session: Session = Depends(get_db),
 ) -> BatchOut:
-    """Copy a profile onto a Batch, stretching every layer to its Sequence end."""
+    """Copy a profile onto a Batch, stretching every layer to its Sequence end.
+
+    In `replace` mode the layers a previous apply left behind go first, so
+    swapping arrangements is a swap rather than a stack (ADR 0013). Only
+    tagged layers are cleared — anything the operator wrote by hand stays,
+    including hand-made full-Sequence Titles a duration test could not tell
+    apart from a profile's.
+    """
     batch = get_batch_or_404(session, batch_id)
     profile = _profile_or_404(session, profile_id)
     duration = sequence_duration_ms(session, batch.id)
     if duration < 400:
         raise HTTPException(status_code=409, detail="Add a video before applying a layer profile")
 
-    existing_titles = batch_titles(session, batch.id)
-    new_titles: list[Title] = []
-    for saved in profile.titles:
-        _reject_title_slot_overflow(existing_titles + new_titles, 0, duration)
-        new_titles.append(
-            Title(
-                batch_id=batch.id,
-                text=saved.text,
-                start_ms=0,
-                end_ms=duration,
-                end_at_sequence_end=True,
-                **_look_of(saved),
-            )
-        )
-
+    mode = (payload or LayerProfileApply()).mode
+    # Held until the commit lands: rolling back has to leave the layers intact,
+    # and a row without its bytes is worse than bytes without their row.
+    replaced_paths: list[Path] = []
     copied_paths: list[Path] = []
     try:
+        existing_titles = batch_titles(session, batch.id)
+        if mode == "replace":
+            # Clearing before the slot check below is what lets three Titles be
+            # swapped for three: the old ones are not competing for the rows.
+            for title in existing_titles:
+                if title.applied_profile_id is not None:
+                    session.delete(title)
+            existing_titles = [
+                title for title in existing_titles if title.applied_profile_id is None
+            ]
+            for item in batch_media(session, batch.id):
+                if item.applied_profile_id is not None:
+                    replaced_paths.append(Path(item.path))
+                    session.delete(item)
+            session.flush()
+
+        new_titles: list[Title] = []
+        for saved in profile.titles:
+            _reject_title_slot_overflow(existing_titles + new_titles, 0, duration)
+            new_titles.append(
+                Title(
+                    batch_id=batch.id,
+                    text=saved.text,
+                    start_ms=0,
+                    end_ms=duration,
+                    end_at_sequence_end=True,
+                    applied_profile_id=profile.id,
+                    **_look_of(saved),
+                )
+            )
+
         session.add_all(new_titles)
         for saved in profile.media:
             source_path = Path(saved.path)
@@ -222,6 +253,7 @@ def apply_layer_profile(
                 start_ms=0,
                 end_ms=duration,
                 end_at_sequence_end=True,
+                applied_profile_id=profile.id,
                 center_x=saved.center_x,
                 center_y=saved.center_y,
                 width_percent=saved.width_percent,
@@ -239,12 +271,17 @@ def apply_layer_profile(
 
         batch.updated_at = datetime.now(timezone.utc)
         session.commit()
-        return serialize_batch(session, batch)
     except Exception:
         session.rollback()
         for path in copied_paths:
             path.unlink(missing_ok=True)
         raise
+
+    # Only now that the rows are gone for certain. An orphaned file wastes
+    # disk; a missing one breaks a layer that is still on the Timeline.
+    for path in replaced_paths:
+        path.unlink(missing_ok=True)
+    return serialize_batch(session, batch)
 
 
 @router.delete(

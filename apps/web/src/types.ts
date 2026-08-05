@@ -65,6 +65,8 @@ export interface BatchMedia {
   mime_type: string
   size_bytes: number
   url: string
+  /** Which Layer Profile applied this, and null when it was placed by hand. */
+  applied_profile_id: string | null
 }
 
 export type BatchMediaPatch = Partial<
@@ -244,6 +246,8 @@ export interface Title extends TitleLook {
   end_ms: number
   /** Which Style this look came from, for its label. Not a live link. */
   style_id: string | null
+  /** Which Layer Profile applied this, and null when it was written by hand. */
+  applied_profile_id: string | null
 }
 
 /** A saved look a Title can be made from, reusable across every Batch. */

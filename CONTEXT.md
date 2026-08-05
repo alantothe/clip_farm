@@ -101,7 +101,7 @@ Words an operator saves whole — the text together with its look and its place 
 _Avoid_: snippet, preset, saved text, template, favourite
 
 **Layer Profile**:
-A named, reusable arrangement of the Titles and Sequence images visible at one point in a Batch. It saves independent copies of their words, image bytes, look, size and placement, but no timing. Applying one to another Batch creates new layers that all run from the Sequence beginning to its actual end, whatever that duration becomes (ADR 0010). A Layer Profile is broader than a Title Style or Phrase because it may carry text and images together.
+A named, reusable arrangement of the Titles and Sequence images visible at one point in a Batch. It saves independent copies of their words, image bytes, look, size and placement, but no timing. Applying one to another Batch creates new layers that all run from the Sequence beginning to its actual end, whatever that duration becomes (ADR 0010). Applying it over a Batch that already wears one either swaps that arrangement out or stacks beside it, and the operator is asked which; either way the layers made by hand stay (ADR 0013). A Layer Profile is broader than a Title Style or Phrase because it may carry text and images together.
 _Avoid_: layout (already means how a source frame fits the Format), template, composition preset
 
 **Trim**:

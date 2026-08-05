@@ -368,6 +368,13 @@ class Title(TitleLook, Base):
     style_id: Mapped[str | None] = mapped_column(
         ForeignKey("title_styles.id", ondelete="SET NULL"), nullable=True
     )
+    #: Which Layer Profile applied this, so a later apply can replace what an
+    #: earlier one left rather than stacking on it (ADR 0013). Nulled rather
+    #: than cascaded when the profile goes: the words and look are copied here
+    #: and are the operator's edit now.
+    applied_profile_id: Mapped[str | None] = mapped_column(
+        ForeignKey("layer_profiles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -399,6 +406,10 @@ class BatchMedia(Base):
     width_percent: Mapped[float] = mapped_column(Float, default=65.0)
     rotation_deg: Mapped[float] = mapped_column(Float, default=0.0)
     opacity: Mapped[float] = mapped_column(Float, default=1.0)
+    #: Which Layer Profile applied this. See `Title.applied_profile_id`.
+    applied_profile_id: Mapped[str | None] = mapped_column(
+        ForeignKey("layer_profiles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 

@@ -103,6 +103,7 @@ function makeBatch(overrides: Partial<Batch> = {}): Batch {
     titles: [],
     media: [],
     sequence_render: null,
+    sequence_publications: [],
     ...overrides,
   }
 }
@@ -130,6 +131,12 @@ function stubApi(batch: Batch) {
     }
     if (path === `/api/batches/${batch.id}`) {
       return { ok: true, json: async () => batch } as Response
+    }
+    // The catch-all below answers with an object, which is a lie for the
+    // endpoints that return a list — and the page treats what comes back as
+    // an array.
+    if (path === '/api/layer-profiles') {
+      return { ok: true, json: async () => [] } as Response
     }
     return { ok: true, json: async () => ({}) } as Response
   })

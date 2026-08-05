@@ -26,6 +26,7 @@ const look = (overrides: Partial<Title> = {}): Title => ({
   start_ms: 0,
   end_ms: 3000,
   style_id: null,
+  applied_profile_id: null,
   font_family: 'anton',
   font_weight: 400,
   italic: false,
@@ -292,6 +293,7 @@ function makeBatch(titles: Title[]): Batch {
     titles,
     media: [],
     sequence_render: null,
+    sequence_publications: [],
   }
 }
 

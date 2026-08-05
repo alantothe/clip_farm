@@ -2662,10 +2662,19 @@ input[type='range']::-webkit-slider-thumb {
 }
 
 .layer-profile-card__copy { min-width: 0; align-self: end; }
+/* Flex rather than block so a long name ellipsises and gives way to the badge,
+   instead of pushing it out of the card. The name needs its own element to
+   ellipsis against: a bare text node becomes an anonymous flex item, which
+   text-overflow cannot reach. */
 .layer-profile-card__copy > strong {
-  display: block;
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  min-width: 0;
   font-size: 13px;
+}
+
+.layer-profile-card__name {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2735,6 +2744,54 @@ input[type='range']::-webkit-slider-thumb {
 
 .layer-profile-card__confirm button { padding: 0 7px; }
 .layer-profile-card__confirm button:last-child { border-color: #b64c3a; color: #9c392a; }
+
+/* Swapping is not deleting, so this asks in the ordinary voice rather than the
+   confirm's red one. The message needs a row of its own: it names the profiles
+   coming off and how many layers go with them. */
+.layer-profile-card__swap {
+  align-self: end;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: 9px;
+  color: #5c655e;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.layer-profile-card__swap span { grid-column: 1 / -1; }
+.layer-profile-card__swap button {
+  min-height: 29px;
+  padding: 0 7px;
+  border: 1px solid #b0b8b2;
+  border-radius: 3px;
+  background: var(--paper);
+  color: #404842;
+  font: 700 10px 'Barlow Condensed', sans-serif;
+  cursor: pointer;
+}
+
+.layer-profile-card__swap button:first-of-type:hover:not(:disabled) {
+  border-color: #758400;
+  background: var(--acid);
+  color: #222820;
+}
+
+/* The profile the Batch is already wearing, so a Re-apply is recognisable as
+   one before it is clicked. */
+.layer-profile-card.is-applied { border-color: #97a300; }
+
+.layer-profile-card__badge {
+  flex: none;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: var(--acid);
+  color: #2b3222;
+  font: 700 9px 'Barlow Condensed', sans-serif;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
 
 .layer-profiles__empty {
   min-height: 260px;

@@ -172,6 +172,13 @@ def init_db() -> None:
             "ALTER TABLE titles ADD COLUMN end_at_sequence_end "
             "BOOLEAN NOT NULL DEFAULT 0"
         ),
+        # Untagged on every Title that predates ADR 0013, which is the honest
+        # backfill: nothing recorded where they came from, so a Replace has no
+        # business claiming them. Nullable, so ADD COLUMN takes the REFERENCES.
+        "applied_profile_id": (
+            "ALTER TABLE titles ADD COLUMN applied_profile_id VARCHAR "
+            "REFERENCES layer_profiles(id) ON DELETE SET NULL"
+        ),
     }
     sequence_render_columns = {
         column["name"] for column in inspect(engine).get_columns("sequence_renders")
@@ -190,6 +197,11 @@ def init_db() -> None:
         "end_at_sequence_end": (
             "ALTER TABLE batch_media ADD COLUMN end_at_sequence_end "
             "BOOLEAN NOT NULL DEFAULT 0"
+        ),
+        # See `title_additions`.
+        "applied_profile_id": (
+            "ALTER TABLE batch_media ADD COLUMN applied_profile_id VARCHAR "
+            "REFERENCES layer_profiles(id) ON DELETE SET NULL"
         ),
     }
     with engine.begin() as connection:

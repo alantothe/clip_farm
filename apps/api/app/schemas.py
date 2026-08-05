@@ -299,6 +299,9 @@ class TitleOut(TitleLookOut):
     end_ms: int
     #: Where this Title's look came from, for its label. Not a live link.
     style_id: str | None = None
+    #: Which Layer Profile applied this, so the operator can be told what a
+    #: Replace would take away before it takes it (ADR 0013).
+    applied_profile_id: str | None = None
 
 
 class BatchMediaUpdate(BaseModel):
@@ -335,6 +338,8 @@ class BatchMediaOut(BaseModel):
     rotation_deg: float
     opacity: float
     url: str = ""
+    #: See `TitleOut.applied_profile_id`.
+    applied_profile_id: str | None = None
 
 
 class TitleStyleWrite(TitleLookPatch):
@@ -405,6 +410,18 @@ class LayerProfileCreate(BaseModel):
         ):
             raise ValueError("A layer can only be saved once")
         return self
+
+
+class LayerProfileApply(BaseModel):
+    """How an apply should treat the layers a previous apply left behind.
+
+    `add` keeps them and writes the new arrangement alongside, which is the
+    only thing the endpoint could do before profiles were traceable. `replace`
+    removes the layers tagged with any profile and leaves everything the
+    operator made by hand (ADR 0013).
+    """
+
+    mode: Literal["add", "replace"] = "add"
 
 
 class LayerProfileTitleOut(TitleLookOut):

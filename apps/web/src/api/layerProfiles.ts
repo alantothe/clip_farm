@@ -12,9 +12,18 @@ export const createLayerProfile = (
     body: JSON.stringify(profile),
   })
 
-export const applyLayerProfile = (batchId: string, profileId: string) =>
+/**
+ * `replace` clears the layers a previous apply left on this Batch; `add`
+ * writes alongside them. Layers made by hand survive either way (ADR 0013).
+ */
+export const applyLayerProfile = (
+  batchId: string,
+  profileId: string,
+  mode: 'add' | 'replace' = 'add',
+) =>
   request<Batch>(`/api/batches/${batchId}/layer-profiles/${profileId}/apply`, {
     method: 'POST',
+    body: JSON.stringify({ mode }),
   })
 
 export const deleteLayerProfile = (profileId: string) =>

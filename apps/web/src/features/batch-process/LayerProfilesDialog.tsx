@@ -6,11 +6,15 @@ import type { BatchMedia, LayerProfile, Title } from '../../types'
 
 type SaveSelection = { name: string; titleIds: string[]; mediaIds: string[] }
 
+/** What a previous apply left on this Batch, and so what a Replace would clear. */
+type AppliedLayers = { profileIds: Set<string>; names: string[]; layerCount: number }
+
 export function LayerProfilesDialog({
   profiles,
   currentTitles,
   currentMedia,
   playheadMs,
+  applied,
   pending,
   error,
   onCancel,
@@ -22,11 +26,12 @@ export function LayerProfilesDialog({
   currentTitles: Title[]
   currentMedia: BatchMedia[]
   playheadMs: number
+  applied: AppliedLayers
   pending: boolean
   error: Error | null
   onCancel: () => void
   onSave: (selection: SaveSelection) => void
-  onApply: (profile: LayerProfile) => void
+  onApply: (profile: LayerProfile, mode: 'add' | 'replace') => void
   onDelete: (profile: LayerProfile) => void
 }) {
   const [tab, setTab] = useState<'saved' | 'save'>(profiles.length ? 'saved' : 'save')
@@ -34,7 +39,18 @@ export function LayerProfilesDialog({
   const [titleIds, setTitleIds] = useState(() => currentTitles.map((title) => title.id))
   const [mediaIds, setMediaIds] = useState(() => currentMedia.map((item) => item.id))
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  // Which card is asking whether to swap or stack. Applying is only a question
+  // when there is something already on the Batch to swap out.
+  const [applyId, setApplyId] = useState<string | null>(null)
   const selectedCount = titleIds.length + mediaIds.length
+
+  function startApply(profile: LayerProfile) {
+    if (applied.layerCount === 0) {
+      onApply(profile, 'add')
+      return
+    }
+    setApplyId(profile.id)
+  }
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -110,8 +126,14 @@ export function LayerProfilesDialog({
               <div className="layer-profiles__grid" role="list" aria-label="Saved profiles">
                 {profiles.map((profile) => {
                   const deleting = deleteId === profile.id
+                  const choosing = applyId === profile.id
+                  const onBatch = applied.profileIds.has(profile.id)
                   return (
-                    <article className="layer-profile-card" role="listitem" key={profile.id}>
+                    <article
+                      className={`layer-profile-card${onBatch ? ' is-applied' : ''}`}
+                      role="listitem"
+                      key={profile.id}
+                    >
                       <div className="layer-profile-card__preview" aria-hidden="true">
                         {profile.media.slice(0, 2).map((item) => (
                           <img
@@ -142,14 +164,55 @@ export function LayerProfilesDialog({
                         ))}
                       </div>
                       <div className="layer-profile-card__copy">
-                        <strong>{profile.name}</strong>
+                        <strong>
+                          <span className="layer-profile-card__name">{profile.name}</span>
+                          {onBatch && (
+                            <span className="layer-profile-card__badge">On this Batch</span>
+                          )}
+                        </strong>
                         <small>
                           <Type size={11} /> {profile.titles.length}
                           <ImageIcon size={11} /> {profile.media.length}
                           <em>0:00 → end</em>
                         </small>
                       </div>
-                      {deleting ? (
+                      {choosing ? (
+                        <div className="layer-profile-card__swap" role="alert">
+                          <span>
+                            {applied.names.length > 0
+                              ? `${applied.names.join(' and ')} ${
+                                  applied.names.length > 1 ? 'are' : 'is'
+                                } already on this Batch.`
+                              : 'This Batch already carries profile layers.'}{' '}
+                            Swapping removes {applied.layerCount}{' '}
+                            {applied.layerCount === 1 ? 'layer' : 'layers'} and keeps anything
+                            you made by hand.
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setApplyId(null)
+                              onApply(profile, 'replace')
+                            }}
+                            disabled={pending}
+                          >
+                            Swap
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setApplyId(null)
+                              onApply(profile, 'add')
+                            }}
+                            disabled={pending}
+                          >
+                            Add on top
+                          </button>
+                          <button type="button" onClick={() => setApplyId(null)} disabled={pending}>
+                            Cancel
+                          </button>
+                        </div>
+                      ) : deleting ? (
                         <div className="layer-profile-card__confirm" role="alert">
                           <span>Delete this profile?</span>
                           <button type="button" onClick={() => setDeleteId(null)} disabled={pending}>
@@ -164,11 +227,11 @@ export function LayerProfilesDialog({
                           <button
                             className="layer-profile-card__apply"
                             type="button"
-                            onClick={() => onApply(profile)}
+                            onClick={() => startApply(profile)}
                             disabled={pending}
                           >
                             {pending ? <LoaderCircle className="spin" size={14} /> : <Layers size={14} />}
-                            Apply
+                            {onBatch ? 'Re-apply' : 'Apply'}
                           </button>
                           <button
                             className="layer-profile-card__delete"

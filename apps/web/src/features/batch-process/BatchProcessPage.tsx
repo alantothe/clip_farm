@@ -76,7 +76,7 @@ type PhraseAction =
 
 type LayerProfileAction =
   | { kind: 'save'; name: string; titleIds: string[]; mediaIds: string[] }
-  | { kind: 'apply'; profile: LayerProfile }
+  | { kind: 'apply'; profile: LayerProfile; mode: 'add' | 'replace' }
   | { kind: 'delete'; profile: LayerProfile }
 
 type SequenceEdit =
@@ -370,6 +370,20 @@ export function BatchProcessPage() {
     selectedShotId,
   })
   const layerProfileAtMs = Math.max(0, Math.min(playheadMs, player.totalMs))
+  // Which profiles this Batch is already wearing, and how much a Replace would
+  // take off it. Layers written by hand are untagged and are never counted,
+  // because a Replace leaves them where they are (ADR 0013).
+  const appliedProfileIds = new Set(
+    [...titles, ...media]
+      .map((layer) => layer.applied_profile_id)
+      .filter((id): id is string => id !== null),
+  )
+  const appliedLayerCount = [...titles, ...media].filter(
+    (layer) => layer.applied_profile_id !== null,
+  ).length
+  const appliedProfileNames = layerProfiles
+    .filter((profile) => appliedProfileIds.has(profile.id))
+    .map((profile) => profile.name)
   // A Clip can be placed more than once, so this counts rather than flags.
   const placedCounts = shots.reduce(
     (counts, shot) => counts.set(shot.clip_id, (counts.get(shot.clip_id) ?? 0) + 1),
@@ -628,7 +642,9 @@ export function BatchProcessPage() {
           media_ids: action.mediaIds,
         })
       }
-      if (action.kind === 'apply') return api.applyLayerProfile(batchId!, action.profile.id)
+      if (action.kind === 'apply') {
+        return api.applyLayerProfile(batchId!, action.profile.id, action.mode)
+      }
       return api.deleteLayerProfile(action.profile.id)
     },
     onSuccess: (result, action) => {
@@ -1312,6 +1328,11 @@ export function BatchProcessPage() {
             return item.start_ms <= layerProfileAtMs && item.end_ms > layerProfileAtMs
           })}
           playheadMs={layerProfileAtMs}
+          applied={{
+            profileIds: appliedProfileIds,
+            names: appliedProfileNames,
+            layerCount: appliedLayerCount,
+          }}
           pending={layerProfileMutation.isPending}
           error={layerProfileMutation.error ?? layerProfilesQuery.error}
           onCancel={() => {
@@ -1321,7 +1342,7 @@ export function BatchProcessPage() {
           onSave={({ name, titleIds, mediaIds }) =>
             layerProfileMutation.mutate({ kind: 'save', name, titleIds, mediaIds })
           }
-          onApply={(profile) => layerProfileMutation.mutate({ kind: 'apply', profile })}
+          onApply={(profile, mode) => layerProfileMutation.mutate({ kind: 'apply', profile, mode })}
           onDelete={(profile) => layerProfileMutation.mutate({ kind: 'delete', profile })}
         />
       )}
