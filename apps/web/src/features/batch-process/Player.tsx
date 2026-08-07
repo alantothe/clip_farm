@@ -462,9 +462,9 @@ export function Player({
   titlePreview?: ({ titleId: string } & TitlePatch) | null
   /** An in-flight Shot framing edit, drawn while its slider is moving. */
   framingPreview?: ({ shotId: string } & ShotFraming) | null
-  onSelectTitle?: (titleId: string) => void
+  onSelectTitle?: (titleId: string, additive?: boolean) => void
   onEditTitle?: (title: Title, patch: TitlePatch) => void
-  onSelectMedia?: (mediaId: string) => void
+  onSelectMedia?: (mediaId: string, additive?: boolean) => void
   onEditMedia?: (media: BatchMedia, patch: BatchMediaPatch) => void
   onPreviewFraming?: (framing: ShotFraming | null) => void
   onCommitFraming?: (framing: ShotFraming) => void
@@ -730,7 +730,7 @@ export function Player({
               media={media}
               playheadMs={layerMs}
               selectedMediaId={selectedMediaId}
-              onSelect={(mediaId) => onSelectMedia?.(mediaId)}
+              onSelect={(mediaId, additive) => onSelectMedia?.(mediaId, additive)}
               onEdit={(item, patch) => onEditMedia?.(item, patch)}
               editable={Boolean(onEditMedia)}
             />
@@ -768,7 +768,7 @@ export function Player({
               catalog={fontCatalog}
               playheadMs={layerMs}
               selectedTitleId={selectedTitleId}
-              onSelect={(titleId) => onSelectTitle?.(titleId)}
+              onSelect={(titleId, additive) => onSelectTitle?.(titleId, additive)}
               onEdit={(title, patch) => onEditTitle?.(title, patch)}
               editable={Boolean(onEditTitle)}
             />

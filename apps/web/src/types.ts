@@ -400,6 +400,8 @@ export interface PublishOptions {
   share_to_feed?: boolean
   /** Instagram: which frame of the video becomes the Reels-tab cover. */
   thumb_offset_ms?: number | null
+  /** Instagram: a cropped image in Storage used instead of a video frame. */
+  cover_image_id?: string | null
 }
 
 /** One attempt to publish a Batch's Sequence Render to one Platform. */

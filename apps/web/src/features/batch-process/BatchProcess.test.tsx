@@ -160,9 +160,12 @@ test('opens the most recent batch and shows per-clip import progress', async () 
   expect(within(grid).getByRole('progressbar', { name: 'second import progress' }))
     .toHaveAttribute('aria-valuenow', '40')
 
-  // A clip that is still importing cannot be opened yet.
-  expect(within(grid).getByRole('button', { name: /second is still importing/ })).toBeDisabled()
-  expect(within(grid).getByRole('button', { name: /Edit first/ })).toBeEnabled()
+  // Import does not prevent selection or deletion staging, but placement and
+  // deletion remain unavailable until the files are no longer moving.
+  expect(within(grid).getByRole('button', { name: 'Select second' })).toBeEnabled()
+  expect(within(grid).getByRole('button', { name: 'Add second to the timeline' })).toBeDisabled()
+  expect(within(grid).getByRole('button', { name: 'Delete second' })).toBeDisabled()
+  expect(within(grid).getByRole('button', { name: 'Select first' })).toBeEnabled()
 })
 
 test('adds several videos to a batch in one upload', async () => {
@@ -507,6 +510,123 @@ test('an imported clip waits off the timeline until it is added', async () => {
   )
 })
 
+test('previews clips in a closeable modal, then adds the preserved selection in list order', async () => {
+  const previewable = sequencedBatch({
+    clips: [
+      makeClip({
+        id: 'clip-ready',
+        title: 'first',
+        artifacts: [{
+          id: 'preview-first',
+          kind: 'preview',
+          mime_type: 'video/mp4',
+          size_bytes: 1024,
+          url: '/api/media/first-preview.mp4',
+        }],
+      }),
+      secondClip,
+    ],
+  })
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': previewable,
+    'POST /api/batches/batch-1/shots': previewable,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const first = await screen.findByRole('button', { name: 'Select first' })
+  fireEvent.click(first)
+  expect(screen.getByTestId('location')).toHaveTextContent('/modes/batch-process/batches/batch-1')
+  expect(screen.getByRole('dialog', { name: 'first' })).toBeVisible()
+  expect(screen.getByLabelText('first preview')).toHaveAttribute(
+    'src',
+    '/api/media/first-preview.mp4',
+  )
+  expect(screen.getByRole('button', { name: 'Close video preview' })).toHaveFocus()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit video' }))
+  expect(screen.getByTestId('location')).toHaveTextContent(
+    '/modes/batch-process/batches/batch-1/clips/clip-ready',
+  )
+
+  // The preview is still the way back to editing after selection was added.
+  fireEvent.click(screen.getByRole('button', { name: /Add videos/ }))
+  expect(screen.getByRole('dialog', { name: 'first' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Close video preview' }))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  // Closing the viewer does not throw away the staging selection.
+  expect(screen.getByRole('button', { name: 'Deselect first' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'Select second' }))
+  expect(screen.getByRole('dialog', { name: 'second' })).toBeVisible()
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Deselect first' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(screen.getByRole('button', { name: 'Deselect second' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Add 2' }))
+
+  await waitFor(() => {
+    const calls = fetchMock.mock.calls.filter(([path, init]) =>
+      String(path) === '/api/batches/batch-1/shots' && init?.method === 'POST')
+    expect(calls).toHaveLength(2)
+    expect(calls.map(([, init]) => init?.body)).toEqual([
+      JSON.stringify({ clip_id: 'clip-ready' }),
+      JSON.stringify({ clip_id: 'clip-second' }),
+    ])
+  })
+})
+
+test('deletes one clip from its row or several clips from the selection bar after confirmation', async () => {
+  const current = sequencedBatch()
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': current,
+    'DELETE /api/projects/clip-ready': { deleted: 1 },
+    'DELETE /api/projects/clip-second': { deleted: 1 },
+  })
+
+  const firstRender = renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Delete first' }))
+  expect(screen.getByRole('dialog')).toHaveTextContent('Delete this video?')
+  fireEvent.click(screen.getByRole('button', { name: 'Delete video' }))
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/clip-ready',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+
+  firstRender.unmount()
+  fetchMock.mockClear()
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Select first' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Close video preview' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Select second' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Close video preview' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Delete 2 selected videos' }))
+  const dialog = screen.getByRole('dialog', { name: 'Delete 2 videos?' })
+  expect(dialog).toHaveTextContent('Delete 2 videos?')
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete selected' }))
+
+  await waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/clip-ready',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/clip-second',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+  })
+})
+
 test('draws each shot as wide as it is long, and names it', async () => {
   stubApi({ 'GET /api/batches/batch-1': placed })
 
@@ -594,6 +714,55 @@ test('adds an image beside text and places it across the full timeline', async (
     'src',
     '/api/batches/batch-1/media/media-1/file',
   )
+})
+
+test('Shift-selects text and media and removes both with Backspace', async () => {
+  Object.defineProperty(window, 'PointerEvent', {
+    configurable: true,
+    value: MouseEvent,
+  })
+  const current = { ...placed, titles: [sequenceTitle], media: [sequenceImage] }
+  const withoutTitle = { ...current, titles: [] }
+  const withoutLayers = { ...withoutTitle, media: [] }
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': current,
+    'GET /api/fonts': { families: [], faces: [] },
+    'DELETE /api/batches/batch-1/titles/title-1': withoutTitle,
+    'DELETE /api/batches/batch-1/media/media-1': withoutLayers,
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  const titleTrack = await screen.findByRole('list', { name: 'Titles' })
+  const mediaTrack = screen.getByRole('list', { name: 'Media' })
+  const title = within(titleTrack).getByRole('button', { name: /Follow for more/ })
+  const image = within(mediaTrack).getByRole('button', { name: /brand-mark.png/ })
+
+  fireEvent.pointerDown(title, { pointerId: 1, button: 0, clientX: 40 })
+  fireEvent.pointerUp(title, { pointerId: 1, clientX: 40 })
+  fireEvent.pointerDown(image, { pointerId: 2, button: 0, clientX: 40, shiftKey: true })
+  fireEvent.pointerUp(image, { pointerId: 2, clientX: 40, shiftKey: true })
+
+  expect(title).toHaveAttribute('aria-pressed', 'true')
+  expect(image).toHaveAttribute('aria-pressed', 'true')
+
+  fireEvent.keyDown(image, { key: 'Backspace' })
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/titles/title-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/media/media-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    ),
+  )
+  expect(within(titleTrack).queryByRole('button', { name: /Follow for more/ }))
+    .not.toBeInTheDocument()
+  expect(screen.queryByRole('list', { name: 'Media' })).not.toBeInTheDocument()
 })
 
 test('a full-length title and image hold the last frame of the sequence', async () => {
@@ -1201,6 +1370,51 @@ test('reset is offered only to a shot that has its own trim', async () => {
   expect(screen.getByRole('button', { name: "Reset first to its clip's trim" })).toBeDisabled()
 })
 
+test('turns unwanted automatic subtitles off from the selected shot', async () => {
+  const captioned = makeClip({
+    ...readyClip,
+    captions: [
+      {
+        id: 'caption-1',
+        sequence: 0,
+        start_ms: 0,
+        end_ms: 5000,
+        text: 'you Here',
+        edited: false,
+      },
+    ],
+  })
+  const current = sequencedBatch({
+    clips: [captioned, secondClip],
+    shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0 })],
+  })
+  const fetchMock = stubApi({
+    'GET /api/batches/batch-1': current,
+    'PATCH /api/projects/clip-ready': { ...captioned, captions_enabled: false },
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+  await selectShot(/first, shot 1 of 1/)
+
+  expect(screen.getByText('you Here')).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Turn subtitles off for first' }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/projects/clip-ready',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ captions_enabled: false }),
+      }),
+    ),
+  )
+  expect(screen.queryByText('you Here')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Turn subtitles on for first' })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+})
+
 test('removing a shot leaves the clip in the batch, and offers an undo', async () => {
   const trimmed = sequencedBatch({
     shots: [makeShot({ id: 'shot-1', clip_id: 'clip-ready', position: 0, trim_start_ms: 500 })],
@@ -1219,7 +1433,7 @@ test('removing a shot leaves the clip in the batch, and offers an undo', async (
     ),
   )
   // Still in the grid, ready to add back.
-  expect(screen.getByRole('button', { name: 'Edit first' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Select first' })).toBeVisible()
 
   // Removing is the one gesture that discards a trim a re-drag would not
   // restore, so undo puts the shot back where it was, trimmed as it was.

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  Captions,
   ChevronLeft,
   ChevronRight,
   MoveHorizontal,
@@ -32,6 +33,7 @@ export function ShotInspector({
   onTrim,
   onPreviewFraming,
   onFrame,
+  onToggleSubtitles,
   onRemove,
   busy,
 }: {
@@ -45,6 +47,8 @@ export function ShotInspector({
   onTrim: (shot: Shot | Cutaway, trim: ShotTrim) => void
   onPreviewFraming: (framing: ShotFraming | null) => void
   onFrame: (shot: Shot | Cutaway, framing: ShotFraming) => void
+  /** Subtitles belong to the Clip, so this changes every placement of it. */
+  onToggleSubtitles: (enabled: boolean) => void
   onRemove: (shot: Shot | Cutaway) => void
   busy: boolean
 }) {
@@ -228,6 +232,21 @@ export function ShotInspector({
           <RotateCcw size={14} />
         </button>
       </div>
+
+      {!covering && (
+        <button
+          className={`shot-inspector__subtitles ${clip.captions_enabled ? 'is-on' : ''}`}
+          type="button"
+          onClick={() => onToggleSubtitles(!clip.captions_enabled)}
+          disabled={busy}
+          aria-pressed={clip.captions_enabled}
+          aria-label={`${clip.captions_enabled ? 'Turn subtitles off' : 'Turn subtitles on'} for ${clip.title}`}
+          title="Automatic subtitles for every shot using this video"
+        >
+          <Captions size={14} />
+          Subtitles {clip.captions_enabled ? 'on' : 'off'}
+        </button>
+      )}
 
       <span className="shot-inspector__actions">
         {/* A Cutaway has no place in the running order to move it along. */}

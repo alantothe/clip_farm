@@ -44,7 +44,7 @@ export function MediaStage({
   media: BatchMedia[]
   playheadMs: number
   selectedMediaId: string | null
-  onSelect: (mediaId: string) => void
+  onSelect: (mediaId: string, additive?: boolean) => void
   onEdit: (media: BatchMedia, patch: BatchMediaPatch) => void
   editable: boolean
 }) {
@@ -70,7 +70,7 @@ export function MediaStage({
     event.stopPropagation()
     event.currentTarget.setPointerCapture?.(event.pointerId)
     gesture.current = next
-    onSelect(next.mediaId)
+    onSelect(next.mediaId, event.shiftKey)
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLElement>) {

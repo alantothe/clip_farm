@@ -3,6 +3,7 @@ import type { BatchSummary, Project } from '../types'
 
 export type DeleteIntent =
   | { kind: 'project'; project: Project }
+  | { kind: 'projects'; projects: Project[] }
   | { kind: 'all'; count: number }
   | { kind: 'batch'; batch: BatchSummary }
 
@@ -15,6 +16,15 @@ type Copy = {
 }
 
 function copyFor(intent: DeleteIntent): Copy {
+  if (intent.kind === 'projects') {
+    return {
+      title: `Delete ${intent.projects.length} videos?`,
+      subject: `${intent.projects.length} selected videos`,
+      possessive: 'their',
+      keep: 'Keep videos',
+      confirm: 'Delete selected',
+    }
+  }
   if (intent.kind === 'all') {
     return {
       title: 'Clear every video?',

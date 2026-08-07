@@ -21,6 +21,7 @@ from app.models import (
     Publication,
     Render,
     SequencePublication,
+    StoredImage,
 )
 from app.publishers import PublishError, check_account, get_publisher
 from app.publishers.targets import video_for_render, video_for_sequence_render
@@ -159,6 +160,18 @@ def publish_sequence(
         caption, options = publisher.prepare_post(payload.caption, payload.options)
     except PublishError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    # A Cover Image is selected from local Storage. Catch a stale/deleted id
+    # before the background worker hands Instagram a signed URL that returns
+    # 404, where the useful cause would be hidden behind a container failure.
+    cover_image_id = options.get("cover_image_id")
+    if cover_image_id:
+        cover_image = session.get(StoredImage, cover_image_id)
+        if not cover_image or not Path(cover_image.path).is_file():
+            raise HTTPException(
+                status_code=422,
+                detail="The selected cover image is no longer in Storage",
+            )
 
     publication = session.scalar(
         select(SequencePublication).where(

@@ -40,10 +40,10 @@ was that adding a destination is a module plus a registry entry.
 
 `prepare_post(caption, options)` joins it, for the same reason in the other direction. Instagram's
 caption limits are 2,200 characters, 30 hashtags, and 20 @mentions; its options are a cover frame
-and whether the Reel also goes to the feed. None of that is true of YouTube. The route validates
-the one field every Platform shares — the Caption exists everywhere — and the publisher narrows the
-rest. A Clip's post goes through the same call, so the two paths cannot drift into different rules
-for the same API.
+or cover image and whether the Reel also goes to the feed. None of that is true of YouTube. The
+route validates the one field every Platform shares — the Caption exists everywhere — and the
+publisher narrows the rest. A Clip's post goes through the same call, so the two paths cannot drift
+into different rules for the same API.
 
 ## Platform options are JSON, not columns
 
@@ -57,12 +57,23 @@ The Caption stays a column. Every Platform posts text beside the video, and bury
 operator actually writes in inside a JSON blob would make the one universal thing the hardest to
 query.
 
+## Instagram cover images
+
+The publishing form accepts either a Cover Frame or a Cover Image. The browser crops an uploaded
+image to the Format's exact 1080×1920 shape and saves that JPEG in Storage. Its id travels in the
+Publication's options. Publishing makes a separate, post-only copy of the Sequence Render, replaces
+its first video frame with that image, serves the copy through a signed route, and sends
+`thumb_offset=0`. The frozen Sequence Render and its download stay unchanged. This deliberately
+uses the same in-video frame path as the frame selector: the connected Instagram API accepted a
+separate `cover_url` but did not apply it to the published Reel.
+
 ## What Instagram accepts that Clip Farm still does not send
 
 Checked against the Reels container API at the time of writing. Sent: `video_url`, `caption`,
-`share_to_feed`, `thumb_offset`. Available and deliberately not built yet: `cover_url` (needs a
-second signed route serving an image), `collaborators` (up to 3 usernames), `audio_name` (settable
-exactly once, ever), `is_ai_generated`, `user_tags` (usernames plus x/y coordinates, which needs a
+`share_to_feed`, `thumb_offset`. Available and deliberately not used: `cover_url`, which was
+accepted but not applied by the connected Instagram API. Available and deliberately not built yet:
+`collaborators` (up to 3 usernames), `audio_name` (settable exactly once, ever),
+`is_ai_generated`, `user_tags` (usernames plus x/y coordinates, which needs a
 click-to-place interaction on the preview and is Instagram-only). Not available at all:
 `alt_text`, which Reels do not take, and the branded-content fields, which require Facebook Login
 where this app connects through Instagram Login.

@@ -8,13 +8,17 @@ They live here now.
 from __future__ import annotations
 
 import re
+import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sqlalchemy.orm import object_session
+
 from app.config import get_settings
+from app.models import StoredImage
 from app.publishers.base import (
     AccountNotReady,
     PostRejected,
@@ -36,6 +40,7 @@ from app.services.instagram import (
     refresh_long_lived_token,
     sign_media_url,
 )
+from app.services.media import run_command
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from sqlalchemy.orm import Session
@@ -77,6 +82,7 @@ class InstagramOptions:
 
     share_to_feed: bool = True
     thumb_offset_ms: int | None = None
+    cover_image_id: str | None = None
 
 
 def _options(publication) -> InstagramOptions:
@@ -86,9 +92,11 @@ def _options(publication) -> InstagramOptions:
             share_to_feed=bool(getattr(publication, "share_to_feed", True))
         )
     offset = raw.get("thumb_offset_ms")
+    cover_image_id = raw.get("cover_image_id")
     return InstagramOptions(
         share_to_feed=bool(raw.get("share_to_feed", True)),
         thumb_offset_ms=int(offset) if isinstance(offset, (int, float)) else None,
+        cover_image_id=cover_image_id if isinstance(cover_image_id, str) else None,
     )
 
 
@@ -102,6 +110,59 @@ def _cover_offset(offset_ms: int | None, video: PostableVideo) -> int | None:
         return None
     last_frame = max(0, (video.duration_ms or 0) - 1)
     return min(max(0, int(offset_ms)), last_frame)
+
+
+def embed_cover_as_first_frame(video: Path, cover: Path, output: Path) -> None:
+    """Make a post-only video whose first picture is the chosen Cover Image.
+
+    Instagram has proved more dependable at selecting a frame inside the Reel
+    than at honoring a separate `cover_url`. Audio and timing stay untouched;
+    only output video frame zero is replaced, which makes `thumb_offset=0` the
+    same reliable path as the existing frame picker.
+    """
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(".tmp.mp4")
+    temporary.unlink(missing_ok=True)
+    try:
+        run_command(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(video),
+                "-loop",
+                "1",
+                "-i",
+                str(cover),
+                "-filter_complex",
+                (
+                    "[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+                    "pad=1080:1920:(ow-iw)/2:(oh-ih)/2[cover];"
+                    "[0:v][cover]overlay=enable=eq(n\\,0):shortest=1[v]"
+                ),
+                "-map",
+                "[v]",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(temporary),
+            ]
+        )
+        temporary.replace(output)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        temporary.unlink(missing_ok=True)
+        raise PublishError("The custom cover could not be added to the Reel") from exc
 
 
 def _now() -> datetime:
@@ -145,10 +206,21 @@ class InstagramPublisher:
         offset = options.get("thumb_offset_ms")
         if offset is not None and (not isinstance(offset, (int, float)) or offset < 0):
             raise PostRejected("The cover frame has to be a time inside the video")
-        return text, {
+        cover_image_id = options.get("cover_image_id")
+        if cover_image_id is not None and (
+            not isinstance(cover_image_id, str)
+            or not re.fullmatch(r"[a-zA-Z0-9-]{1,100}", cover_image_id)
+        ):
+            raise PostRejected("The cover image is not valid")
+        prepared = {
             "share_to_feed": bool(options.get("share_to_feed", True)),
-            "thumb_offset_ms": int(offset) if offset is not None else None,
+            "thumb_offset_ms": (
+                int(offset) if offset is not None and cover_image_id is None else None
+            ),
         }
+        if cover_image_id is not None:
+            prepared["cover_image_id"] = cover_image_id
+        return text, prepared
 
     def check_video(self, video: PostableVideo) -> None:
         if not video.path or not Path(video.path).is_file():
@@ -186,19 +258,54 @@ class InstagramPublisher:
             f"?expires={expires}&signature={signature}"
         )
 
+    def _signed_publication_video_url(self, publication) -> str:
+        expires = int(time.time()) + settings.instagram_media_url_ttl_seconds
+        signature = sign_media_url(
+            publication.id, expires, settings.token_encryption_key or ""
+        )
+        return (
+            f"{settings.external_base_url}{settings.api_prefix}/media/instagram/publications/"
+            f"{publication.id}"
+            f"?expires={expires}&signature={signature}"
+        )
+
+    def _video_with_embedded_cover(self, context: PublishContext, image_id: str) -> str:
+        publication = context.publication
+        session = object_session(publication)
+        batch_id = getattr(publication, "batch_id", None)
+        if session is None or not batch_id or not context.video.path:
+            raise PublishError("The custom cover is not available for this Reel")
+        image = session.get(StoredImage, image_id)
+        if not image or not Path(image.path).is_file():
+            raise PublishError("The selected cover image is no longer in Storage")
+        output = (
+            settings.batches_dir
+            / batch_id
+            / "publications"
+            / f"{publication.id}.mp4"
+        )
+        context.report(8, "Adding custom cover to Reel")
+        embed_cover_as_first_frame(Path(context.video.path), Path(image.path), output)
+        return self._signed_publication_video_url(publication)
+
     def publish(self, context: PublishContext) -> PublishResult:
         publication = context.publication
         token = context.access_token
         options = _options(publication)
+        video_url = self._signed_media_url(context.video)
+        cover_offset = _cover_offset(options.thumb_offset_ms, context.video)
+        if options.cover_image_id:
+            video_url = self._video_with_embedded_cover(context, options.cover_image_id)
+            cover_offset = 0
 
         context.report(12, "Sending video to Instagram")
         container_id = create_reel_container(
             remote_user_id=context.account.remote_user_id,
             access_token=token,
-            video_url=self._signed_media_url(context.video),
+            video_url=video_url,
             caption=publication.caption,
             share_to_feed=options.share_to_feed,
-            thumb_offset_ms=_cover_offset(options.thumb_offset_ms, context.video),
+            thumb_offset_ms=cover_offset,
             settings=settings,
         )
         # Persisted before the poll loop so a later failure still records which

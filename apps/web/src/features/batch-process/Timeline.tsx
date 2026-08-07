@@ -208,8 +208,8 @@ export function Timeline({
   titles,
   media,
   selectedShotId,
-  selectedTitleId,
-  selectedMediaId,
+  selectedTitleIds,
+  selectedMediaIds,
   placingClipId,
   playheadMs,
   onScrub,
@@ -237,14 +237,14 @@ export function Timeline({
   titles: Title[]
   media: BatchMedia[]
   selectedShotId: string | null
-  selectedTitleId: string | null
-  selectedMediaId: string | null
+  selectedTitleIds: string[]
+  selectedMediaIds: string[]
   placingClipId: string | null
   playheadMs: number
   onScrub: (ms: number) => void
   onSelect: (shotId: string | null) => void
-  onSelectTitle: (titleId: string | null) => void
-  onSelectMedia: (mediaId: string | null) => void
+  onSelectTitle: (titleId: string | null, additive?: boolean) => void
+  onSelectMedia: (mediaId: string | null, additive?: boolean) => void
   onMove: (shot: Shot, position: number) => void
   onTrim: (shot: Shot, trim: ShotTrim) => void
   onRemove: (shot: Shot | Cutaway) => void
@@ -637,7 +637,7 @@ export function Timeline({
               Shot is underneath (ADR 0008). */}
           <TitleTrack
             titles={titles}
-            selectedTitleId={selectedTitleId}
+            selectedTitleIds={selectedTitleIds}
             pxPerSec={pxPerSec}
             totalMs={totalMs}
             onSelect={onSelectTitle}
@@ -650,7 +650,7 @@ export function Timeline({
           {media.length > 0 && (
             <MediaTrack
               media={media}
-              selectedMediaId={selectedMediaId}
+              selectedMediaIds={selectedMediaIds}
               pxPerSec={pxPerSec}
               totalMs={totalMs}
               onSelect={onSelectMedia}

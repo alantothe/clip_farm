@@ -99,7 +99,7 @@ export function XToVerticalPage({ createNew = false }: { createNew?: boolean }) 
       throw new Error('The X mode does not delete batches')
     },
     onSuccess: (_result, intent) => {
-      if (intent.kind === 'batch') return
+      if (intent.kind === 'batch' || intent.kind === 'projects') return
       const nextProjects = intent.kind === 'all'
         ? []
         : projects.filter((project) => project.id !== intent.project.id)

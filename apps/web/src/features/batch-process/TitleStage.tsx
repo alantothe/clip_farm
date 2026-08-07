@@ -59,7 +59,7 @@ export function TitleStage({
   catalog: FontCatalog | null
   playheadMs: number
   selectedTitleId: string | null
-  onSelect: (titleId: string) => void
+  onSelect: (titleId: string, additive?: boolean) => void
   onEdit: (title: Title, patch: TitlePatch) => void
   /** False in the Source view, which shows the whole frame and burns nothing. */
   editable: boolean
@@ -85,7 +85,7 @@ export function TitleStage({
     // capture, and a drag it cannot claim is still a drag worth following.
     event.currentTarget.setPointerCapture?.(event.pointerId)
     gesture.current = next
-    onSelect(next.titleId)
+    onSelect(next.titleId, event.shiftKey)
   }
 
   function onPointerMove(event: React.PointerEvent<HTMLElement>) {

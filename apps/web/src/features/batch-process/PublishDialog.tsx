@@ -3,6 +3,7 @@ import {
   Check,
   ExternalLink,
   Image as ImageIcon,
+  ImagePlus,
   LoaderCircle,
   RefreshCw,
   RotateCcw,
@@ -21,6 +22,7 @@ import type {
   SequencePublication,
   SequenceRender,
 } from '../../types'
+import { CoverImageCropper } from './CoverImageCropper'
 
 /** Instagram's caption limits, counted the way the API counts them. */
 const MAX_CAPTION = 2200
@@ -122,6 +124,13 @@ export function PublishDialog({
   const [coverMs, setCoverMs] = useState<number | null>(
     () => publications[0]?.options?.thumb_offset_ms ?? null,
   )
+  const [coverImageId, setCoverImageId] = useState<string | null>(
+    () => publications[0]?.options?.cover_image_id ?? null,
+  )
+  const [coverMode, setCoverMode] = useState<'frame' | 'image'>(() =>
+    publications[0]?.options?.cover_image_id ? 'image' : 'frame',
+  )
+  const [coverEditorOpen, setCoverEditorOpen] = useState(false)
   const [rewriteError, setRewriteError] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
 
@@ -131,14 +140,16 @@ export function PublishDialog({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape' && !coverEditorOpen) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [coverEditorOpen, onClose])
 
   const stats = captionStats(caption)
   const captionIsBad = stats.overLength || stats.overHashtags || stats.overMentions
+  const coverImageMissing =
+    selected.includes('instagram') && coverMode === 'image' && coverImageId == null
   // The API compares the export against when the Batch was last edited, so a
   // retrim, a reframe, a Title or an image all count — not only a Shot added
   // or removed, which is all a Shot count could ever notice.
@@ -161,7 +172,11 @@ export function PublishDialog({
   }
 
   const post = () => {
-    const options: PublishOptions = { share_to_feed: shareToFeed, thumb_offset_ms: coverMs }
+    const options: PublishOptions = {
+      share_to_feed: shareToFeed,
+      thumb_offset_ms: coverMode === 'frame' ? coverMs : null,
+      cover_image_id: coverMode === 'image' ? coverImageId : null,
+    }
     for (const platform of chosen) onPublish(platform.id, caption, options)
     setStep('posting')
   }
@@ -370,36 +385,97 @@ export function PublishDialog({
                     <div className="publish-cover">
                       <div className="publish-cover__copy">
                         <strong>
-                          <ImageIcon size={14} /> Cover frame
+                          <ImageIcon size={14} /> Cover
                         </strong>
-                        <small>
+                        <small>Choose a frame from the video or upload your own image.</small>
+                      </div>
+                    </div>
+                    <div className="publish-cover__modes" role="group" aria-label="Cover source">
+                      <button
+                        type="button"
+                        className={coverMode === 'frame' ? 'is-active' : ''}
+                        aria-pressed={coverMode === 'frame'}
+                        onClick={() => setCoverMode('frame')}
+                      >
+                        Video frame
+                      </button>
+                      <button
+                        type="button"
+                        className={coverMode === 'image' ? 'is-active' : ''}
+                        aria-pressed={coverMode === 'image'}
+                        onClick={() => setCoverMode('image')}
+                      >
+                        Add image
+                      </button>
+                    </div>
+                    {coverMode === 'frame' ? (
+                      <div className="publish-cover__choice">
+                        <span>
                           {coverMs == null
                             ? 'Instagram picks the first frame.'
                             : `Showing the frame at ${formatTime(coverMs)}.`}
-                        </small>
-                      </div>
-                      <div className="publish-cover__actions">
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() =>
-                            setCoverMs(Math.round((videoRef.current?.currentTime ?? 0) * 1000))
-                          }
-                        >
-                          Use current frame
-                        </button>
-                        {coverMs != null && (
+                        </span>
+                        <div className="publish-cover__actions">
                           <button
                             type="button"
-                            className="publish-cover__reset"
-                            onClick={() => setCoverMs(null)}
-                            aria-label="Clear the cover frame"
+                            className="secondary-button"
+                            onClick={() =>
+                              setCoverMs(Math.round((videoRef.current?.currentTime ?? 0) * 1000))
+                            }
                           >
-                            <RotateCcw size={14} />
+                            Use current frame
                           </button>
-                        )}
+                          {coverMs != null && (
+                            <button
+                              type="button"
+                              className="publish-cover__reset"
+                              onClick={() => setCoverMs(null)}
+                              aria-label="Clear the cover frame"
+                            >
+                              <RotateCcw size={14} />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    ) : coverImageId ? (
+                      <div className="publish-cover__image-choice">
+                        <img
+                          src={`${API_BASE}/api/storage/images/${coverImageId}/file`}
+                          alt="Cropped Instagram cover"
+                        />
+                        <span>
+                          <strong>Custom cover ready</strong>
+                          <small>1080 × 1920 · inserted as frame 0 when posting</small>
+                        </span>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => setCoverEditorOpen(true)}
+                        >
+                          Replace
+                        </button>
+                        <button
+                          type="button"
+                          className="publish-cover__reset"
+                          onClick={() => setCoverImageId(null)}
+                          aria-label="Remove the cover image"
+                        >
+                          <RotateCcw size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        className="publish-cover__add"
+                        type="button"
+                        onClick={() => setCoverEditorOpen(true)}
+                      >
+                        <ImagePlus size={18} />
+                        <span>
+                          <strong>Add and crop image</strong>
+                          <small>Exports at the exact 1080 × 1920 cover size</small>
+                        </span>
+                      </button>
+                    )}
                     <label className="publish-toggle">
                       <input
                         type="checkbox"
@@ -518,7 +594,7 @@ export function PublishDialog({
               <button
                 className="primary-button"
                 type="button"
-                disabled={captionIsBad || publishing.length > 0}
+                disabled={captionIsBad || coverImageMissing || publishing.length > 0}
                 onClick={post}
               >
                 {publishing.length ? (
@@ -546,6 +622,16 @@ export function PublishDialog({
           )}
         </footer>
       </section>
+      {coverEditorOpen && (
+        <CoverImageCropper
+          onCancel={() => setCoverEditorOpen(false)}
+          onChoose={(image) => {
+            setCoverImageId(image.id)
+            setCoverMode('image')
+            setCoverEditorOpen(false)
+          }}
+        />
+      )}
     </div>
   )
 }

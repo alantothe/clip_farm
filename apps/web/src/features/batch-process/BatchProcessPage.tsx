@@ -81,6 +81,7 @@ type LayerProfileAction =
 
 type SequenceEdit =
   | { kind: 'add'; clipId: string; position?: number; trim?: ShotTrim; framing?: ShotFraming }
+  | { kind: 'add-many'; clipIds: string[]; position?: number }
   | { kind: 'remove'; shotId: string }
   | { kind: 'move'; shotId: string; position: number }
   | { kind: 'trim'; shotId: string; trim: ShotTrim }
@@ -124,7 +125,7 @@ export function trimCutawayEdit(cutaway: Cutaway, clip: Project, trim: ShotTrim)
  * `add` is not predicted — only the server can name the new Shot.
  */
 export function applySequenceEdit(batch: Batch, edit: SequenceEdit): Batch {
-  if (edit.kind === 'add' || edit.kind === 'cover') return batch
+  if (edit.kind === 'add' || edit.kind === 'add-many' || edit.kind === 'cover') return batch
 
   if (edit.kind === 'uncover') {
     return { ...batch, cutaways: batch.cutaways.filter((item) => item.id !== edit.cutawayId) }
@@ -277,16 +278,24 @@ export function BatchProcessPage() {
   const [rejected, setRejected] = useState<string[]>([])
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
   const [placingClipId, setPlacingClipId] = useState<string | null>(null)
+  const [placingClipIds, setPlacingClipIds] = useState<string[]>([])
+  // A bin selection is intentionally separate from Timeline selection. It is
+  // a staging set: clicking more Clips builds one add or delete action, while
+  // the last selected Clip can open in the full preview dialog.
+  const [selectedClipIds, setSelectedClipIds] = useState<string[]>([])
+  const [previewClipId, setPreviewClipId] = useState<string | null>(null)
   // Removing is the one gesture that loses work a re-drag would not restore:
   // the Shot's own trim goes with it. So it, alone, offers an undo.
   const [undoRemoval, setUndoRemoval] = useState<{ shot: Shot; title: string } | null>(null)
   const [playheadMs, setPlayheadMs] = useState(0)
   // A Batch's Format is chosen once, in a dialog, and never edited (ADR 0006).
   const [newBatchOpen, setNewBatchOpen] = useState(false)
-  // A Title's selection is its own: a Title is not a Shot, and selecting one
-  // should not make the Shot inspector's buttons act on something else.
-  const [selectedTitleId, setSelectedTitleId] = useState<string | null>(null)
-  const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null)
+  // Layers can be Shift-selected across both tracks. The last item in each
+  // list remains the primary one for direct manipulation and the inspector.
+  const [selectedTitleIds, setSelectedTitleIds] = useState<string[]>([])
+  const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([])
+  const selectedTitleId = selectedTitleIds[selectedTitleIds.length - 1] ?? null
+  const selectedMediaId = selectedMediaIds[selectedMediaIds.length - 1] ?? null
   const [addMediaOpen, setAddMediaOpen] = useState(false)
   const [layerProfilesOpen, setLayerProfilesOpen] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
@@ -456,6 +465,37 @@ export function BatchProcessPage() {
     },
   })
 
+  const subtitlesMutation = useMutation({
+    mutationFn: ({ clipId, enabled }: { clipId: string; enabled: boolean }) =>
+      api.updateProject(clipId, { captions_enabled: enabled }),
+    onMutate: async ({ clipId, enabled }) => {
+      await queryClient.cancelQueries({ queryKey: batchKey(batchId!) })
+      const previous = queryClient.getQueryData<Batch>(batchKey(batchId!))
+      if (previous) {
+        queryClient.setQueryData<Batch>(batchKey(batchId!), {
+          ...previous,
+          clips: previous.clips.map((clip) =>
+            clip.id === clipId ? { ...clip, captions_enabled: enabled } : clip,
+          ),
+        })
+      }
+      return { previous }
+    },
+    onError: (_error, _change, context) => {
+      if (context?.previous) queryClient.setQueryData(batchKey(batchId!), context.previous)
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData<Batch>(batchKey(batchId!), (current) =>
+        current
+          ? {
+              ...current,
+              clips: current.clips.map((clip) => (clip.id === updated.id ? updated : clip)),
+            }
+          : current,
+      )
+    },
+  })
+
   const sequenceMutation = useMutation({
     mutationFn: (edit: SequenceEdit) => {
       if (edit.kind === 'add') {
@@ -463,6 +503,17 @@ export function BatchProcessPage() {
           position: edit.position,
           ...edit.trim,
           ...edit.framing,
+        })
+      }
+      if (edit.kind === 'add-many') {
+        return edit.clipIds.reduce<Promise<Batch | null>>(async (previous, clipId, index) => {
+          await previous
+          return api.addShot(batchId!, clipId, {
+            ...(edit.position === undefined ? {} : { position: edit.position + index }),
+          })
+        }, Promise.resolve(null)).then((updated) => {
+          if (!updated) throw new Error('Select at least one video')
+          return updated
         })
       }
       if (edit.kind === 'remove') return api.removeShot(batchId!, edit.shotId)
@@ -507,9 +558,13 @@ export function BatchProcessPage() {
       if (context?.previous) queryClient.setQueryData(batchKey(batchId!), context.previous)
     },
     // Every Sequence edit returns the whole Batch, so one response is enough.
-    onSuccess: (updated) => {
+    onSuccess: (updated, edit) => {
       queryClient.setQueryData(batchKey(updated.id), updated)
       void queryClient.invalidateQueries({ queryKey: BATCHES_KEY })
+      if (edit.kind === 'add-many') {
+        setSelectedClipIds([])
+        setPreviewClipId(null)
+      }
     },
   })
 
@@ -546,7 +601,7 @@ export function BatchProcessPage() {
       // selected — and a Title added is a Title about to be typed into.
       if (edit.kind === 'add') {
         const added = updated.titles[updated.titles.length - 1]
-        if (added) setSelectedTitleId(added.id)
+        if (added) setSelectedTitleIds([added.id])
       }
     },
   })
@@ -585,15 +640,59 @@ export function BatchProcessPage() {
         const added = updated.media.find((item) => !previousIds.has(item.id))
         setAddMediaOpen(false)
         if (added) {
-          setSelectedMediaId(added.id)
+          setSelectedMediaIds([added.id])
           setSelectedShotId(null)
-          setSelectedTitleId(null)
+          setSelectedTitleIds([])
           setTitlePreview(null)
         }
       } else if (edit.kind === 'remove') {
-        setSelectedMediaId((current) => (current === edit.mediaId ? null : current))
+        setSelectedMediaIds((current) => current.filter((id) => id !== edit.mediaId))
       }
     },
+  })
+
+  const layerRemoveMutation = useMutation({
+    mutationFn: async ({
+      titleIds,
+      mediaIds,
+    }: {
+      titleIds: string[]
+      mediaIds: string[]
+    }) => {
+      let updated: Batch | null = null
+      // Keep these requests ordered. Each endpoint returns the whole Batch, so
+      // the final response is guaranteed to contain every preceding removal.
+      for (const titleId of titleIds) updated = await api.removeTitle(batchId!, titleId)
+      for (const mediaId of mediaIds) updated = await api.removeBatchMedia(batchId!, mediaId)
+      if (!updated) throw new Error('Select at least one text or media layer')
+      return updated
+    },
+    onMutate: async ({ titleIds, mediaIds }) => {
+      await queryClient.cancelQueries({ queryKey: batchKey(batchId!) })
+      const previous = queryClient.getQueryData<Batch>(batchKey(batchId!))
+      if (previous) {
+        const removedTitles = new Set(titleIds)
+        const removedMedia = new Set(mediaIds)
+        queryClient.setQueryData<Batch>(batchKey(batchId!), {
+          ...previous,
+          titles: previous.titles.filter((title) => !removedTitles.has(title.id)),
+          media: previous.media.filter((item) => !removedMedia.has(item.id)),
+        })
+      }
+      setSelectedTitleIds([])
+      setSelectedMediaIds([])
+      setTitlePreview(null)
+      return { previous }
+    },
+    onError: (_error, selection, context) => {
+      if (context?.previous) queryClient.setQueryData(batchKey(batchId!), context.previous)
+      setSelectedTitleIds(selection.titleIds)
+      setSelectedMediaIds(selection.mediaIds)
+      // A later request can fail after an earlier removal succeeded. Re-read
+      // the Batch so rollback reflects what the server actually committed.
+      void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) })
+    },
+    onSuccess: (updated) => queryClient.setQueryData(batchKey(updated.id), updated),
   })
 
   const styleMutation = useMutation<TitleStyle | { deleted: number }, Error, StyleAction>({
@@ -650,8 +749,8 @@ export function BatchProcessPage() {
     onSuccess: (result, action) => {
       if (action.kind === 'apply' && 'shots' in result) {
         queryClient.setQueryData(batchKey(result.id), result)
-        setSelectedTitleId(null)
-        setSelectedMediaId(null)
+        setSelectedTitleIds([])
+        setSelectedMediaIds([])
       }
       void queryClient.invalidateQueries({ queryKey: LAYER_PROFILES_KEY })
       if (action.kind !== 'delete') setLayerProfilesOpen(false)
@@ -711,9 +810,20 @@ export function BatchProcessPage() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (intent: DeleteIntent) => {
+    mutationFn: async (intent: DeleteIntent) => {
       if (intent.kind === 'batch') return api.deleteBatch(intent.batch.id)
       if (intent.kind === 'project') return api.deleteProject(intent.project.id)
+      if (intent.kind === 'projects') {
+        let deleted = 0
+        // Deleting a Clip may also shorten the Sequence and its end-bound
+        // layers. Ordered requests mean the final Batch refetch sees every
+        // preceding deletion committed.
+        for (const project of intent.projects) {
+          const result = await api.deleteProject(project.id)
+          deleted += result.deleted
+        }
+        return { deleted }
+      }
       throw new Error('Batch Process does not clear every clip at once')
     },
     onSuccess: (_result, intent) => {
@@ -725,9 +835,19 @@ export function BatchProcessPage() {
         navigate(next ? batchRoute(next.id) : '/modes/batch-process', { replace: true })
         return
       }
-      if (intent.kind !== 'project' || !batchId) return
+      if (intent.kind === 'projects') {
+        const removed = new Set(intent.projects.map((project) => project.id))
+        setSelectedClipIds((current) => current.filter((id) => !removed.has(id)))
+        setPreviewClipId((current) => (current && removed.has(current) ? null : current))
+      } else if (intent.kind === 'project') {
+        setSelectedClipIds((current) => current.filter((id) => id !== intent.project.id))
+        setPreviewClipId((current) => (current === intent.project.id ? null : current))
+      }
+      if ((intent.kind !== 'project' && intent.kind !== 'projects') || !batchId) return
       void queryClient.invalidateQueries({ queryKey: batchKey(batchId) })
-      if (clipId === intent.project.id) navigate(batchRoute(batchId), { replace: true })
+      if (intent.kind === 'project' && clipId === intent.project.id) {
+        navigate(batchRoute(batchId), { replace: true })
+      }
     },
   })
 
@@ -736,8 +856,12 @@ export function BatchProcessPage() {
   useEffect(() => {
     setRejected([])
     setSelectedShotId(null)
-    setSelectedTitleId(null)
-    setSelectedMediaId(null)
+    setSelectedClipIds([])
+    setPreviewClipId(null)
+    setPlacingClipId(null)
+    setPlacingClipIds([])
+    setSelectedTitleIds([])
+    setSelectedMediaIds([])
     setAddMediaOpen(false)
     setLayerProfilesOpen(false)
     setTitlePreview(null)
@@ -746,14 +870,14 @@ export function BatchProcessPage() {
     setPlayheadMs(0)
   }, [batchId])
 
-  // One selection at a time. A Shot and a Title are edited by different
-  // inspectors, and two open at once would leave the dock arguing with itself.
+  // Shots remain exclusive because their inspector edits a different kind of
+  // timeline item. Text and media layers can be selected together with Shift.
   function selectShot(shotId: string | null) {
     setSelectedShotId(shotId)
     setFramingPreview(null)
     if (!shotId) return
-    setSelectedTitleId(null)
-    setSelectedMediaId(null)
+    setSelectedTitleIds([])
+    setSelectedMediaIds([])
   }
 
   function previewSelectedFraming(framing: ShotFraming | null) {
@@ -780,21 +904,39 @@ export function BatchProcessPage() {
    * the playhead onto it is what makes the typing visible without the stage
    * having to lie about when the text plays.
    */
-  function selectTitle(titleId: string | null) {
-    setSelectedTitleId(titleId)
+  function selectTitle(titleId: string | null, additive = false) {
+    if (!titleId) {
+      setSelectedTitleIds([])
+      return
+    }
+    setSelectedTitleIds((current) =>
+      additive
+        ? current.includes(titleId)
+          ? current.filter((id) => id !== titleId)
+          : [...current, titleId]
+        : [titleId],
+    )
     setTitlePreview(null)
-    if (!titleId) return
     setSelectedShotId(null)
-    setSelectedMediaId(null)
+    if (!additive) setSelectedMediaIds([])
     const title = titles.find((item) => item.id === titleId)
     if (title && !titleIsVisible(title, playheadMs)) player.seek(title.start_ms)
   }
 
-  function selectMedia(mediaId: string | null) {
-    setSelectedMediaId(mediaId)
-    if (!mediaId) return
+  function selectMedia(mediaId: string | null, additive = false) {
+    if (!mediaId) {
+      setSelectedMediaIds([])
+      return
+    }
+    setSelectedMediaIds((current) =>
+      additive
+        ? current.includes(mediaId)
+          ? current.filter((id) => id !== mediaId)
+          : [...current, mediaId]
+        : [mediaId],
+    )
     setSelectedShotId(null)
-    setSelectedTitleId(null)
+    if (!additive) setSelectedTitleIds([])
     setTitlePreview(null)
     const item = media.find((entry) => entry.id === mediaId)
     if (item && (playheadMs < item.start_ms || playheadMs >= item.end_ms)) {
@@ -816,7 +958,7 @@ export function BatchProcessPage() {
   }
 
   function removeTimelineTitle(title: Title) {
-    setSelectedTitleId((current) => (current === title.id ? null : current))
+    setSelectedTitleIds((current) => current.filter((id) => id !== title.id))
     setTitlePreview(null)
     titleMutation.mutate({ kind: 'remove', titleId: title.id })
   }
@@ -830,7 +972,9 @@ export function BatchProcessPage() {
         event.repeat ||
         (event.key !== 'Delete' && event.key !== 'Backspace') ||
         sequenceMutation.isPending ||
-        titleMutation.isPending
+        titleMutation.isPending ||
+        mediaMutation.isPending ||
+        layerRemoveMutation.isPending
       ) {
         return
       }
@@ -849,10 +993,15 @@ export function BatchProcessPage() {
         removeTimelineItem(item)
         return
       }
-      const title = titles.find((entry) => entry.id === selectedTitleId)
-      if (title) {
+      const titleIds = titles
+        .filter((entry) => selectedTitleIds.includes(entry.id))
+        .map((entry) => entry.id)
+      const mediaIds = media
+        .filter((entry) => selectedMediaIds.includes(entry.id))
+        .map((entry) => entry.id)
+      if (titleIds.length || mediaIds.length) {
         event.preventDefault()
-        removeTimelineTitle(title)
+        layerRemoveMutation.mutate({ titleIds, mediaIds })
       }
     }
 
@@ -860,13 +1009,17 @@ export function BatchProcessPage() {
     return () => document.removeEventListener('keydown', removeSelected)
   }, [
     selectedShotId,
-    selectedTitleId,
+    selectedTitleIds,
+    selectedMediaIds,
     shots,
     cutaways,
     clips,
     titles,
+    media,
     sequenceMutation.isPending,
     titleMutation.isPending,
+    mediaMutation.isPending,
+    layerRemoveMutation.isPending,
   ])
 
   // With no batch in the URL, open the most recent one rather than a dead end.
@@ -889,6 +1042,33 @@ export function BatchProcessPage() {
   function askDeleteBatch(target: BatchSummary) {
     deleteMutation.reset()
     setDeleteIntent({ kind: 'batch', batch: target })
+  }
+
+  function toggleClipSelection(clip: Project) {
+    const isSelected = selectedClipIds.includes(clip.id)
+    setSelectedClipIds((current) =>
+      isSelected ? current.filter((id) => id !== clip.id) : [...current, clip.id],
+    )
+    if (isSelected) {
+      setPreviewClipId((previewId) => (previewId === clip.id ? null : previewId))
+    } else {
+      setPreviewClipId(clip.id)
+    }
+  }
+
+  function askDeleteClip(clip: Project) {
+    deleteMutation.reset()
+    setDeleteIntent({ kind: 'project', project: clip })
+  }
+
+  function askDeleteSelectedClips(selected: Project[]) {
+    if (!selected.length) return
+    deleteMutation.reset()
+    setDeleteIntent(
+      selected.length === 1
+        ? { kind: 'project', project: selected[0] }
+        : { kind: 'projects', projects: selected },
+    )
   }
 
   const batchList = (
@@ -1006,11 +1186,33 @@ export function BatchProcessPage() {
                   {clips.length > 0 ? (
                     <ClipGrid
                       clips={clips}
-                      onOpen={(clip) => navigate(clipRoute(batch.id, clip.id))}
+                      selectedIds={selectedClipIds}
+                      previewClipId={previewClipId}
+                      onToggle={toggleClipSelection}
+                      onClosePreview={() => setPreviewClipId(null)}
+                      onEdit={(clip) => navigate(clipRoute(batch.id, clip.id))}
                       onAdd={(clip) => sequenceMutation.mutate({ kind: 'add', clipId: clip.id })}
-                      onDragToTimeline={(clip) => setPlacingClipId(clip.id)}
+                      onAddSelected={(selected) =>
+                        sequenceMutation.mutate({
+                          kind: 'add-many',
+                          clipIds: selected.map((clip) => clip.id),
+                        })
+                      }
+                      onDragToTimeline={(clip) => {
+                        setPlacingClipId(clip.id)
+                        setPlacingClipIds(
+                          selectedClipIds.includes(clip.id)
+                            ? clips
+                                .filter((item) => selectedClipIds.includes(item.id))
+                                .map((item) => item.id)
+                            : [clip.id],
+                        )
+                      }}
+                      onDelete={askDeleteClip}
+                      onDeleteSelected={askDeleteSelectedClips}
                       placedCounts={placedCounts}
                       adding={sequenceMutation.isPending}
+                      deleting={deleteMutation.isPending}
                     />
                   ) : (
                     <p className="batch-empty">
@@ -1166,8 +1368,11 @@ export function BatchProcessPage() {
                 }
                 onPreviewFraming={previewSelectedFraming}
                 onFrame={(_shot, framing) => commitSelectedFraming(framing)}
+                onToggleSubtitles={(enabled) =>
+                  subtitlesMutation.mutate({ clipId: selectedClip.id, enabled })
+                }
                 onRemove={removeTimelineItem}
-                busy={sequenceMutation.isPending}
+                busy={sequenceMutation.isPending || subtitlesMutation.isPending}
               />
             )}
 
@@ -1212,8 +1417,10 @@ export function BatchProcessPage() {
             {sequenceMutation.error && (
               <div className="toast-error" role="alert">{sequenceMutation.error.message}</div>
             )}
-            {mediaMutation.error && !addMediaOpen && (
-              <div className="toast-error" role="alert">{mediaMutation.error.message}</div>
+            {(mediaMutation.error || layerRemoveMutation.error || subtitlesMutation.error) && !addMediaOpen && (
+              <div className="toast-error" role="alert">
+                {(mediaMutation.error ?? layerRemoveMutation.error ?? subtitlesMutation.error)?.message}
+              </div>
             )}
             <Timeline
               shots={shots}
@@ -1222,8 +1429,8 @@ export function BatchProcessPage() {
               titles={titles}
               media={media}
               selectedShotId={selectedShotId}
-              selectedTitleId={selectedTitleId}
-              selectedMediaId={selectedMediaId}
+              selectedTitleIds={selectedTitleIds}
+              selectedMediaIds={selectedMediaIds}
               placingClipId={placingClipId}
               playheadMs={playheadMs}
               onScrub={setPlayheadMs}
@@ -1250,9 +1457,14 @@ export function BatchProcessPage() {
                 sequenceMutation.mutate({ kind: 'trim', shotId: shot.id, trim })
               }
               onRemove={removeTimelineItem}
-              onPlace={(clipId, position) =>
-                sequenceMutation.mutate({ kind: 'add', clipId, position })
-              }
+              onPlace={(clipId, position) => {
+                const group = placingClipIds.includes(clipId) ? placingClipIds : [clipId]
+                sequenceMutation.mutate(
+                  group.length > 1
+                    ? { kind: 'add-many', clipIds: group, position }
+                    : { kind: 'add', clipId, position },
+                )
+              }}
               onMoveCutaway={(cutaway, baseShotId, offsetMs) =>
                 sequenceMutation.mutate({
                   kind: 'anchor',
@@ -1268,9 +1480,15 @@ export function BatchProcessPage() {
               onPlaceCutaway={(clipId, baseShotId, offsetMs) =>
                 sequenceMutation.mutate({ kind: 'cover', clipId, baseShotId, offsetMs })
               }
-              onPlaceEnd={() => setPlacingClipId(null)}
+              onPlaceEnd={() => {
+                setPlacingClipId(null)
+                setPlacingClipIds([])
+              }}
               busy={
-                sequenceMutation.isPending || titleMutation.isPending || mediaMutation.isPending
+                sequenceMutation.isPending ||
+                titleMutation.isPending ||
+                mediaMutation.isPending ||
+                layerRemoveMutation.isPending
               }
             />
           </div>

@@ -144,14 +144,20 @@ Platform, each posting, failing, and retrying on its own.
 _Avoid_: post, upload, publish
 
 **Publish Options**:
-What one Platform is told beyond the Caption — Instagram's cover frame and whether the Reel also
-reaches the feed. They belong to a Publication rather than to the Batch, because they are what a
-Platform asks for rather than anything about the edit, and no two Platforms ask the same.
+What one Platform is told beyond the Caption — Instagram's cover frame or cover image and whether
+the Reel also reaches the feed. They belong to a Publication rather than to the Batch, because they
+are what a Platform asks for rather than anything about the edit, and no two Platforms ask the same.
 _Avoid_: settings, metadata, post config
 
 **Cover Frame**:
 The moment in a Sequence Render that a Platform shows as the video's still image. Chosen as a time,
-not an uploaded picture, so it always comes from the video being posted.
+and therefore always comes from the video being posted. A Platform may use this or a Cover Image,
+but never both for one Publication.
+_Avoid_: thumbnail, poster, preview image
+
+**Cover Image**:
+A still picture uploaded, cropped to the Format, and sent to a Platform as a Publication's cover.
+It is saved to Storage so it can be reused. A Cover Image replaces the Cover Frame when selected.
 _Avoid_: thumbnail, poster, preview image
 
 ### Process

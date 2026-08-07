@@ -17,7 +17,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.database import Base
-from app.models import Batch, PlatformAccount, SequencePublication, SequenceRender
+from app.models import (
+    Batch,
+    PlatformAccount,
+    SequencePublication,
+    SequenceRender,
+    StoredImage,
+)
 from app.publishers import PostRejected, get_publisher
 from app.publishers import instagram as instagram_publisher
 from app.publishers.base import PostableVideo
@@ -95,6 +101,31 @@ def test_publish_route_queues_a_sequence_render_per_platform(tmp_path, monkeypat
         assert publication.caption == "A caption with #one tag"
         assert publication.options == {"share_to_feed": False, "thumb_offset_ms": 1_500}
         assert queued == [publication.id]
+
+
+def test_publish_route_rejects_a_cover_deleted_from_storage(tmp_path, monkeypatch) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'missing-cover.db'}")
+    Base.metadata.create_all(engine)
+    video = tmp_path / "sequence.mp4"
+    video.write_bytes(b"joined-video")
+    _configured(monkeypatch)
+
+    with Session(engine) as session:
+        batch = _batch_with_export(session, video)
+
+        with pytest.raises(HTTPException) as missing:
+            publishing.publish_sequence(
+                batch.id,
+                "instagram",
+                SequencePublishRequest(
+                    caption="Cover",
+                    options={"cover_image_id": "deleted-cover"},
+                ),
+                session,
+            )
+
+        assert missing.value.status_code == 422
+        assert "no longer in Storage" in missing.value.detail
 
 
 def test_publishing_the_same_export_twice_is_refused(tmp_path, monkeypatch) -> None:
@@ -230,6 +261,96 @@ def test_the_cover_frame_is_sent_and_kept_inside_the_video(monkeypatch) -> None:
     )
 
 
+def test_a_cover_image_becomes_frame_zero_in_a_post_only_video(tmp_path, monkeypatch) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'embedded-cover.db'}")
+    Base.metadata.create_all(engine)
+    video_path = tmp_path / "sequence.mp4"
+    video_path.write_bytes(b"sequence")
+    cover_path = tmp_path / "cover.jpg"
+    cover_path.write_bytes(b"cover")
+    captured: dict = {}
+    embedded: dict = {}
+
+    with Session(engine) as session:
+        batch = _batch_with_export(session, video_path)
+        sequence_render = session.query(SequenceRender).one()
+        cover = StoredImage(
+            name="cover.jpg",
+            path=str(cover_path),
+            mime_type="image/jpeg",
+            size_bytes=5,
+        )
+        session.add(cover)
+        session.flush()
+        publication = SequencePublication(
+            batch_id=batch.id,
+            sequence_render_id=sequence_render.id,
+            account_id=session.query(PlatformAccount).one().id,
+            platform="instagram",
+            caption="Embedded cover",
+            options={"share_to_feed": True, "cover_image_id": cover.id},
+        )
+        session.add(publication)
+        session.commit()
+        monkeypatch.setattr(
+            instagram_publisher,
+            "settings",
+            SimpleNamespace(
+                external_base_url="https://clips.example",
+                api_prefix="/api",
+                batches_dir=tmp_path / "batches",
+                instagram_media_url_ttl_seconds=600,
+                token_encryption_key=Fernet.generate_key().decode(),
+                instagram_processing_timeout_seconds=30,
+                instagram_poll_interval_seconds=0,
+            ),
+        )
+        monkeypatch.setattr(
+            instagram_publisher,
+            "embed_cover_as_first_frame",
+            lambda video, image, output: embedded.update(
+                video=video, image=image, output=output
+            ),
+        )
+        monkeypatch.setattr(
+            instagram_publisher,
+            "create_reel_container",
+            lambda **kwargs: (captured.update(kwargs), "container-1")[1],
+        )
+        monkeypatch.setattr(
+            instagram_publisher,
+            "get_container_status",
+            lambda *_args: ("FINISHED", None),
+        )
+        monkeypatch.setattr(
+            instagram_publisher, "publish_reel", lambda **_kwargs: "media-1"
+        )
+        monkeypatch.setattr(
+            instagram_publisher, "get_media_permalink", lambda *_args: None
+        )
+
+        get_publisher("instagram").publish(
+            instagram_publisher.PublishContext(
+                publication=publication,
+                account=SimpleNamespace(remote_user_id="ig-user-1"),
+                video=PostableVideo(
+                    id=sequence_render.id,
+                    path=str(video_path),
+                    duration_ms=9_000,
+                    media_path=f"/api/media/instagram/sequences/{sequence_render.id}",
+                ),
+                access_token="token",
+                report=lambda *_args: None,
+            )
+        )
+
+    assert embedded["video"] == video_path
+    assert embedded["image"] == cover_path
+    assert embedded["output"].name == f"{publication.id}.mp4"
+    assert captured["thumb_offset_ms"] == 0
+    assert "/media/instagram/publications/" in captured["video_url"]
+
+
 def test_sequence_media_route_serves_only_a_signed_finished_export(tmp_path, monkeypatch) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'sequence-media.db'}")
     Base.metadata.create_all(engine)
@@ -257,6 +378,48 @@ def test_sequence_media_route_serves_only_a_signed_finished_export(tmp_path, mon
                 sequence_render.id, expires, "not-a-signature", session
             )
         assert invalid.value.status_code == 403
+
+
+def test_instagram_can_fetch_the_post_only_video_with_its_embedded_cover(
+    tmp_path, monkeypatch
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'cover-video.db'}")
+    Base.metadata.create_all(engine)
+    key = Fernet.generate_key().decode()
+    monkeypatch.setattr(
+        media,
+        "settings",
+        SimpleNamespace(token_encryption_key=key, batches_dir=tmp_path / "batches"),
+    )
+
+    with Session(engine) as session:
+        batch = _batch_with_export(session, tmp_path / "sequence.mp4")
+        sequence_render = session.query(SequenceRender).one()
+        publication = SequencePublication(
+            batch_id=batch.id,
+            sequence_render_id=sequence_render.id,
+            platform="instagram",
+        )
+        session.add(publication)
+        session.commit()
+        post_video = (
+            media.settings.batches_dir
+            / batch.id
+            / "publications"
+            / f"{publication.id}.mp4"
+        )
+        post_video.parent.mkdir(parents=True)
+        post_video.write_bytes(b"video-with-cover-at-frame-zero")
+        expires = int(datetime.now(timezone.utc).timestamp()) + 600
+        signature = instagram.sign_media_url(publication.id, expires, key)
+
+        response = media.serve_instagram_publication_video(
+            publication.id, expires, signature, session
+        )
+
+        assert Path(response.path) == post_video
+        assert response.media_type == "video/mp4"
+        assert response.headers["content-disposition"] == 'inline; filename="instagram-reel.mp4"'
 
 
 def test_the_worker_reports_progress_on_the_publication_itself(tmp_path, monkeypatch) -> None:

@@ -37,7 +37,7 @@ export type MediaSpan = Pick<BatchMedia, 'start_ms' | 'end_ms'>
 
 export function MediaTrack({
   media,
-  selectedMediaId,
+  selectedMediaIds,
   pxPerSec,
   totalMs,
   onSelect,
@@ -46,10 +46,10 @@ export function MediaTrack({
   busy,
 }: {
   media: BatchMedia[]
-  selectedMediaId: string | null
+  selectedMediaIds: string[]
   pxPerSec: number
   totalMs: number
-  onSelect: (mediaId: string | null) => void
+  onSelect: (mediaId: string | null, additive?: boolean) => void
   onChange: (media: BatchMedia, patch: BatchMediaPatch) => void
   onRemove: (media: BatchMedia) => void
   busy: boolean
@@ -114,14 +114,14 @@ export function MediaTrack({
     })
   }
 
-  function onPointerUp() {
+  function onPointerUp(event: React.PointerEvent<HTMLElement>) {
     const current = gesture.current
     gesture.current = null
     if (!current) return
     const item = media.find((entry) => entry.id === current.mediaId)
     if (!dragged.current) {
       setDraft(null)
-      onSelect(current.mediaId)
+      onSelect(current.mediaId, event.shiftKey)
       return
     }
     if (item && draft?.mediaId === item.id) {
@@ -160,7 +160,7 @@ export function MediaTrack({
       style={{ height: Math.min(126, rows * ROW_PX + 6) }}
     >
       {drafted.map((item) => {
-        const selected = item.id === selectedMediaId
+        const selected = selectedMediaIds.includes(item.id)
         const width = pxOf(item.end_ms - item.start_ms)
         return (
           <li
@@ -181,13 +181,18 @@ export function MediaTrack({
               }
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
-              onFocus={() => onSelect(item.id)}
+              onFocus={() => {
+                if (!selectedMediaIds.includes(item.id)) onSelect(item.id)
+              }}
               onContextMenu={(event) => {
                 event.preventDefault()
                 onSelect(item.id)
                 setMenu({ mediaId: item.id, x: event.clientX, y: event.clientY })
               }}
               aria-label={`${item.name}, ${formatTime(item.start_ms)} to ${formatTime(item.end_ms)}`}
+              aria-keyshortcuts="Delete Backspace"
+              aria-pressed={selected}
+              title="Shift-click to select multiple · Delete to remove"
             >
               {width > 28 && <Image size={12} aria-hidden="true" />}
               {width > 70 && <span>{item.name}</span>}

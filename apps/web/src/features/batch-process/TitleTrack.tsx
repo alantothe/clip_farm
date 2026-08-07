@@ -116,7 +116,7 @@ const ORPHAN_PX = 14
  */
 export function TitleTrack({
   titles,
-  selectedTitleId,
+  selectedTitleIds,
   pxPerSec,
   totalMs,
   onSelect,
@@ -126,10 +126,10 @@ export function TitleTrack({
   busy,
 }: {
   titles: Title[]
-  selectedTitleId: string | null
+  selectedTitleIds: string[]
   pxPerSec: number
   totalMs: number
-  onSelect: (titleId: string | null) => void
+  onSelect: (titleId: string | null, additive?: boolean) => void
   onMove: (title: Title, span: TitleSpan) => void
   onTrim: (title: Title, span: TitleSpan) => void
   onRemove: (title: Title) => void
@@ -160,7 +160,7 @@ export function TitleTrack({
     if (busy || event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
-    event.currentTarget.setPointerCapture(event.pointerId)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
     dragged.current = false
     gesture.current = next
   }
@@ -204,7 +204,7 @@ export function TitleTrack({
     })
   }
 
-  function onPointerUp() {
+  function onPointerUp(event: React.PointerEvent<HTMLElement>) {
     const current = gesture.current
     gesture.current = null
     if (!current) return
@@ -212,7 +212,7 @@ export function TitleTrack({
     if (!dragged.current) {
       // A click, not a drag. Selecting is what a click means.
       setDraft(null)
-      onSelect(current.titleId)
+      onSelect(current.titleId, event.shiftKey)
       return
     }
 
@@ -276,7 +276,7 @@ export function TitleTrack({
   return (
     <ol className="sequence__titles" aria-label="Titles" ref={laneRef}>
       {drafted.map((title) => {
-        const selected = title.id === selectedTitleId
+        const selected = selectedTitleIds.includes(title.id)
         // The lane is exactly the Sequence long, so a Title is drawn clipped to
         // it: what runs past the end renders as nothing, and saying so is the
         // job of the marking rather than of extra track. Shortening the
@@ -314,9 +314,12 @@ export function TitleTrack({
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
               onContextMenu={(event) => openContextMenu(event, title)}
-              onFocus={() => onSelect(title.id)}
-              title="Right-click for text options · Delete to remove"
+              onFocus={() => {
+                if (!selectedTitleIds.includes(title.id)) onSelect(title.id)
+              }}
+              title="Shift-click to select multiple · Delete to remove"
               aria-keyshortcuts="Delete Backspace"
+              aria-pressed={selected}
               aria-label={`${title.text || 'Empty title'}, ${formatTime(
                 title.start_ms,
               )} to ${formatTime(title.end_ms)}${
