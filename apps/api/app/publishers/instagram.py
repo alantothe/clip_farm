@@ -31,6 +31,8 @@ from app.publishers.base import (
     register,
 )
 from app.services.instagram import (
+    INVALID_TOKEN_CODE,
+    InstagramConnectionError,
     create_reel_container,
     decrypt_token,
     encrypt_token,
@@ -56,6 +58,13 @@ MAX_SIZE_BYTES = 1_000_000_000
 
 # Refresh a long-lived token once it is inside this window of expiring.
 REFRESH_WINDOW = timedelta(days=7)
+
+# What to tell the operator when Instagram stops accepting the saved login.
+# There is no retry that fixes it, so the message names the one action that does.
+RECONNECT_MESSAGE = (
+    "Instagram no longer accepts the saved login. Reconnect the account in "
+    "Settings, then post again."
+)
 
 # What Instagram accepts beside the video and caption. Reels take no alt text,
 # and branded-content fields are Facebook Login only, so neither is reachable
@@ -233,6 +242,23 @@ class InstagramPublisher:
         if Path(video.path).stat().st_size > MAX_SIZE_BYTES:
             raise RenderNotPostable("Instagram Reels must be smaller than 1 GB")
 
+    def _require_reconnect(
+        self, session: "Session | None", account: "PlatformAccount"
+    ) -> None:
+        """Record that the saved login is dead, so the UI stops offering Publish.
+
+        Instagram invalidates a long-lived token well before the expiry we stored
+        — a password change or its own security review is enough — and tells
+        nobody. A 190 on any request is the only notice we get, so that answer is
+        what moves the Platform Account to `expired`. Without this the stored
+        expiry still looks weeks away and every post fails the same way.
+        """
+        if session is None:
+            return
+        account.status = "expired"
+        account.updated_at = _now()
+        session.commit()
+
     def access_token(self, session: "Session", account: "PlatformAccount") -> str:
         key = settings.token_encryption_key or ""
         access_token = decrypt_token(account.access_token_encrypted, key)
@@ -242,7 +268,13 @@ class InstagramPublisher:
             session.commit()
             raise AccountNotReady("The Instagram login expired; reconnect the account")
         if expires_at and expires_at <= _now() + REFRESH_WINDOW:
-            refreshed = refresh_long_lived_token(access_token, settings)
+            try:
+                refreshed = refresh_long_lived_token(access_token, settings)
+            except InstagramConnectionError as exc:
+                if exc.code == INVALID_TOKEN_CODE:
+                    self._require_reconnect(session, account)
+                    raise AccountNotReady(RECONNECT_MESSAGE) from exc
+                raise
             access_token = refreshed.access_token
             account.access_token_encrypted = encrypt_token(access_token, key)
             account.token_expires_at = refreshed.expires_at
@@ -289,6 +321,17 @@ class InstagramPublisher:
         return self._signed_publication_video_url(publication)
 
     def publish(self, context: PublishContext) -> PublishResult:
+        try:
+            return self._publish(context)
+        except InstagramConnectionError as exc:
+            if exc.code != INVALID_TOKEN_CODE:
+                raise
+            self._require_reconnect(
+                object_session(context.publication), context.account
+            )
+            raise AccountNotReady(RECONNECT_MESSAGE) from exc
+
+    def _publish(self, context: PublishContext) -> PublishResult:
         publication = context.publication
         token = context.access_token
         options = _options(publication)

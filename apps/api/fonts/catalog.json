@@ -262,7 +262,8 @@
       "weight_label": "Regular",
       "file": "Inter-Regular.ttf",
       "face_name": "Inter",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.43017578125
     },
     {
       "id": "inter-700",
@@ -273,7 +274,8 @@
       "weight_label": "Bold",
       "file": "Inter-Bold.ttf",
       "face_name": "Inter Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.43017578125
     },
     {
       "id": "inter-900",
@@ -284,7 +286,8 @@
       "weight_label": "Black",
       "file": "Inter-Black.ttf",
       "face_name": "Inter Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.43017578125
     },
     {
       "id": "roboto-400",
@@ -295,7 +298,8 @@
       "weight_label": "Regular",
       "file": "Roboto-Regular.ttf",
       "face_name": "Roboto",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.2001953125
     },
     {
       "id": "roboto-700",
@@ -306,7 +310,8 @@
       "weight_label": "Bold",
       "file": "Roboto-Bold.ttf",
       "face_name": "Roboto Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.2001953125
     },
     {
       "id": "roboto-900",
@@ -317,7 +322,8 @@
       "weight_label": "Black",
       "file": "Roboto-Black.ttf",
       "face_name": "Roboto Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.2001953125
     },
     {
       "id": "open-sans-400",
@@ -328,7 +334,8 @@
       "weight_label": "Regular",
       "file": "OpenSans-Regular.ttf",
       "face_name": "Open Sans",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.44189453125
     },
     {
       "id": "open-sans-700",
@@ -339,7 +346,8 @@
       "weight_label": "Bold",
       "file": "OpenSans-Bold.ttf",
       "face_name": "Open Sans Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.44189453125
     },
     {
       "id": "open-sans-800",
@@ -350,7 +358,8 @@
       "weight_label": "ExtraBold",
       "file": "OpenSans-ExtraBold.ttf",
       "face_name": "Open Sans ExtraBold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.44189453125
     },
     {
       "id": "lato-400",
@@ -361,7 +370,8 @@
       "weight_label": "Regular",
       "file": "Lato-Regular.ttf",
       "face_name": "Lato",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.416
     },
     {
       "id": "lato-700",
@@ -372,7 +382,8 @@
       "weight_label": "Bold",
       "file": "Lato-Bold.ttf",
       "face_name": "Lato Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.416
     },
     {
       "id": "lato-900",
@@ -383,7 +394,8 @@
       "weight_label": "Black",
       "file": "Lato-Black.ttf",
       "face_name": "Lato Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.416
     },
     {
       "id": "montserrat-400",
@@ -394,7 +406,8 @@
       "weight_label": "Regular",
       "file": "Montserrat-Regular.ttf",
       "face_name": "Montserrat",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.562
     },
     {
       "id": "montserrat-700",
@@ -405,7 +418,8 @@
       "weight_label": "Bold",
       "file": "Montserrat-Bold.ttf",
       "face_name": "Montserrat Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.562
     },
     {
       "id": "montserrat-900",
@@ -416,7 +430,8 @@
       "weight_label": "Black",
       "file": "Montserrat-Black.ttf",
       "face_name": "Montserrat Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.562
     },
     {
       "id": "poppins-400",
@@ -427,7 +442,8 @@
       "weight_label": "Regular",
       "file": "Poppins-Regular.ttf",
       "face_name": "Poppins",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.762
     },
     {
       "id": "poppins-700",
@@ -438,7 +454,8 @@
       "weight_label": "Bold",
       "file": "Poppins-Bold.ttf",
       "face_name": "Poppins Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.762
     },
     {
       "id": "poppins-900",
@@ -449,7 +466,8 @@
       "weight_label": "Black",
       "file": "Poppins-Black.ttf",
       "face_name": "Poppins Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.762
     },
     {
       "id": "nunito-400",
@@ -460,7 +478,8 @@
       "weight_label": "Regular",
       "file": "Nunito-Regular.ttf",
       "face_name": "Nunito",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.377
     },
     {
       "id": "nunito-700",
@@ -471,7 +490,8 @@
       "weight_label": "Bold",
       "file": "Nunito-Bold.ttf",
       "face_name": "Nunito Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.377
     },
     {
       "id": "nunito-900",
@@ -482,7 +502,8 @@
       "weight_label": "Black",
       "file": "Nunito-Black.ttf",
       "face_name": "Nunito Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.377
     },
     {
       "id": "raleway-400",
@@ -493,7 +514,8 @@
       "weight_label": "Regular",
       "file": "Raleway-Regular.ttf",
       "face_name": "Raleway",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.388
     },
     {
       "id": "raleway-700",
@@ -504,7 +526,8 @@
       "weight_label": "Bold",
       "file": "Raleway-Bold.ttf",
       "face_name": "Raleway Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.388
     },
     {
       "id": "raleway-900",
@@ -515,7 +538,8 @@
       "weight_label": "Black",
       "file": "Raleway-Black.ttf",
       "face_name": "Raleway Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.388
     },
     {
       "id": "rubik-400",
@@ -526,7 +550,8 @@
       "weight_label": "Regular",
       "file": "Rubik-Regular.ttf",
       "face_name": "Rubik",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.532
     },
     {
       "id": "rubik-700",
@@ -537,7 +562,8 @@
       "weight_label": "Bold",
       "file": "Rubik-Bold.ttf",
       "face_name": "Rubik Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.532
     },
     {
       "id": "rubik-900",
@@ -548,7 +574,8 @@
       "weight_label": "Black",
       "file": "Rubik-Black.ttf",
       "face_name": "Rubik Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.532
     },
     {
       "id": "work-sans-400",
@@ -559,7 +586,8 @@
       "weight_label": "Regular",
       "file": "WorkSans-Regular.ttf",
       "face_name": "Work Sans",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.448
     },
     {
       "id": "work-sans-700",
@@ -570,7 +598,8 @@
       "weight_label": "Bold",
       "file": "WorkSans-Bold.ttf",
       "face_name": "Work Sans Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.448
     },
     {
       "id": "work-sans-900",
@@ -581,7 +610,8 @@
       "weight_label": "Black",
       "file": "WorkSans-Black.ttf",
       "face_name": "Work Sans Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.448
     },
     {
       "id": "dm-sans-400",
@@ -592,7 +622,8 @@
       "weight_label": "Regular",
       "file": "DMSans-Regular.ttf",
       "face_name": "DM Sans",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.322
     },
     {
       "id": "dm-sans-700",
@@ -603,7 +634,8 @@
       "weight_label": "Bold",
       "file": "DMSans-Bold.ttf",
       "face_name": "DM Sans Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.322
     },
     {
       "id": "dm-sans-900",
@@ -614,7 +646,8 @@
       "weight_label": "Black",
       "file": "DMSans-Black.ttf",
       "face_name": "DM Sans Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.322
     },
     {
       "id": "space-grotesk-400",
@@ -625,7 +658,8 @@
       "weight_label": "Regular",
       "file": "SpaceGrotesk-Regular.ttf",
       "face_name": "Space Grotesk",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.442
     },
     {
       "id": "space-grotesk-700",
@@ -636,7 +670,8 @@
       "weight_label": "Bold",
       "file": "SpaceGrotesk-Bold.ttf",
       "face_name": "Space Grotesk Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.442
     },
     {
       "id": "barlow-400",
@@ -647,7 +682,8 @@
       "weight_label": "Regular",
       "file": "Barlow-Regular.ttf",
       "face_name": "Barlow",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.361
     },
     {
       "id": "barlow-700",
@@ -658,7 +694,8 @@
       "weight_label": "Bold",
       "file": "Barlow-Bold.ttf",
       "face_name": "Barlow Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.361
     },
     {
       "id": "barlow-900",
@@ -669,7 +706,8 @@
       "weight_label": "Black",
       "file": "Barlow-Black.ttf",
       "face_name": "Barlow Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.361
     },
     {
       "id": "roboto-condensed-400",
@@ -680,7 +718,8 @@
       "weight_label": "Regular",
       "file": "RobotoCondensed-Regular.ttf",
       "face_name": "Roboto Condensed",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.2001953125
     },
     {
       "id": "roboto-condensed-700",
@@ -691,7 +730,8 @@
       "weight_label": "Bold",
       "file": "RobotoCondensed-Bold.ttf",
       "face_name": "Roboto Condensed Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.2001953125
     },
     {
       "id": "oswald-400",
@@ -702,7 +742,8 @@
       "weight_label": "Regular",
       "file": "Oswald-Regular.ttf",
       "face_name": "Oswald",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.702
     },
     {
       "id": "oswald-700",
@@ -713,7 +754,8 @@
       "weight_label": "Bold",
       "file": "Oswald-Bold.ttf",
       "face_name": "Oswald Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.702
     },
     {
       "id": "teko-400",
@@ -724,7 +766,8 @@
       "weight_label": "Regular",
       "file": "Teko-Regular.ttf",
       "face_name": "Teko",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.433
     },
     {
       "id": "teko-700",
@@ -735,7 +778,8 @@
       "weight_label": "Bold",
       "file": "Teko-Bold.ttf",
       "face_name": "Teko Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.433
     },
     {
       "id": "bebas-neue-400",
@@ -746,7 +790,8 @@
       "weight_label": "Regular",
       "file": "BebasNeue-Regular.ttf",
       "face_name": "Bebas Neue",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.3
     },
     {
       "id": "anton-400",
@@ -757,7 +802,8 @@
       "weight_label": "Regular",
       "file": "Anton-Regular.ttf",
       "face_name": "Anton",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.7333984375
     },
     {
       "id": "archivo-black-400",
@@ -768,7 +814,8 @@
       "weight_label": "Regular",
       "file": "ArchivoBlack-Regular.ttf",
       "face_name": "Archivo Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.347
     },
     {
       "id": "fjalla-one-400",
@@ -779,7 +826,8 @@
       "weight_label": "Regular",
       "file": "FjallaOne-Regular.ttf",
       "face_name": "Fjalla One",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.6162109375
     },
     {
       "id": "bangers-400",
@@ -790,7 +838,8 @@
       "weight_label": "Regular",
       "file": "Bangers-Regular.ttf",
       "face_name": "Bangers",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.757
     },
     {
       "id": "playfair-display-400",
@@ -801,7 +850,8 @@
       "weight_label": "Regular",
       "file": "PlayfairDisplay-Regular.ttf",
       "face_name": "Playfair Display",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.41
     },
     {
       "id": "playfair-display-700",
@@ -812,7 +862,8 @@
       "weight_label": "Bold",
       "file": "PlayfairDisplay-Bold.ttf",
       "face_name": "Playfair Display Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.41
     },
     {
       "id": "playfair-display-900",
@@ -823,7 +874,8 @@
       "weight_label": "Black",
       "file": "PlayfairDisplay-Black.ttf",
       "face_name": "Playfair Display Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.41
     },
     {
       "id": "merriweather-400",
@@ -834,7 +886,8 @@
       "weight_label": "Regular",
       "file": "Merriweather-Regular.ttf",
       "face_name": "Merriweather",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.732
     },
     {
       "id": "merriweather-700",
@@ -845,7 +898,8 @@
       "weight_label": "Bold",
       "file": "Merriweather-Bold.ttf",
       "face_name": "Merriweather Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.732
     },
     {
       "id": "merriweather-900",
@@ -856,7 +910,8 @@
       "weight_label": "Black",
       "file": "Merriweather-Black.ttf",
       "face_name": "Merriweather Black",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.732
     },
     {
       "id": "permanent-marker-400",
@@ -867,7 +922,8 @@
       "weight_label": "Regular",
       "file": "PermanentMarker-Regular.ttf",
       "face_name": "Permanent Marker",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.4267578125
     },
     {
       "id": "caveat-400",
@@ -878,7 +934,8 @@
       "weight_label": "Regular",
       "file": "Caveat-Regular.ttf",
       "face_name": "Caveat",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.289
     },
     {
       "id": "caveat-700",
@@ -889,7 +946,8 @@
       "weight_label": "Bold",
       "file": "Caveat-Bold.ttf",
       "face_name": "Caveat Bold",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.289
     },
     {
       "id": "pacifico-400",
@@ -900,7 +958,8 @@
       "weight_label": "Regular",
       "file": "Pacifico-Regular.ttf",
       "face_name": "Pacifico",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.935
     },
     {
       "id": "lobster-400",
@@ -911,7 +970,8 @@
       "weight_label": "Regular",
       "file": "Lobster-Regular.ttf",
       "face_name": "Lobster",
-      "face_bold": false
+      "face_bold": false,
+      "ass_size_scale": 1.49
     }
   ]
 }

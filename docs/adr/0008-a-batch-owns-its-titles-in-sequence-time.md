@@ -123,7 +123,11 @@ the stage and the export load the same bytes.
 ## What is exact, and what is not
 
 Position, size, rotation, colour, outline, shadow and letter spacing are exact: both sides
-work in percentages of the same 1080x1920 canvas, and the arithmetic is shared.
+work in percentages of the same 1080x1920 canvas, and the arithmetic is shared. Font size
+also accounts for a renderer difference hidden inside those units: CSS sizes a face by its
+em square, while libass sizes it by its OS/2 Windows ascent and descent. The vendored catalog
+records that per-face ratio; the renderer applies it to ASS FontSize and the stage uses it
+as the line-height, so neither relies on a global correction that is only right for one font.
 
 Line wrapping is not. The stage wraps with the browser's line breaker inside a box of the
 Title's width; the export wraps with libass's inside the same box, set through the event's

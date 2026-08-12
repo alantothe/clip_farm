@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Check, ChevronLeft, Layers, LoaderCircle, Pencil, UploadCloud } from 'lucide-react'
@@ -606,6 +606,27 @@ export function BatchProcessPage() {
     },
   })
 
+  /*
+   * Title controls preview locally, then save once the gesture ends. Keep
+   * those saves ordered and give Export one promise it can wait on: otherwise
+   * a slider blur can start its PATCH immediately before the export POST, and
+   * the worker may load the old preset size before that PATCH commits.
+   */
+  const pendingTitleEdits = useRef<Promise<unknown>>(Promise.resolve())
+  function commitTitleEdit(edit: TitleEdit) {
+    const request = pendingTitleEdits.current
+      // A rejected edit is already surfaced by the mutation. It must not make
+      // every later correction in the queue impossible to send.
+      .catch(() => undefined)
+      .then(() => titleMutation.mutateAsync(edit))
+    pendingTitleEdits.current = request
+    // Event handlers do not await their saves. Attach a rejection handler so
+    // the mutation's visible error state, rather than an unhandled promise, is
+    // what reports a failed edit. Export still awaits the original promise.
+    void request.catch(() => undefined)
+    return request
+  }
+
   const mediaMutation = useMutation({
     mutationFn: (edit: MediaEdit) => {
       if (edit.kind === 'add') {
@@ -758,7 +779,12 @@ export function BatchProcessPage() {
   })
 
   const exportMutation = useMutation({
-    mutationFn: () => api.renderSequence(batchId!),
+    mutationFn: async () => {
+      // The file must be made from the values currently visible on the stage,
+      // including a size slider or drag that was released just before Export.
+      await pendingTitleEdits.current
+      return api.renderSequence(batchId!)
+    },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: batchKey(batchId!) }),
   })
 
@@ -960,7 +986,7 @@ export function BatchProcessPage() {
   function removeTimelineTitle(title: Title) {
     setSelectedTitleIds((current) => current.filter((id) => id !== title.id))
     setTitlePreview(null)
-    titleMutation.mutate({ kind: 'remove', titleId: title.id })
+    void commitTitleEdit({ kind: 'remove', titleId: title.id })
   }
 
   // Delete is an editor command while a timeline item is selected. Keep it out
@@ -1239,7 +1265,7 @@ export function BatchProcessPage() {
                 framingPreview={framingPreview}
                 onSelectTitle={selectTitle}
                 onEditTitle={(title, patch) =>
-                  titleMutation.mutate({ kind: 'patch', titleId: title.id, patch })
+                  void commitTitleEdit({ kind: 'patch', titleId: title.id, patch })
                 }
                 onSelectMedia={selectMedia}
                 onEditMedia={(item, patch) =>
@@ -1280,7 +1306,7 @@ export function BatchProcessPage() {
                     error={exportMutation.error}
                   />
                 )}
-                onAddText={() => titleMutation.mutate({ kind: 'add' })}
+                onAddText={() => void commitTitleEdit({ kind: 'add' })}
                 canAddText={
                   player.totalMs > 0 && hasTitleSlot(titles, 0, player.totalMs)
                 }
@@ -1311,7 +1337,7 @@ export function BatchProcessPage() {
                   phrases={phrases}
                   onEdit={(patch) => {
                     setTitlePreview(null)
-                    titleMutation.mutate({ kind: 'patch', titleId: selectedTitle.id, patch })
+                    void commitTitleEdit({ kind: 'patch', titleId: selectedTitle.id, patch })
                   }}
                   onPreview={(patch) =>
                     setTitlePreview(patch ? { titleId: selectedTitle.id, ...patch } : null)
@@ -1438,10 +1464,10 @@ export function BatchProcessPage() {
               onSelectTitle={selectTitle}
               onSelectMedia={selectMedia}
               onMoveTitle={(title, span) =>
-                titleMutation.mutate({ kind: 'patch', titleId: title.id, patch: span })
+                void commitTitleEdit({ kind: 'patch', titleId: title.id, patch: span })
               }
               onTrimTitle={(title, span: TitleSpan) =>
-                titleMutation.mutate({ kind: 'patch', titleId: title.id, patch: span })
+                void commitTitleEdit({ kind: 'patch', titleId: title.id, patch: span })
               }
               onRemoveTitle={removeTimelineTitle}
               onChangeMedia={(item: BatchMedia, patch: BatchMediaPatch) =>

@@ -1,6 +1,7 @@
 import { Clapperboard, Settings, Sparkles } from 'lucide-react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { BatchProcessPage } from './features/batch-process/BatchProcessPage'
+import { CoverStackPage } from './features/cover-stack/CoverStackPage'
 import { XToVerticalPage } from './features/x-to-vertical/XToVerticalPage'
 import { ModesPage } from './pages/ModesPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -11,6 +12,7 @@ function AppHeader() {
   const isHome = location.pathname === '/'
   const isSettings = location.pathname === '/settings'
   const isBatch = location.pathname.startsWith('/modes/batch-process')
+  const isCoverStack = location.pathname.startsWith('/modes/cover-stack')
 
   return (
     <header className="app-header">
@@ -22,6 +24,8 @@ function AppHeader() {
         <div className="header-format header-format--home"><span>ACCOUNT</span><strong>CONNECTIONS</strong></div>
       ) : isHome ? (
         <div className="header-format header-format--home"><span>MODE</span><strong>LIBRARY</strong></div>
+      ) : isCoverStack ? (
+        <div className="header-format"><span>4 PHOTOS</span><i /><strong>9:16</strong></div>
       ) : isBatch ? (
         <div className="header-format"><span>BATCH</span><i /><strong>9:16</strong></div>
       ) : (
@@ -53,6 +57,7 @@ export function App() {
         <Route path="/modes/x-to-vertical/new" element={<XToVerticalPage createNew />} />
         <Route path="/modes/x-to-vertical/projects/:projectId" element={<XToVerticalPage />} />
         <Route path="/modes/batch-process" element={<BatchProcessPage />} />
+        <Route path="/modes/cover-stack" element={<CoverStackPage />} />
         <Route path="/modes/batch-process/batches/:batchId" element={<BatchProcessPage />} />
         <Route
           path="/modes/batch-process/batches/:batchId/clips/:clipId"

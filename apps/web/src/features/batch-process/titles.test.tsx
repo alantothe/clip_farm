@@ -57,10 +57,10 @@ const catalog: FontCatalog = {
     { id: 'inter', name: 'Inter', category: 'sans', weights: [400, 700, 900] },
   ],
   faces: [
-    { id: 'anton-400', family: 'anton', weight: 400, weight_label: 'Regular', file: 'Anton-Regular.ttf', url: '/api/fonts/Anton-Regular.ttf' },
-    { id: 'inter-400', family: 'inter', weight: 400, weight_label: 'Regular', file: 'Inter-Regular.ttf', url: '/api/fonts/Inter-Regular.ttf' },
-    { id: 'inter-700', family: 'inter', weight: 700, weight_label: 'Bold', file: 'Inter-Bold.ttf', url: '/api/fonts/Inter-Bold.ttf' },
-    { id: 'inter-900', family: 'inter', weight: 900, weight_label: 'Black', file: 'Inter-Black.ttf', url: '/api/fonts/Inter-Black.ttf' },
+    { id: 'anton-400', family: 'anton', weight: 400, weight_label: 'Regular', file: 'Anton-Regular.ttf', ass_size_scale: 1.7334, url: '/api/fonts/Anton-Regular.ttf' },
+    { id: 'inter-400', family: 'inter', weight: 400, weight_label: 'Regular', file: 'Inter-Regular.ttf', ass_size_scale: 1.43018, url: '/api/fonts/Inter-Regular.ttf' },
+    { id: 'inter-700', family: 'inter', weight: 700, weight_label: 'Bold', file: 'Inter-Bold.ttf', ass_size_scale: 1.43018, url: '/api/fonts/Inter-Bold.ttf' },
+    { id: 'inter-900', family: 'inter', weight: 900, weight_label: 'Black', file: 'Inter-Black.ttf', ass_size_scale: 1.43018, url: '/api/fonts/Inter-Black.ttf' },
   ],
 }
 
@@ -71,6 +71,13 @@ test('a title is sized against the stage, not the viewport', () => {
 
   expect(box.fontSize).toBe('7.5cqh')
   expect(box.width).toBe('60cqw')
+})
+
+test('a title uses the same font line box as its export', () => {
+  const face = resolveFace(catalog, 'anton', 400)
+  const { box } = titleCss(look(), face)
+
+  expect(box.lineHeight).toBe(1.7334)
 })
 
 test('a title is centred on its place in the frame', () => {
@@ -808,6 +815,56 @@ test('typing lands on the picture before it lands on the server', async () => {
       text: 'WAIT FOR THIS',
     })
   })
+})
+
+test('export waits for the visible title size to finish saving', async () => {
+  const batch = makeBatch([look({ id: 'title-1', text: 'WAIT FOR IT' })])
+  let finishSave!: (saved: Batch) => void
+  const saving = new Promise<Batch>((resolve) => {
+    finishSave = resolve
+  })
+  const fetchMock = stubApi(batch, {
+    'PATCH /api/batches/batch-1/titles/title-1': saving,
+    'POST /api/batches/batch-1/render': {},
+  })
+
+  renderBatch(newClient())
+
+  const track = await screen.findByRole('list', { name: 'Titles' })
+  fireEvent.focus(within(track).getByRole('button', { name: /WAIT FOR IT/ }))
+  const size = await screen.findByRole('slider', { name: /Size/ })
+
+  // Releasing the slider starts a save. Clicking Export immediately after it
+  // must not let the render worker read the old 6% preset from the database.
+  fireEvent.change(size, { target: { value: '9.5' } })
+  fireEvent.blur(size)
+  fireEvent.click(screen.getByRole('button', { name: /Export video/ }))
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/titles/title-1',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ font_size_percent: 9.5 }),
+      }),
+    ),
+  )
+  expect(fetchMock).not.toHaveBeenCalledWith(
+    '/api/batches/batch-1/render',
+    expect.anything(),
+  )
+
+  finishSave({
+    ...batch,
+    titles: [{ ...batch.titles[0], font_size_percent: 9.5 }],
+  })
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/batches/batch-1/render',
+      expect.objectContaining({ method: 'POST' }),
+    ),
+  )
 })
 
 test('a title dropped near the middle is taken to the exact centre', async () => {

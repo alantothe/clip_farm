@@ -180,6 +180,10 @@ export function titleCss(look: TitleLook, face: CatalogFace | null): TitleCss {
     fontSize: `${look.font_size_percent}cqh`,
     fontFamily: face ? `"${faceFamily(face.id)}", sans-serif` : 'sans-serif',
     fontStyle: look.italic ? 'italic' : 'normal',
+    // After the renderer compensates libass's real-dimension sizing, its line
+    // box is this face's Windows ascent/descent. Use that same box here so a
+    // multiline Title stays centred on the same point on both sides.
+    lineHeight: face?.ass_size_scale,
     textAlign: look.align,
     // The vendored file already *is* the weight; asking for another would only
     // invite the browser to synthesise a bolder one on top of it.

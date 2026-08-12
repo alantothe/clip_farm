@@ -324,6 +324,8 @@ export interface FontFace {
   weight: number
   weight_label: string
   file: string
+  /** Windows ascent/descent divided by em height, for libass line metrics. */
+  ass_size_scale: number
   url: string
 }
 

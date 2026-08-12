@@ -55,6 +55,14 @@ const batchProcessVisual = (
   </span>
 )
 
+const coverStackVisual = (
+  <span className="mode-card__visual mode-card__visual--cover-stack" aria-hidden="true">
+    <span className="mode-card__photo-pile"><i /><i /><i /><i /></span>
+    <span className="mode-card__transfer"><ArrowRight size={23} /></span>
+    <span className="mode-card__cover-stack"><i /><i /><i /><i /></span>
+  </span>
+)
+
 export const MODES: ModeDefinition[] = [
   {
     id: 'x-to-vertical',
@@ -80,6 +88,19 @@ export const MODES: ModeDefinition[] = [
     steps: ['Start a batch', 'Drop in videos', 'Edit each clip'],
     stepsLabel: 'Workflow: start a batch, drop in videos, edit each clip',
     visual: batchProcessVisual,
+    status: 'available',
+  },
+  {
+    id: 'cover-stack',
+    number: '03',
+    route: '/modes/cover-stack',
+    titleLines: ['Four-photo', 'Cover'],
+    name: 'Four-photo Instagram Cover',
+    blurb:
+      'Stack four photos into an exact 1080 × 1920 Instagram cover. Zoom and position each strip independently, then download the finished image.',
+    steps: ['Choose 4 photos', 'Frame each strip', 'Download cover'],
+    stepsLabel: 'Workflow: choose four photos, frame each strip, download the cover',
+    visual: coverStackVisual,
     status: 'available',
   },
 ]

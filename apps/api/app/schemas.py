@@ -480,6 +480,8 @@ class FontFaceOut(BaseModel):
     weight: int
     weight_label: str
     file: str
+    # CSS uses the em square; libass uses OS/2 Windows ascent/descent.
+    ass_size_scale: float
     url: str
 
 

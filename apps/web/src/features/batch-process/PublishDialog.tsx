@@ -12,7 +12,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react'
-import { API_BASE } from '../../api'
+import { api, API_BASE } from '../../api'
 import { formatBytes, formatTime } from '../../lib/format'
 import { PLATFORMS, platformDefinition } from '../../platforms/registry'
 import type {
@@ -22,6 +22,7 @@ import type {
   SequencePublication,
   SequenceRender,
 } from '../../types'
+import { CoverStackPage } from '../cover-stack/CoverStackPage'
 import { CoverImageCropper } from './CoverImageCropper'
 
 /** Instagram's caption limits, counted the way the API counts them. */
@@ -131,6 +132,7 @@ export function PublishDialog({
     publications[0]?.options?.cover_image_id ? 'image' : 'frame',
   )
   const [coverEditorOpen, setCoverEditorOpen] = useState(false)
+  const [coverStackOpen, setCoverStackOpen] = useState(false)
   const [rewriteError, setRewriteError] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
 
@@ -140,11 +142,11 @@ export function PublishDialog({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !coverEditorOpen) onClose()
+      if (event.key === 'Escape' && !coverEditorOpen && !coverStackOpen) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [coverEditorOpen, onClose])
+  }, [coverEditorOpen, coverStackOpen, onClose])
 
   const stats = captionStats(caption)
   const captionIsBad = stats.overLength || stats.overHashtags || stats.overMentions
@@ -407,6 +409,15 @@ export function PublishDialog({
                       >
                         Add image
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCoverMode('image')
+                          setCoverStackOpen(true)
+                        }}
+                      >
+                        Create 4-photo
+                      </button>
                     </div>
                     {coverMode === 'frame' ? (
                       <div className="publish-cover__choice">
@@ -631,6 +642,33 @@ export function PublishDialog({
             setCoverEditorOpen(false)
           }}
         />
+      )}
+      {coverStackOpen && (
+        <div className="cover-stack-launch-backdrop" role="presentation">
+          <section
+            className="cover-stack-launch"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create four-photo Instagram cover"
+          >
+            <button
+              className="cover-stack-launch__close"
+              type="button"
+              onClick={() => setCoverStackOpen(false)}
+              aria-label="Close four-photo cover creator"
+            >
+              <X size={18} />Close
+            </button>
+            <CoverStackPage
+              onUseCover={async (file) => {
+                const image = await api.uploadStoredImage(file)
+                setCoverImageId(image.id)
+                setCoverMode('image')
+                setCoverStackOpen(false)
+              }}
+            />
+          </section>
+        </div>
       )}
     </div>
   )

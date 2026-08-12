@@ -137,7 +137,7 @@ test('offers batch process alongside the X mode on the home page', async () => {
 
   renderApp(newClient())
 
-  expect(screen.getByText('Mode library · 02 available')).toBeInTheDocument()
+  expect(screen.getByText('Mode library · 03 available')).toBeInTheDocument()
   expect(screen.getByText(/Upload a set of videos at once/)).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: /Batch Process/ }))
 
@@ -1962,6 +1962,30 @@ test('publishing asks where first, then what to say, and posts each destination 
     ).toBe(true),
   )
   expect(await within(dialog).findByRole('progressbar', { name: /Instagram posting/ })).toBeVisible()
+})
+
+test('opens the four-photo cover creator from Instagram publishing details', async () => {
+  stubApi({
+    'GET /api/batches/batch-1': sequencedBatch({
+      shots: placed.shots,
+      sequence_render: finishedExport,
+    }),
+    'GET /api/platforms': [connectedInstagram],
+  })
+
+  renderApp(newClient(), '/modes/batch-process/batches/batch-1')
+
+  fireEvent.click(await screen.findByRole('button', { name: /^Publish/ }))
+  const publishDialog = await screen.findByRole('dialog')
+  await within(publishDialog).findByText('Posting as @clipfarmer')
+  fireEvent.click(within(publishDialog).getByRole('button', { name: 'Write the caption' }))
+  fireEvent.click(within(publishDialog).getByRole('button', { name: 'Create 4-photo' }))
+
+  const creator = screen.getByRole('dialog', { name: 'Create four-photo Instagram cover' })
+  expect(within(creator).getByRole('heading', { name: /Four moments/ })).toBeVisible()
+  expect(within(creator).getByRole('button', { name: 'Select 4 photos' })).toBeVisible()
+  fireEvent.click(within(creator).getByRole('button', { name: 'Close four-photo cover creator' }))
+  expect(screen.queryByRole('dialog', { name: 'Create four-photo Instagram cover' })).toBeNull()
 })
 
 test('an export made before the last edit is called out before it is posted', async () => {

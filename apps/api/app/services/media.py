@@ -347,13 +347,20 @@ def create_ass_titles(
         if end_ms <= start_ms:
             continue
         face = fonts.resolve_face(title.font_family, title.font_weight)
-        font_px = title.font_size_percent / 100 * height
+        # CSS font-size is an em-square size. libass deliberately replaces a
+        # face's metrics with its OS/2 Windows ascent/descent and asks FreeType
+        # to make that *real dimension* equal to FontSize. Compensate by the
+        # per-face Windows-height / em-height ratio recorded when the font was
+        # vendored; otherwise Lato, for example, exports 1 / 1.416 the size it
+        # has on the stage.
+        css_font_px = title.font_size_percent / 100 * height
+        ass_font_px = css_font_px * face["ass_size_scale"]
         boxed = title.background == "box"
         name = f"Title{index}"
 
         subtitles.styles[name] = pysubs2.SSAStyle(
             fontname=face["face_name"],
-            fontsize=font_px,
+            fontsize=ass_font_px,
             bold=face["face_bold"],
             italic=title.italic,
             primarycolor=_ass_color(title.color, title.opacity),
@@ -365,10 +372,13 @@ def create_ass_titles(
                 if boxed
                 else _ass_color(title.outline_color, title.opacity)
             ),
-            outline=(title.background_padding if boxed else title.outline_width) * font_px,
+            # These ASS fields are already canvas pixels, not font metrics.
+            # Keep them fractions of the CSS em rather than scaling them twice.
+            outline=(title.background_padding if boxed else title.outline_width)
+            * css_font_px,
             backcolor=_ass_color(title.shadow_color, title.opacity),
-            shadow=title.shadow_offset * font_px,
-            spacing=title.letter_spacing * font_px,
+            shadow=title.shadow_offset * css_font_px,
+            spacing=title.letter_spacing * css_font_px,
         )
 
         box_width = title.width_percent / 100 * width

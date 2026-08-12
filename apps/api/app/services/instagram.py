@@ -2,19 +2,37 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import logging
 
 from cryptography.fernet import Fernet, InvalidToken
 import httpx
 
+
+logger = logging.getLogger(__name__)
 
 INSTAGRAM_SCOPES = (
     "instagram_business_basic",
     "instagram_business_content_publish",
 )
 
+# Meta's OAuth error code. The saved token is invalid, revoked, or has been
+# invalidated by a password change or a security review on Meta's side. No
+# retry helps and nothing about the request is at fault — the Platform Account
+# has to be connected again.
+INVALID_TOKEN_CODE = 190
+
 
 class InstagramConnectionError(RuntimeError):
-    """A safe, user-facing Instagram connection failure."""
+    """A safe, user-facing Instagram connection failure.
+
+    Carries Instagram's numeric error code where there was one, so a caller can
+    tell a dead login apart from a rejected upload. The message stays safe to
+    show; Instagram's own wording goes to the log instead.
+    """
+
+    def __init__(self, message: str, *, code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -47,17 +65,56 @@ def decrypt_token(token: str, key: str) -> str:
 
 
 def _json_or_error(response: httpx.Response, stage: str) -> dict:
+    """Return the payload, or raise with the reason logged.
+
+    The user-facing message stays deliberately vague — it reaches the operator
+    through a Publication's error, and Instagram's own text is not written for
+    them. The full answer is worth keeping though, because the error code alone
+    never says which of a dozen causes it was, so it goes to the log.
+    """
     try:
         payload = response.json()
     except ValueError as exc:
+        logger.warning(
+            "Instagram returned a non-JSON response while %s (http=%s): %.500s",
+            stage,
+            response.status_code,
+            response.text,
+        )
         raise InstagramConnectionError(f"Instagram returned an invalid response while {stage}") from exc
     if not isinstance(payload, dict):
+        logger.warning(
+            "Instagram returned an unexpected response shape while %s (http=%s): %.200s",
+            stage,
+            response.status_code,
+            payload,
+        )
         raise InstagramConnectionError(f"Instagram returned an invalid response while {stage}")
     if response.is_error or payload.get("error") or payload.get("error_type"):
         error = payload.get("error")
-        code = error.get("code") if isinstance(error, dict) else payload.get("error_type")
+        # Error details sit under `error` on the Graph endpoints and at the top
+        # level on the oauth ones. Named fields are logged rather than the whole
+        # body so a half-successful payload can never log a token.
+        details = error if isinstance(error, dict) else payload
+        code = details.get("code") if isinstance(error, dict) else payload.get("error_type")
+        logger.warning(
+            "Instagram rejected the request while %s "
+            "(http=%s, code=%s, subcode=%s, type=%s, fbtrace_id=%s): %s",
+            stage,
+            response.status_code,
+            code,
+            details.get("error_subcode"),
+            details.get("type") or payload.get("error_type"),
+            details.get("fbtrace_id"),
+            details.get("message")
+            or details.get("error_message")
+            or details.get("error_description"),
+        )
         suffix = f" ({code})" if code else ""
-        raise InstagramConnectionError(f"Instagram rejected the request while {stage}{suffix}")
+        raise InstagramConnectionError(
+            f"Instagram rejected the request while {stage}{suffix}",
+            code=code if isinstance(code, int) else None,
+        )
     return payload
 
 

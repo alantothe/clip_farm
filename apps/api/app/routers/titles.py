@@ -345,6 +345,7 @@ def get_font_catalog() -> FontCatalogOut:
                 weight=face["weight"],
                 weight_label=face["weight_label"],
                 file=face["file"],
+                ass_size_scale=face["ass_size_scale"],
                 url=f"{settings.api_prefix}/fonts/{face['file']}",
             )
             for face in data["faces"]

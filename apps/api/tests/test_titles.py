@@ -573,7 +573,12 @@ def test_sizes_that_scale_with_the_type_are_fractions_of_it(tmp_path):
     )
 
     style = read_ass(output).styles["Title0"]
-    assert style.fontsize == pytest.approx(192.0)  # 10% of 1920
+    # CSS sizes Anton against its em square. libass sizes against the face's
+    # taller Windows ascent/descent, so its FontSize carries that face-specific
+    # compensation while all the em-relative effects remain canvas pixels.
+    assert style.fontsize == pytest.approx(
+        192.0 * fonts.resolve_face("anton", 400)["ass_size_scale"]
+    )
     assert style.outline == pytest.approx(19.2)  # a tenth of the font size
     assert style.shadow == pytest.approx(9.6)
     assert style.spacing == pytest.approx(3.84)
@@ -720,6 +725,11 @@ def test_a_weight_resolves_to_the_one_file_that_is_it():
     assert regular["face_name"] != black["face_name"]
     assert regular["file"] != black["file"]
     assert not regular["face_bold"] and not black["face_bold"]
+
+
+def test_a_face_records_its_css_to_libass_size_conversion():
+    """Lato's Windows metrics are 2832 units tall around a 2000-unit em."""
+    assert fonts.resolve_face("lato", 700)["ass_size_scale"] == pytest.approx(1.416)
 
 
 def test_a_weight_a_family_lacks_falls_back_to_its_nearest():

@@ -176,6 +176,115 @@ def test_instagram_publish_worker_completes_and_uses_signed_media_url(tmp_path, 
     )
 
 
+def test_invalid_token_response_carries_its_code_and_logs_instagram_wording(caplog) -> None:
+    class Response:
+        status_code = 401
+        is_error = True
+        text = ""
+
+        def json(self) -> dict:
+            return {
+                "error": {
+                    "message": (
+                        "Error validating access token: The session has been "
+                        "invalidated because the user changed their password."
+                    ),
+                    "type": "OAuthException",
+                    "code": 190,
+                    "error_subcode": 460,
+                    "fbtrace_id": "trace-1",
+                }
+            }
+
+    with caplog.at_level("WARNING"), pytest.raises(instagram.InstagramConnectionError) as raised:
+        instagram._json_or_error(Response(), "creating the Reel upload")
+
+    assert raised.value.code == instagram.INVALID_TOKEN_CODE
+    assert "creating the Reel upload (190)" in str(raised.value)
+    logged = caplog.text
+    assert "the user changed their password" in logged
+    assert "subcode=460" in logged and "fbtrace_id=trace-1" in logged
+
+
+def test_dead_instagram_login_marks_the_account_for_reconnection(tmp_path, monkeypatch) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'invalidated.db'}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    key = Fernet.generate_key().decode()
+    video = tmp_path / "render.mp4"
+    video.write_bytes(b"rendered-video")
+
+    with Session(engine) as session:
+        project = Project(source_url="https://x.com/i/status/9", source_post_id="9")
+        session.add(project)
+        session.flush()
+        render = Render(
+            project_id=project.id,
+            status="complete",
+            path=str(video),
+            layout="fit_background",
+            trim_start_ms=0,
+            trim_end_ms=5000,
+            captions_enabled=True,
+            caption_style="bold",
+        )
+        account = PlatformAccount(
+            platform="instagram",
+            remote_user_id="ig-user-1",
+            username="clipfarmer",
+            access_token_encrypted=instagram.encrypt_token("private-token", key),
+            scopes="instagram_business_basic,instagram_business_content_publish",
+            # Weeks from expiring, which is exactly the case the stored expiry
+            # cannot catch: Instagram invalidated the token early.
+            token_expires_at=datetime.now(timezone.utc) + timedelta(days=54),
+        )
+        session.add_all([render, account])
+        session.flush()
+        job = Job(project_id=project.id, render_id=render.id, kind="publish_instagram")
+        publication = Publication(
+            render_id=render.id,
+            account_id=account.id,
+            platform="instagram",
+            caption="A test post",
+            share_to_feed=True,
+        )
+        session.add_all([job, publication])
+        session.flush()
+        publication.job_id = job.id
+        session.commit()
+        publication_id, job_id, account_id = publication.id, job.id, account.id
+
+    def reject(**_kwargs):
+        raise instagram.InstagramConnectionError(
+            "Instagram rejected the request while creating the Reel upload (190)",
+            code=instagram.INVALID_TOKEN_CODE,
+        )
+
+    monkeypatch.setattr(tasks, "SessionLocal", session_factory)
+    monkeypatch.setattr(
+        instagram_publisher,
+        "settings",
+        SimpleNamespace(
+            token_encryption_key=key,
+            instagram_media_url_ttl_seconds=3600,
+            instagram_processing_timeout_seconds=30,
+            instagram_poll_interval_seconds=0,
+            external_base_url="https://clips.example",
+            api_prefix="/api",
+        ),
+    )
+    monkeypatch.setattr(instagram_publisher, "create_reel_container", reject)
+
+    tasks.publish_task.call_local(publication_id, job_id)
+
+    with Session(engine) as session:
+        account = session.get(PlatformAccount, account_id)
+        publication = session.get(Publication, publication_id)
+        assert account is not None and account.status == "expired"
+        assert publication is not None and publication.status == "failed"
+        assert publication.error_message == instagram_publisher.RECONNECT_MESSAGE
+
+
 def test_refreshes_instagram_token_before_expiration(monkeypatch) -> None:
     class Response:
         status_code = 200

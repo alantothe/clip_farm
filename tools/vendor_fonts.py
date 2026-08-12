@@ -182,19 +182,30 @@ def rename_face(font, face_name: str) -> None:
         table.setName(f"Clip Farm vendored {face_name}", 3, platform_id, plat_enc_id, lang_id)
 
 
-def read_face_name(path: Path) -> tuple[str, bool]:
-    """The family name inside a TTF, and whether its subfamily is Bold.
+def read_face_metadata(path: Path) -> tuple[str, bool, float]:
+    """The name, bold flag, and CSS-to-libass size scale inside a TTF.
 
     Read rather than assumed: Google's own static files name `Poppins-Black`
     as the family "Poppins Black" but `Poppins-Bold` as "Poppins"/Bold, and
     libass needs to be told which of the two it is looking at.
+
+    The scale is just as much a property of the file. Browsers define
+    `font-size` against `unitsPerEm`; libass replaces the face metrics with the
+    OS/2 Windows ascent/descent and asks FreeType for that real dimension. An
+    ASS FontSize must therefore be multiplied by Windows-height / em-height to
+    put the same glyph pixels on screen. The ratio ranges widely across the
+    catalog, so a global correction would only trade one wrong family for
+    another.
     """
     from fontTools.ttLib import TTFont
 
     with TTFont(path, lazy=True) as font:
         name = font["name"].getDebugName(1) or path.stem
         subfamily = (font["name"].getDebugName(2) or "Regular").lower()
-    return name, "bold" in subfamily
+        os2 = font["OS/2"]
+        em_height = font["head"].unitsPerEm
+        ass_size_scale = (os2.usWinAscent + os2.usWinDescent) / em_height
+    return name, "bold" in subfamily, ass_size_scale
 
 
 def build_static(source: Path, destination: Path, family: Family, weight: int) -> None:
@@ -247,7 +258,7 @@ def vendor(family: Family, work_dir: Path) -> list[dict]:
         else:
             raise SystemExit(f"{family.name}: no static {file_name} and no variable font")
 
-        face_name, bold = read_face_name(destination)
+        face_name, bold, ass_size_scale = read_face_metadata(destination)
         faces.append(
             {
                 "id": f"{family.id}-{weight}",
@@ -260,6 +271,8 @@ def vendor(family: Family, work_dir: Path) -> list[dict]:
                 # What libass is told to look for, and what it will find.
                 "face_name": face_name,
                 "face_bold": bold,
+                # libass sizes against Win ascent/descent; CSS sizes against em.
+                "ass_size_scale": ass_size_scale,
             }
         )
         print(f"  {file_name}  ({face_name}{', bold' if bold else ''})")
