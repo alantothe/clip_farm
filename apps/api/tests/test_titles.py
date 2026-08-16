@@ -325,6 +325,35 @@ def test_the_style_list_offers_the_builtins_and_the_saved_ones(tmp_path):
     assert listed[-1].name == "Mine"
 
 
+def test_the_creative_builtin_styles_are_offered(tmp_path):
+    session = make_session(tmp_path)
+
+    listed = titles_router.list_title_styles(session)
+
+    added = [(style.id, style.name) for style in listed[-15:]]
+    assert added == [
+        ("builtin:highlighter", "Acid Drop"),
+        ("builtin:candy", "Bubblegum"),
+        ("builtin:blueprint", "Icewire"),
+        ("builtin:sunburst", "Solar Flare"),
+        ("builtin:editorial", "Front Page"),
+        ("builtin:chrome", "Chrome"),
+        ("builtin:cherry-bomb", "Cherry Bomb"),
+        ("builtin:ultraviolet", "Ultraviolet"),
+        ("builtin:velvet-rope", "Velvet Rope"),
+        ("builtin:terminal", "Terminal"),
+        ("builtin:champion", "Champion"),
+        ("builtin:papaya-pop", "Papaya Pop"),
+        ("builtin:moonlight", "Moonlight"),
+        ("builtin:wildfire", "Wildfire"),
+        ("builtin:fresh-cut", "Fresh Cut"),
+    ]
+    for style in listed[-15:]:
+        assert style.background == "none"
+        assert style.rotation_deg == 0
+        assert style.italic is False
+
+
 def test_a_builtin_style_names_only_what_it_changes(tmp_path):
     """The gaps come from the column defaults, not a second copy of them."""
     look = look_of(BUILTIN_STYLES[0])
