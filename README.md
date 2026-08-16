@@ -1,8 +1,18 @@
 # Clip Farm
 
-Clip Farm is a toolbox for turning out social content and reposts quickly. Bring in a video from X or your own files, shape it for vertical platforms, add the finishing touches, and get it back out as a downloadable post or a published Instagram Reel.
+Clip Farm is a fast production workspace for making social content and reposts.
 
-Use it for anything from a fast one-video repost to a complete multi-Clip edit with reusable branding. It also includes a quick four-photo Instagram cover builder. The workflows stay focused so you can choose what you want to make and move from source material to finished content without rebuilding the process each time.
+Available now:
+
+- turn landscape videos from X into finished vertical posts;
+- upload several videos and assemble them into one multi-Clip Sequence;
+- trim, crop, reframe, subtitle, and brand videos with Titles and images;
+- save reusable Title Styles, Phrases, images, and complete layer arrangements;
+- build four-photo Instagram covers;
+- download finished 1080 × 1920 MP4s; and
+- publish directly to Instagram Reels.
+
+More focused content formats and publishing workflows are on the way.
 
 > Only process videos and images you own or have permission to repurpose.
 
